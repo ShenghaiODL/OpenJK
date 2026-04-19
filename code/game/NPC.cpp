@@ -1930,6 +1930,28 @@ void NPC_RunBehavior( int team, int bState )
 			}
 		}
 	}
+	else if ( NPC->client->NPC_class == CLASS_MANDO )
+	{
+		Boba_Update();
+		if (NPCInfo->surrenderTime)
+		{
+			Boba_Flee();
+		}
+		else
+		{
+			if (!Boba_Tactics())
+			{
+				if ( Boba_Flying( NPC ) )
+				{
+					NPC_BehaviorSet_Seeker(bState);
+				}
+				else
+				{
+					NPC_BehaviorSet_Jedi( bState );
+				}
+			}
+		}
+	}
 	else if ( NPC->client->NPC_class == CLASS_ROCKETTROOPER )
 	{//bounty hunter
 		if ( RT_Flying( NPC ) || NPC->enemy != NULL )
