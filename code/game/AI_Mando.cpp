@@ -53,7 +53,7 @@ void		Boba_FlyStop( gentity_t *self );
 
 // Called From NPC_Pain()
 //-----------------------------
-void		Boba_Pain( gentity_t *self, gentity_t *inflictor, int damage, int mod);
+void		NPC_ST_Pain( gentity_t *self, gentity_t *inflictor, gentity_t *other, const vec3_t point, int damage, int mod,int hitLoc );
 
 
 // Local: Flame Thrower Weapon
@@ -390,19 +390,18 @@ bool	Boba_CanSeeEnemy( gentity_t *self )
 ////////////////////////////////////////////////////////////////////////////////////////
 //
 ////////////////////////////////////////////////////////////////////////////////////////
-void	Boba_Pain( gentity_t *self, gentity_t *inflictor, int damage, int mod)
+void	NPC_ST_Pain( gentity_t *self, gentity_t *inflictor, gentity_t *other, const vec3_t point, int damage, int mod,int hitLoc )
 {
-
-	NPC_Pain( self, inflictor, other, point, damage, mod, hitLoc );
-	
-	if (mod==MOD_SABER && !(NPCInfo->aiFlags&NPCAI_FLAMETHROW))
-	{
-		TIMER_Set( self, "Boba_TacticsSelect", 0);	// Hurt By The Saber, Time To Try Something New
-	}
 	if (self->NPC->aiFlags&NPCAI_FLAMETHROW)
 	{
 		NPC_SetAnim( self, SETANIM_TORSO, BOTH_FORCELIGHTNING_HOLD, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 	 	self->client->ps.torsoAnimTimer  =	level.time - TIMER_Get(self, "falmeTime");
+	}
+	NPC_Pain( self, inflictor, other, point, damage, mod, hitLoc );
+
+	if ( !damage && self->health > 0 )
+	{
+		G_AddVoiceEvent( self, Q_irand(EV_PUSHED1, EV_PUSHED3), 2000 );
 	}
 }
 

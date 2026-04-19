@@ -210,6 +210,7 @@ void G_ClassSetDontFlee( gentity_t *self )
 	case CLASS_TAVION:
 	case CLASS_ALORA:
 	case CLASS_BOBAFETT:
+	case CLASS_MANDO:
 	case CLASS_SABER_DROID:
 	case CLASS_ASSASSIN_DROID:
 	case CLASS_PLAYER:
