@@ -359,6 +359,7 @@ void GEntity_PainFunc(gentity_t *self, gentity_t *inflictor, gentity_t *attacker
 	PAINCASE( func_usable_pain )
 	PAINCASE( NPC_ATST_Pain )
 	PAINCASE( NPC_ST_Pain )
+	PAINCASE( NPC_Mando_Pain )
 	PAINCASE( NPC_Jedi_Pain )
 	PAINCASE( NPC_Droid_Pain )
 	PAINCASE( NPC_Probe_Pain )

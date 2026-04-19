@@ -85,6 +85,10 @@ painFunc_t NPC_PainFunc( gentity_t *ent )
 			func = painF_NPC_ST_Pain;
 			break;
 
+		case CLASS_MANDO:
+			func = painF_NPC_Mando_Pain;
+			break;
+			
 		case CLASS_SEEKER:
 			func = painF_NPC_Seeker_Pain;
 			break;

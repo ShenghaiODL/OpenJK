@@ -543,6 +543,7 @@ typedef enum
 	painF_func_usable_pain,
 	painF_NPC_ATST_Pain,
 	painF_NPC_ST_Pain,
+	painF_NPC_Mando_Pain,
 	painF_NPC_Jedi_Pain,
 	painF_NPC_Droid_Pain,
 	painF_NPC_Probe_Pain,
@@ -574,6 +575,7 @@ extern void station_pain				(gentity_t *self, gentity_t *inflictor, gentity_t *a
 extern void func_usable_pain			(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, const vec3_t point, int damage, int mod,int hitLoc=HL_NONE);
 extern void NPC_ATST_Pain				(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, const vec3_t point, int damage, int mod,int hitLoc=HL_NONE);
 extern void NPC_ST_Pain					(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, const vec3_t point, int damage, int mod,int hitLoc=HL_NONE);
+extern void NPC_Mando_Pain 				(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, const vec3_t point, int damage, int mod,int hitLoc=HL_NONE);
 extern void NPC_Jedi_Pain				(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, const vec3_t point, int damage, int mod,int hitLoc=HL_NONE);
 extern void NPC_Droid_Pain				(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, const vec3_t point, int damage, int mod,int hitLoc=HL_NONE);
 extern void NPC_Probe_Pain				(gentity_t *self, gentity_t *inflictor, gentity_t *attacker, const vec3_t point, int damage, int mod,int hitLoc=HL_NONE);

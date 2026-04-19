@@ -109,28 +109,38 @@ bool	Mando_CanSeeEnemy( gentity_t *self )
 ////////////////////////////////////////////////////////////////////////////////////////
 //
 ////////////////////////////////////////////////////////////////////////////////////////
-void	NPC_Mando_Pain( gentity_t *self, gentity_t *inflictor, gentity_t *other, const vec3_t point, int damage, int mod,int hitLoc )
+void NPC_Mando_Pain( gentity_t *self, gentity_t *inflictor, gentity_t *other, const vec3_t point, int damage, int mod, int hitLoc )
 {
-	NPC_Pain( self, inflictor, other, point, damage, mod, hitLoc );
+    NPC_Pain( self, inflictor, other, point, damage, mod, hitLoc );
 
-	if ( !damage && self->health > 0 )
-	{
-		self->client->ps.torsoAnimTimer  =    0;
-        G_StopEffect( G_EffectIndex("boba/fthrw"), self->playerModel, self->genericBolt3, self->s.number);
+    if ( self->health <= 0 )
+    {// Always stop the flamethrower on death, regardless of flag state
+        G_StopEffect( G_EffectIndex("boba/fthrw"), self->playerModel, self->genericBolt3, self->s.number );
+        if ( self->NPC )
+        {
+            self->NPC->aiFlags &= ~NPCAI_FLAMETHROW;
+            self->client->ps.torsoAnimTimer = 0;
+            TIMER_Set( self, "flameTime",          0 );
+            TIMER_Set( self, "nextAttackDelay",    0 );
+            TIMER_Set( self, "Boba_TacticsSelect", 0 );
+        }
         return;
     }
-    if ((NPCInfo->aiFlags&NPCAI_FLAMETHROW))
+
+    if ( !damage && self->health > 0 )
     {
-        self->NPC->aiFlags                &= ~NPCAI_FLAMETHROW;
-        self->client->ps.torsoAnimTimer  =    0;
-
-        TIMER_Set( self, "flameTime",            0);
-        TIMER_Set( self, "nextAttackDelay",        0);
-        TIMER_Set( self, "Boba_TacticsSelect",    0);
-
-    //    G_SoundOnEnt( self, CHAN_WEAPON, "sound/effects/flameoff.mp3" );
-        G_StopEffect( G_EffectIndex("boba/fthrw"), self->playerModel, self->genericBolt3, self->s.number);
-
+        self->client->ps.torsoAnimTimer = 0;
+        G_StopEffect( G_EffectIndex("boba/fthrw"), self->playerModel, self->genericBolt3, self->s.number );
+        return;
+    }
+    if ( self->NPC && (self->NPC->aiFlags & NPCAI_FLAMETHROW) )
+    {
+        self->NPC->aiFlags              &= ~NPCAI_FLAMETHROW;
+        self->client->ps.torsoAnimTimer  = 0;
+        TIMER_Set( self, "flameTime",          0 );
+        TIMER_Set( self, "nextAttackDelay",    0 );
+        TIMER_Set( self, "Boba_TacticsSelect", 0 );
+        G_StopEffect( G_EffectIndex("boba/fthrw"), self->playerModel, self->genericBolt3, self->s.number );
         Boba_Printf("FlameThrower OFF");
-	}
+    }
 }
