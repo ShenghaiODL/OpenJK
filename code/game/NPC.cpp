@@ -1947,7 +1947,7 @@ void NPC_RunBehavior( int team, int bState )
 				}
 				else
 				{
-					NPC_BehaviorSet_Jedi( bState );
+					NPC_BehaviorSet_Stormtrooper( bState );
 				}
 			}
 		}

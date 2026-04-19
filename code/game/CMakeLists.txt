@@ -39,6 +39,7 @@ set(SPGameGameFiles
 	"${SPDir}/game/AI_AssassinDroid.cpp"
 	"${SPDir}/game/AI_Atst.cpp"
 	"${SPDir}/game/AI_BobaFett.cpp"
+	"${SPDir}/game/AI_Mando.cpp"
 	"${SPDir}/game/AI_Civilian.cpp"
 	"${SPDir}/game/AI_Default.cpp"
 	"${SPDir}/game/AI_Droid.cpp"
