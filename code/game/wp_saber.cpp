@@ -4278,7 +4278,31 @@ qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, in
 	{
 		return qfalse;
 	}
-	if ( victim->s.number || g_saberAutoBlocking->integer || victim->client->ps.saberBlockingTime > level.time )
+	qboolean canParry = (qboolean)(victim->s.number != 0 || g_saberAutoBlocking->integer || victim->client->ps.saberBlockingTime > level.time);
+
+	// For manual-mode player, require strafing toward side attacks
+	if ( canParry && !victim->s.number && !g_saberAutoBlocking->integer )
+	{
+		vec3_t diff={0,0,0}, fwdangles={0,0,0}, right;
+		VectorSubtract( saberHitLocation, victim->client->renderInfo.eyePoint, diff );
+		diff[2] = 0;
+		VectorNormalize( diff );
+		fwdangles[1] = victim->client->ps.viewangles[1];
+		AngleVectors( fwdangles, NULL, right, NULL );
+		float rightdot = DotProduct( right, diff );
+		signed char rm = victim->client->pers.lastCommand.rightmove;
+		if ( rightdot > 0.3f )
+		{//attack from player's right — must strafe right to block
+			canParry = (qboolean)(rm > 40);
+		}
+		else if ( rightdot < -0.3f )
+		{//attack from player's left — must strafe left to block
+			canParry = (qboolean)(rm < -40);
+		}
+		// center/top attacks always parried when button held
+	}
+
+	if ( canParry )
 	{//either an NPC or a player who is blocking
 		if ( !PM_SaberInTransitionAny( victim->client->ps.saberMove )
 			&& !PM_SaberInBounce( victim->client->ps.saberMove )
@@ -7554,6 +7578,17 @@ void WP_SaberFireGun( gentity_t *self, usercmd_t *ucmd, int whichGun )
 //SABER BLOCKING============================================================================
 //SABER BLOCKING============================================================================
 //SABER BLOCKING============================================================================
+static int blockForceCost[] = {
+	0,   // SS_NONE
+	10,  // SS_FAST   — defensive style, low cost
+	15,  // SS_MEDIUM — balanced
+	20,  // SS_STRONG — offensive style, high cost
+	20,  // SS_DESANN — heavy variant
+	12,  // SS_TAVION — fast variant
+	18,  // SS_DUAL   — two blades
+	13,  // SS_STAFF  — wide coverage
+};
+
 int WP_MissileBlockForBlock( int saberBlock )
 {
 	switch( saberBlock )
@@ -7591,6 +7626,17 @@ void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlo
 	if ( PM_SuperBreakLoseAnim( self->client->ps.torsoAnim )
 		|| PM_SuperBreakWinAnim( self->client->ps.torsoAnim ) )
 	{
+		return;
+	}
+	// No force power = cannot block
+	if ( self->s.number == 0 && !g_saberAutoBlocking->integer
+		&& self->client->ps.forcePower <= 0 )
+	{
+		if ( self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time )
+		{
+			G_SoundOnEnt( self, CHAN_AUTO, "sound/weapons/force/noforce.mp3" );
+			self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] = level.time + 1000;
+		}
 		return;
 	}
 	//NPCs don't auto-block
@@ -7694,6 +7740,16 @@ void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlo
 
 	if ( self->client->ps.saberBlocked != BLOCKED_NONE )
 	{
+		if ( self->s.number == 0 && !g_saberAutoBlocking->integer )
+		{
+			int defLevel = self->client->ps.forcePowerLevel[FP_SABER_DEFENSE];
+			int cost = blockForceCost[self->client->ps.saberAnimLevel];
+			if ( defLevel >= FORCE_LEVEL_3 )      cost /= 2;
+			else if ( defLevel >= FORCE_LEVEL_2 ) cost = cost * 3 / 4;
+			WP_ForcePowerDrain( self, FP_SABER_DEFENSE, cost );
+			// Pause force regen after a block so the cost is felt
+			self->client->ps.forcePowerRegenDebounceTime = level.time + 1500;
+		}
 		int parryReCalcTime = Jedi_ReCalcParryTime( self, EVASION_PARRY );
 		if ( self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time + parryReCalcTime )
 		{
@@ -7806,6 +7862,16 @@ void WP_SaberStartMissileBlockCheck( gentity_t *self, usercmd_t *ucmd  )
 
 				if ( !g_saberAutoBlocking->integer && self->client->ps.saberBlockingTime<level.time )
 				{
+					return;
+				}
+				// No force power = cannot deflect missiles
+				if ( !g_saberAutoBlocking->integer && self->client->ps.forcePower <= 0 )
+				{
+					if ( self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time )
+					{
+						G_SoundOnEnt( self, CHAN_AUTO, "sound/weapons/force/noforce.mp3" );
+						self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] = level.time + 1000;
+					}
 					return;
 				}
 			}
@@ -8302,7 +8368,7 @@ void WP_SaberUpdate( gentity_t *self, usercmd_t *ucmd )
 		{//FIXME: keep bbox in front of player, even when wide?
 			vec3_t	saberOrg;
 			if ( !forceBlock
-				&& ( (self->s.number&&!Jedi_SaberBusy(self)&&!g_saberRealisticCombat->integer) || (self->s.number == 0 && self->client->ps.saberBlocking == BLK_WIDE && (g_saberAutoBlocking->integer||self->client->ps.saberBlockingTime>level.time)) )
+				&& ( (self->s.number&&!Jedi_SaberBusy(self)&&!g_saberRealisticCombat->integer) || (self->s.number == 0 && self->client->ps.saberBlocking == BLK_WIDE && (g_saberAutoBlocking->integer||(self->client->ps.saberBlockingTime>level.time&&self->client->ps.forcePower>0))) )
 				&& self->client->ps.weaponTime <= 0
 				&& !G_InCinematicSaberAnim( self ) )
 			{//full-size blocking for non-attacking player with g_saberAutoBlocking on
@@ -8388,7 +8454,7 @@ void WP_SaberUpdate( gentity_t *self, usercmd_t *ucmd )
 					if ( self->client->ps.weaponTime > 0
 						|| self->s.number
 						|| g_saberAutoBlocking->integer
-						|| self->client->ps.saberBlockingTime > level.time )
+						|| (self->client->ps.saberBlockingTime > level.time && self->client->ps.forcePower > 0) )
 					{//if attacking or blocking (or an NPC), inflate to a minimum size
 						for ( int i = 0; i < 3; i++ )
 						{

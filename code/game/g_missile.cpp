@@ -232,17 +232,17 @@ void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward )
 				}
 			}
 			else if ( owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] <= FORCE_LEVEL_1 )
-			{// at level 1
+			{// level 1: bolt fires in a random direction regardless of shooter position
 				for ( i = 0; i < 3; i++ )
 				{
-					bounce_dir[i] += Q_flrand( -0.4f, 0.4f );
+					bounce_dir[i] = Q_flrand( -1.0f, 1.0f );
 				}
 			}
 			else
-			{// at level 2
+			{// level 2: aimed back at shooter but with meaningful spread
 				for ( i = 0; i < 3; i++ )
 				{
-					bounce_dir[i] += Q_flrand( -0.2f, 0.2f );
+					bounce_dir[i] += Q_flrand( -0.5f, 0.5f );
 				}
 			}
 			if ( !PM_SaberInParry( owner->client->ps.saberMove )
@@ -800,6 +800,7 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace, int hitLoc=HL_NONE )
 	}
 
 extern bool WP_DoingMoronicForcedAnimationForForcePowers(gentity_t *ent);
+extern cvar_t *g_saberAutoBlocking;
 	// check for hitting a lightsaber
 	if ( other->contents & CONTENTS_LIGHTSABER )
 	{
@@ -819,37 +820,47 @@ extern bool WP_DoingMoronicForcedAnimationForForcePowers(gentity_t *ent);
 				|| (InFront( ent->currentOrigin, other->owner->currentOrigin, other->owner->client->ps.viewangles, SABER_REFLECT_MISSILE_CONE ) &&
 				!WP_DoingMoronicForcedAnimationForForcePowers(other)) )//other->owner->s.number != 0 ||
 			{//Jedi cannot block shots from behind!
-				int blockChance = 0;
-				switch ( other->owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] )
-				{//level 1 reflects 50% of the time, level 2 reflects 75% of the time
-				case FORCE_LEVEL_3:
-					blockChance = 10;
-					break;
-				case FORCE_LEVEL_2:
-					blockChance = 3;
-					break;
-				case FORCE_LEVEL_1:
-					blockChance = 1;
-					break;
-				}
-				if ( blockChance && (other->owner->client->ps.forcePowersActive&(1<<FP_SPEED)) )
-				{//in in force speed, better chance of deflecting the shot
-					blockChance += other->owner->client->ps.forcePowerLevel[FP_SPEED]*2;
-				}
-				if ( Q_irand( 0, blockChance ) )
+				// Player with no force power cannot deflect missiles
+				if ( other->owner && other->owner->client && !other->owner->s.number
+					&& !g_saberAutoBlocking->integer
+					&& other->owner->client->ps.forcePower <= 0 )
 				{
-					VectorSubtract(ent->currentOrigin, other->currentOrigin, diff);
-					VectorNormalize(diff);
-					G_ReflectMissile( other, ent, diff);
-					if ( other->owner && other->owner->client )
-					{
-						other->owner->client->ps.saberEventFlags |= SEF_DEFLECTED;
+					G_SoundOnEnt( other->owner, CHAN_AUTO, "sound/weapons/force/drained.mp3" );
+				}
+				else
+				{
+					int blockChance = 0;
+					switch ( other->owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] )
+					{//level 1 reflects 50% of the time, level 2 reflects 75% of the time
+					case FORCE_LEVEL_3:
+						blockChance = 10;
+						break;
+					case FORCE_LEVEL_2:
+						blockChance = 3;
+						break;
+					case FORCE_LEVEL_1:
+						blockChance = 1;
+						break;
 					}
-					//do the effect
-					VectorCopy( ent->s.pos.trDelta, diff );
-					VectorNormalize( diff );
-					G_MissileReflectEffect( ent, trace->endpos, trace->plane.normal );
-					return;
+					if ( blockChance && (other->owner->client->ps.forcePowersActive&(1<<FP_SPEED)) )
+					{//in in force speed, better chance of deflecting the shot
+						blockChance += other->owner->client->ps.forcePowerLevel[FP_SPEED]*2;
+					}
+					if ( Q_irand( 0, blockChance ) )
+					{
+						VectorSubtract(ent->currentOrigin, other->currentOrigin, diff);
+						VectorNormalize(diff);
+						G_ReflectMissile( other, ent, diff);
+						if ( other->owner && other->owner->client )
+						{
+							other->owner->client->ps.saberEventFlags |= SEF_DEFLECTED;
+						}
+						//do the effect
+						VectorCopy( ent->s.pos.trDelta, diff );
+						VectorNormalize( diff );
+						G_MissileReflectEffect( ent, trace->endpos, trace->plane.normal );
+						return;
+					}
 				}
 			}
 		}

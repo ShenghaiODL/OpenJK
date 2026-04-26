@@ -5676,6 +5676,7 @@ static const char *g_bindCommands[] = {
 	"+moveup",
 	"+right",
 	"+saber_throw",
+	"+saberblock",
 	"+speed",
 	"+strafe",
 	"+use",

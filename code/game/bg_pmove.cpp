@@ -9302,7 +9302,17 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 			}
 			else
 			{
-				anim = BOTH_P1_S1_T_;
+				signed char rm = pm->cmd.rightmove;
+				signed char fm = pm->cmd.forwardmove;
+				if ( rm > 40 )
+					anim = (fm < -40) ? BOTH_P1_S1_BR : BOTH_P1_S1_TR;
+				else if ( rm < -40 )
+					anim = (fm < -40) ? BOTH_P1_S1_BL : BOTH_P1_S1_TL;
+				else if ( fm < -40 )
+					anim = BOTH_P1_S1_BR;
+				else
+					anim = BOTH_P1_S1_T_;
+				setflags |= SETANIM_FLAG_OVERRIDE;
 			}
 		}
 		else if ( pm->ps->saber[0].readyAnim != -1 )
@@ -14631,7 +14641,7 @@ void PM_AdjustAttackStates( pmove_t *pm )
 
 	if ( !g_saberAutoBlocking->integer
 		&& !g_saberNewControlScheme->integer
-		&& (pm->cmd.buttons&BUTTON_FORCE_FOCUS) )
+		&& (pm->cmd.buttons&BUTTON_SABERBLOCK) )
 	{
 		pm->ps->saberBlockingTime = pm->cmd.serverTime + 100;
 		pm->cmd.buttons &= ~BUTTON_ATTACK;

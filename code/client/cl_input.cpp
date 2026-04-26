@@ -1019,6 +1019,8 @@ void CL_InitInput( void ) {
 	
 	Cmd_AddCommand ("+force_repulse", IN_Button10Down);
 	Cmd_AddCommand ("-force_repulse", IN_Button10Up);
+	Cmd_AddCommand ("+saberblock", IN_Button11Down);
+	Cmd_AddCommand ("-saberblock", IN_Button11Up);
 
 	Cmd_AddCommand ("+button0", IN_Button0Down);
 	Cmd_AddCommand ("-button0", IN_Button0Up);

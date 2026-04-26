@@ -2366,6 +2366,8 @@ using playerState_t = PlayerStateBase<saberInfo_t>;
 
 #define BUTTON_REPULSE		1024
 
+#define BUTTON_SABERBLOCK	2048
+
 #define	MOVE_RUN			120			// if forwardmove or rightmove are >= MOVE_RUN,
 										// then BUTTON_WALKING should be set
 
