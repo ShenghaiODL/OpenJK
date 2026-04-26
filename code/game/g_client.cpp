@@ -2547,6 +2547,18 @@ qboolean ClientSpawn(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded 
 
 		client->airOutTime = level.time + 12000;
 
+		// Blocking and knockback state can be serialized into the save with future timestamps,
+		// causing controls to freeze on load. Reset them here to guarantee a clean state.
+		client->ps.saberBlockingTime = 0;
+		client->ps.pm_time = 0;
+		client->ps.pm_flags &= ~PMF_TIME_KNOCKBACK;
+		ent->aimDebounceTime = level.time;
+
+		{// enforce defense-scaled max FP; save files may have stale values
+			int defLevel = client->ps.forcePowerLevel[FP_SABER_DEFENSE];
+			client->ps.forcePowerMax = FORCE_POWER_MAX + ( defLevel > FORCE_LEVEL_1 ? ( defLevel - FORCE_LEVEL_1 ) * 50 : 0 );
+		}
+
 		for (i=0; i<3; i++)
 		{
 			ent->client->pers.cmd_angles[i] = 0.0f;
@@ -2756,6 +2768,11 @@ qboolean ClientSpawn(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded 
 		// restore some player data
 		//
 		Player_RestoreFromPrevLevel(ent, eSavedGameJustLoaded);
+
+		{// scale max FP by defense level; also corrects saves from before this feature
+			int defLevel = client->ps.forcePowerLevel[FP_SABER_DEFENSE];
+			client->ps.forcePowerMax = FORCE_POWER_MAX + ( defLevel > FORCE_LEVEL_1 ? ( defLevel - FORCE_LEVEL_1 ) * 50 : 0 );
+		}
 
 		//FIXME: put this BEFORE the Player_RestoreFromPrevLevel check above?
 		if (eSavedGameJustLoaded == eNO)

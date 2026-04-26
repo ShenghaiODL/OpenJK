@@ -7747,9 +7747,11 @@ void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlo
 			int cost = blockForceCost[self->client->ps.saberAnimLevel];
 			if ( defLevel >= FORCE_LEVEL_3 )      cost /= 2;
 			else if ( defLevel >= FORCE_LEVEL_2 ) cost = cost * 3 / 4;
+			if ( missileBlock ) cost = cost * 3 / 2;  // 1.5x for blaster bolt blocks
+			else                cost = cost * 3;       // 3x for saber attack blocks
 			WP_ForcePowerDrain( self, FP_SABER_DEFENSE, cost );
-			// Pause force regen after a block so the cost is felt
-			self->client->ps.forcePowerRegenDebounceTime = level.time + 1500;
+			// Longer regen pause for saber attacks since they drain significantly more FP
+			self->client->ps.forcePowerRegenDebounceTime = level.time + ( missileBlock ? 1500 : 2000 );
 		}
 		int parryReCalcTime = Jedi_ReCalcParryTime( self, EVASION_PARRY );
 		if ( self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time + parryReCalcTime )
@@ -15719,6 +15721,9 @@ void WP_InitForcePowers( gentity_t *ent )
 			ent->client->ps.forcePowerLevel[FP_REPULSE] = FORCE_LEVEL_0;
 			ent->client->ps.forcePowerLevel[FP_INVULNERABILITY] = FORCE_LEVEL_0;
 		}
+		int defLevel = ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE];
+		ent->client->ps.forcePowerMax = FORCE_POWER_MAX + ( defLevel > FORCE_LEVEL_1 ? ( defLevel - FORCE_LEVEL_1 ) * 50 : 0 );
+		ent->client->ps.forcePower = ent->client->ps.forcePowerMax;
 	}
 }
 

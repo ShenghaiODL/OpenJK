@@ -160,47 +160,73 @@ void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward )
 	//save the original speed
 	speed = VectorNormalize( missile->s.pos.trDelta );
 
-	if ( ent && owner && owner->client && !owner->client->ps.saberInFlight &&
-		(owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_2 || (owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]>FORCE_LEVEL_1&&!Q_irand( 0, 3 )) ) )
-	{//if high enough defense skill and saber in-hand (100% at level 3, 25% at level 2, 0% at level 1), reflections are perfectly deflected toward an enemy
-		gentity_t *enemy;
-		if ( owner->enemy && Q_irand( 0, 3 ) )
-		{//toward current enemy 75% of the time
-			enemy = owner->enemy;
+	if ( ent && owner && owner->client && !owner->client->ps.saberInFlight )
+	{//saber in hand: accuracy determined by defense level (75% at level 3, 50% at level 2, 20% at level 1)
+		int defLevel = owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE];
+
+		if ( defLevel >= FORCE_LEVEL_3 && Q_irand( 0, 3 ) )
+		{//75% at level 3: aimed at an enemy
+			gentity_t *enemy;
+			if ( owner->enemy && Q_irand( 0, 3 ) )
+			{//toward current enemy 75% of the time
+				enemy = owner->enemy;
+			}
+			else
+			{//find another enemy
+				enemy = Jedi_FindEnemyInCone( owner, owner->enemy, 0.3f );
+			}
+			if ( enemy )
+			{
+				vec3_t	bullseye;
+				CalcEntitySpot( enemy, SPOT_HEAD, bullseye );
+				bullseye[0] += Q_irand( -4, 4 );
+				bullseye[1] += Q_irand( -4, 4 );
+				bullseye[2] += Q_irand( -16, 4 );
+				VectorSubtract( bullseye, missile->currentOrigin, bounce_dir );
+				VectorNormalize( bounce_dir );
+				if ( !PM_SaberInParry( owner->client->ps.saberMove )
+					&& !PM_SaberInReflect( owner->client->ps.saberMove )
+					&& !PM_SaberInIdle( owner->client->ps.saberMove ) )
+				{//a bit more wild
+					if ( PM_SaberInAttack( owner->client->ps.saberMove )
+						|| PM_SaberInTransitionAny( owner->client->ps.saberMove )
+						|| PM_SaberInSpecialAttack( owner->client->ps.torsoAnim ) )
+					{//moderately more wild
+						for ( i = 0; i < 3; i++ )
+						{
+							bounce_dir[i] += Q_flrand( -0.2f, 0.2f );
+						}
+					}
+					else
+					{//mildly more wild
+						for ( i = 0; i < 3; i++ )
+						{
+							bounce_dir[i] += Q_flrand( -0.1f, 0.1f );
+						}
+					}
+				}
+				VectorNormalize( bounce_dir );
+				reflected = qtrue;
+			}
 		}
-		else
-		{//find another enemy
-			enemy = Jedi_FindEnemyInCone( owner, owner->enemy, 0.3f );
-		}
-		if ( enemy )
-		{
-			vec3_t	bullseye;
-			CalcEntitySpot( enemy, SPOT_HEAD, bullseye );
-			bullseye[0] += Q_irand( -4, 4 );
-			bullseye[1] += Q_irand( -4, 4 );
-			bullseye[2] += Q_irand( -16, 4 );
-			VectorSubtract( bullseye, missile->currentOrigin, bounce_dir );
+		else if ( defLevel >= FORCE_LEVEL_2 && !Q_irand( 0, 1 ) && missile->owner )
+		{//50% at level 2: aimed back at shooter with medium spread
+			VectorSubtract( missile->owner->currentOrigin, missile->currentOrigin, bounce_dir );
 			VectorNormalize( bounce_dir );
-			if ( !PM_SaberInParry( owner->client->ps.saberMove )
-				&& !PM_SaberInReflect( owner->client->ps.saberMove )
-				&& !PM_SaberInIdle( owner->client->ps.saberMove ) )
-			{//a bit more wild
-				if ( PM_SaberInAttack( owner->client->ps.saberMove )
-					|| PM_SaberInTransitionAny( owner->client->ps.saberMove )
-					|| PM_SaberInSpecialAttack( owner->client->ps.torsoAnim ) )
-				{//moderately more wild
-					for ( i = 0; i < 3; i++ )
-					{
-						bounce_dir[i] += Q_flrand( -0.2f, 0.2f );
-					}
-				}
-				else
-				{//mildly more wild
-					for ( i = 0; i < 3; i++ )
-					{
-						bounce_dir[i] += Q_flrand( -0.1f, 0.1f );
-					}
-				}
+			for ( i = 0; i < 3; i++ )
+			{
+				bounce_dir[i] += Q_flrand( -0.3f, 0.3f );
+			}
+			VectorNormalize( bounce_dir );
+			reflected = qtrue;
+		}
+		else if ( defLevel >= FORCE_LEVEL_1 && !Q_irand( 0, 9 ) && missile->owner )
+		{//10% at level 1: aimed back at shooter with large spread
+			VectorSubtract( missile->owner->currentOrigin, missile->currentOrigin, bounce_dir );
+			VectorNormalize( bounce_dir );
+			for ( i = 0; i < 3; i++ )
+			{
+				bounce_dir[i] += Q_flrand( -0.7f, 0.7f );
 			}
 			VectorNormalize( bounce_dir );
 			reflected = qtrue;
@@ -208,67 +234,43 @@ void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward )
 	}
 	if ( !reflected )
 	{
-		if ( missile->owner && missile->s.weapon != WP_SABER )
-		{//bounce back at them if you can
-			VectorSubtract( missile->owner->currentOrigin, missile->currentOrigin, bounce_dir );
-			VectorNormalize( bounce_dir );
-		}
-		else
-		{
-			vec3_t missile_dir;
-
-			VectorSubtract( ent->currentOrigin, missile->currentOrigin, missile_dir );
-			VectorCopy( missile->s.pos.trDelta, bounce_dir );
-			VectorScale( bounce_dir, DotProduct( forward, missile_dir ), bounce_dir );
-			VectorNormalize( bounce_dir );
-		}
 		if ( owner->s.weapon == WP_SABER && owner->client )
 		{//saber
 			if ( owner->client->ps.saberInFlight )
 			{//reflecting off a thrown saber is totally wild
+				if ( missile->owner )
+				{//aim toward shooter first, then scatter wildly
+					VectorSubtract( missile->owner->currentOrigin, missile->currentOrigin, bounce_dir );
+					VectorNormalize( bounce_dir );
+				}
 				for ( i = 0; i < 3; i++ )
 				{
 					bounce_dir[i] += Q_flrand( -0.8f, 0.8f );
 				}
 			}
-			else if ( owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] <= FORCE_LEVEL_1 )
-			{// level 1: bolt fires in a random direction regardless of shooter position
+			else
+			{//missed accuracy roll: random direction
 				for ( i = 0; i < 3; i++ )
 				{
 					bounce_dir[i] = Q_flrand( -1.0f, 1.0f );
 				}
 			}
-			else
-			{// level 2: aimed back at shooter but with meaningful spread
-				for ( i = 0; i < 3; i++ )
-				{
-					bounce_dir[i] += Q_flrand( -0.5f, 0.5f );
-				}
-			}
-			if ( !PM_SaberInParry( owner->client->ps.saberMove )
-				&& !PM_SaberInReflect( owner->client->ps.saberMove )
-				&& !PM_SaberInIdle( owner->client->ps.saberMove ) )
-			{//a bit more wild
-				if ( PM_SaberInAttack( owner->client->ps.saberMove )
-					|| PM_SaberInTransitionAny( owner->client->ps.saberMove )
-					|| PM_SaberInSpecialAttack( owner->client->ps.torsoAnim ) )
-				{//really wild
-					for ( i = 0; i < 3; i++ )
-					{
-						bounce_dir[i] += Q_flrand( -0.3f, 0.3f );
-					}
-				}
-				else
-				{//mildly more wild
-					for ( i = 0; i < 3; i++ )
-					{
-						bounce_dir[i] += Q_flrand( -0.1f, 0.1f );
-					}
-				}
-			}
 		}
 		else
 		{//some other kind of reflection
+			if ( missile->owner && missile->s.weapon != WP_SABER )
+			{//bounce back at them if you can
+				VectorSubtract( missile->owner->currentOrigin, missile->currentOrigin, bounce_dir );
+				VectorNormalize( bounce_dir );
+			}
+			else
+			{
+				vec3_t missile_dir;
+				VectorSubtract( ent->currentOrigin, missile->currentOrigin, missile_dir );
+				VectorCopy( missile->s.pos.trDelta, bounce_dir );
+				VectorScale( bounce_dir, DotProduct( forward, missile_dir ), bounce_dir );
+				VectorNormalize( bounce_dir );
+			}
 			for ( i = 0; i < 3; i++ )
 			{
 				bounce_dir[i] += Q_flrand( -0.2f, 0.2f );
