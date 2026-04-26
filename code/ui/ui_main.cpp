@@ -5984,7 +5984,9 @@ static int UI_CountForcePowers( void ) {
 					ps->forcePowerLevel[FP_GRIP] +
 					ps->forcePowerLevel[FP_LIGHTNING] +
 					ps->forcePowerLevel[FP_RAGE] +
-					ps->forcePowerLevel[FP_DRAIN];
+					ps->forcePowerLevel[FP_DRAIN] +
+					ps->forcePowerLevel[FP_INSANITY] +
+					ps->forcePowerLevel[FP_STASIS];
 	}
 	else {
 		return		uiInfo.forcePowerLevel[FP_HEAL] +
@@ -5994,7 +5996,9 @@ static int UI_CountForcePowers( void ) {
 					uiInfo.forcePowerLevel[FP_GRIP] +
 					uiInfo.forcePowerLevel[FP_LIGHTNING] +
 					uiInfo.forcePowerLevel[FP_RAGE] +
-					uiInfo.forcePowerLevel[FP_DRAIN];
+					uiInfo.forcePowerLevel[FP_DRAIN] +
+					uiInfo.forcePowerLevel[FP_INSANITY] +
+					uiInfo.forcePowerLevel[FP_STASIS];
 	}
 }
 #endif
