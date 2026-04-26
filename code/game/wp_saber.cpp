@@ -7580,13 +7580,13 @@ void WP_SaberFireGun( gentity_t *self, usercmd_t *ucmd, int whichGun )
 //SABER BLOCKING============================================================================
 static int blockForceCost[] = {
 	0,   // SS_NONE
-	10,  // SS_FAST   — defensive style, low cost
-	15,  // SS_MEDIUM — balanced
-	20,  // SS_STRONG — offensive style, high cost
-	20,  // SS_DESANN — heavy variant
-	12,  // SS_TAVION — fast variant
-	18,  // SS_DUAL   — two blades
-	13,  // SS_STAFF  — wide coverage
+	5,   // SS_FAST   — defensive style, low cost
+	8,   // SS_MEDIUM — balanced
+	10,  // SS_STRONG — offensive style, high cost
+	10,  // SS_DESANN — heavy variant
+	6,   // SS_TAVION — fast variant
+	9,   // SS_DUAL   — two blades
+	7,   // SS_STAFF  — wide coverage
 };
 
 int WP_MissileBlockForBlock( int saberBlock )
@@ -7740,7 +7740,8 @@ void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlo
 
 	if ( self->client->ps.saberBlocked != BLOCKED_NONE )
 	{
-		if ( self->s.number == 0 && !g_saberAutoBlocking->integer )
+		if ( self->s.number == 0 && !g_saberAutoBlocking->integer
+			&& self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time )
 		{
 			int defLevel = self->client->ps.forcePowerLevel[FP_SABER_DEFENSE];
 			int cost = blockForceCost[self->client->ps.saberAnimLevel];
