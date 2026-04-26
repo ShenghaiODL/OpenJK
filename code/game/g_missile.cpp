@@ -827,7 +827,14 @@ extern cvar_t *g_saberAutoBlocking;
 					&& !g_saberAutoBlocking->integer
 					&& other->owner->client->ps.forcePower <= 0 )
 				{
-					G_SoundOnEnt( other->owner, CHAN_AUTO, "sound/weapons/force/drained.mp3" );
+					if ( other->owner->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time )
+					{
+						G_SoundOnEnt( other->owner, CHAN_AUTO, "sound/weapons/force/drained.mp3" );
+						other->owner->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] = level.time + 1000;
+					}
+					// Redirect impact to the player — saber entity has no takedamage so bolt would vanish otherwise
+					G_MissileImpacted( ent, other->owner, trace->endpos, trace->plane.normal, hitLoc );
+					return;
 				}
 				else
 				{
