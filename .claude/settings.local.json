@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(grep -E \"\\\\.\\(cpp|h\\)$\")",
-      "Bash(powershell -Command 'Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead\\('\\\\''assets1.pk3'\\\\''\\); $zip.Entries | Where-Object { $_.Name -like '\\\\''*.str'\\\\'' } | Select-Object FullName')"
-    ]
-  }
-}
