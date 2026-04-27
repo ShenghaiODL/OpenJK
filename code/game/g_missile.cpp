@@ -879,7 +879,16 @@ extern cvar_t *g_saberAutoBlocking;
 		}
 	}
 
-	G_MissileImpacted( ent, other, trace->endpos, trace->plane.normal, hitLoc );
+	// Any remaining fall-through with other=saber entity means the saber didn't reflect the bolt.
+	// Redirect to the player — saber entity has no takedamage so damage would be silently dropped.
+	if ( (other->contents & CONTENTS_LIGHTSABER) && other->owner && other->owner->client && !other->owner->s.number )
+	{
+		G_MissileImpacted( ent, other->owner, trace->endpos, trace->plane.normal, hitLoc );
+	}
+	else
+	{
+		G_MissileImpacted( ent, other, trace->endpos, trace->plane.normal, hitLoc );
+	}
 }
 
 /*
