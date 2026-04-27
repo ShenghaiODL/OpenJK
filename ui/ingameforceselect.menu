@@ -1440,8 +1440,7 @@
 				uiScript		"showforceleveldesc" "insanity"
 
 				setitembackground	force_icon	"gfx/mp/NEW_f_icon_dk_insanity"
-				setitemtext		force_desc	"Force Insanity\nDuration: Variable\nArea Of Effect: Living persons only\nEffect: Drives a target insane, causing them to attack friends and foes alike\n\n"
-
+				setitemtext		force_desc	@SP_INGAME_FORCE_INSANITY_DESC
 				show			force_icon
 				show			force_desc
 			}
@@ -1513,8 +1512,7 @@
 				uiScript		"showforceleveldesc" "stasis"
 
 				setitembackground	force_icon	"gfx/mp/NEW_f_icon_lt_stasis"
-				setitemtext		force_desc	"Force Stasis\nDuration: Variable\nArea Of Effect: Living persons only\nEffect: Temporarily freezes a target in place, leaving them completely vulnerable\n\n"
-
+				setitemtext		force_desc	@SP_INGAME_FORCE_STASIS_DESC
 				show			force_icon
 				show			force_desc
 			}

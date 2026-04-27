@@ -122,7 +122,8 @@ UpgradeLog*.XML
 
 # Visual Studio Code
 .vscode
-.claude
+.claude/
+Game Assets/
 
 
 ############
