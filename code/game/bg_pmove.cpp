@@ -14641,7 +14641,8 @@ void PM_AdjustAttackStates( pmove_t *pm )
 
 	if ( !g_saberAutoBlocking->integer
 		&& !g_saberNewControlScheme->integer
-		&& (pm->cmd.buttons&BUTTON_SABERBLOCK) )
+		&& (pm->cmd.buttons&BUTTON_SABERBLOCK)
+		&& pm->ps->weapon == WP_SABER )
 	{
 		pm->ps->saberBlockingTime = pm->cmd.serverTime + 100;
 		pm->cmd.buttons &= ~BUTTON_ATTACK;
