@@ -1579,7 +1579,7 @@ void FireWeapon( gentity_t *ent, qboolean alt_fire )
 
 	if ( !ent->s.number )
 	{
-		if ( ent->s.weapon == WP_FLECHETTE || (ent->s.weapon == WP_BOWCASTER && !alt_fire) )
+		if ( ent->s.weapon == WP_FLECHETTE )
 		{//these can fire multiple shots, count them individually within the firing functions
 		}
 		else if ( W_AccuracyLoggableWeapon( ent->s.weapon, alt_fire, MOD_UNKNOWN ) )

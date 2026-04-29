@@ -775,13 +775,8 @@ typedef enum
 	FP_DRAIN,//hold/duration - drain force power for health
 	FP_SEE,//duration - detect/see hidden enemies
 	//extra powers!
-	FP_DESTRUCTION,//instant
 	FP_INSANITY,//instant
 	FP_STASIS,//duration + instant?
-	FP_BLINDING,//instant
-	FP_DEADLYSIGHT,//duration
-	FP_REPULSE,//hold/duration
-	FP_INVULNERABILITY,//duration
 #endif // !JK2_MODE
 
 	NUM_FORCE_POWERS
@@ -2386,13 +2381,8 @@ typedef enum
 	GENCMD_FORCE_ABSORB,
 	GENCMD_FORCE_DRAIN,
 	GENCMD_FORCE_SEEING,
-	GENCMD_FORCE_DESTRUCTION,
 	GENCMD_FORCE_INSANITY,
 	GENCMD_FORCE_STASIS,
-	GENCMD_FORCE_BLINDING,
-	GENCMD_FORCE_DEADLYSIGHT,
-	GENCMD_FORCE_REPULSE,
-	GENCMD_FORCE_INVULNERABILITY,
 } genCmds_t;
 
 

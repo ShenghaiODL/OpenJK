@@ -33,6 +33,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #endif //_DEBUG
 
 extern qboolean InFront( vec3_t spot, vec3_t from, vec3_t fromAngles, float threshHold = 0.0f );
+extern void G_Knockdown( gentity_t *self, gentity_t *attacker, const vec3_t pushDir, float strength, qboolean breakSaberLock );
 qboolean LogAccuracyHit( gentity_t *target, gentity_t *attacker );
 extern qboolean PM_SaberInParry( int move );
 extern qboolean PM_SaberInReflect( int move );
@@ -599,6 +600,31 @@ void G_MissileImpacted( gentity_t *ent, gentity_t *other, vec3_t impactPos, vec3
 	{
 		G_RadiusDamage( impactPos, ent->owner, ent->splashDamage, ent->splashRadius,
 			other, ent->splashMethodOfDeath );
+
+		// bowcaster explosive bolt: knock down anyone within half the splash radius
+		if ( ent->s.weapon == WP_BOWCASTER && ent->splashMethodOfDeath == MOD_BOWCASTER_ALT )
+		{
+			const float knockRadius = ent->splashRadius * 0.5f;
+			vec3_t mins, maxs;
+			for ( int i = 0; i < 3; i++ )
+			{
+				mins[i] = impactPos[i] - knockRadius;
+				maxs[i] = impactPos[i] + knockRadius;
+			}
+			gentity_t *knockList[MAX_GENTITIES];
+			int numKnock = gi.EntitiesInBox( mins, maxs, knockList, MAX_GENTITIES );
+			for ( int k = 0; k < numKnock; k++ )
+			{
+				gentity_t *victim = knockList[k];
+				if ( !victim->client || victim->health <= 0 )
+					continue;
+				vec3_t pushDir;
+				VectorSubtract( victim->currentOrigin, impactPos, pushDir );
+				if ( VectorNormalize( pushDir ) == 0.0f )
+					pushDir[2] = 1.0f;
+				G_Knockdown( victim, ent->owner, pushDir, 300, qfalse );
+			}
+		}
 	}
 
 	if ( ent->s.weapon == WP_NOGHRI_STICK )
@@ -748,7 +774,7 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace, int hitLoc=HL_NONE )
 		if ( !(other->contents&CONTENTS_LIGHTSABER)
 			|| g_spskill->integer <= 0//on easy, it reflects all shots
 			|| (g_spskill->integer == 1 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 )//on medium it won't reflect flechette or demp shots
-			|| (g_spskill->integer >= 2 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 && ent->s.weapon != WP_BOWCASTER && ent->s.weapon != WP_REPEATER )//on hard it won't reflect flechette, demp, repeater or bowcaster shots
+			|| (g_spskill->integer >= 2 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 && ent->s.weapon != WP_BOWCASTER )//on hard it won't reflect flechette, demp, or bowcaster shots
 			)
 		{
 			G_BounceMissile( ent, trace );
@@ -812,7 +838,7 @@ extern cvar_t *g_saberAutoBlocking;
 		}
 		if ( ( g_spskill->integer <= 0//on easy, it reflects all shots
 				|| (g_spskill->integer == 1 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 )//on medium it won't reflect flechette or demp shots
-				|| (g_spskill->integer >= 2 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 && ent->s.weapon != WP_BOWCASTER && ent->s.weapon != WP_REPEATER )//on hard it won't reflect flechette, demp, repeater or bowcaster shots
+				|| (g_spskill->integer >= 2 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 && ent->s.weapon != WP_BOWCASTER )//on hard it won't reflect flechette, demp, or bowcaster shots
 			 )
 			&& (!ent->splashDamage || !ent->splashRadius) //this would be cool, though, to "bat" the thermal det away...
 			&& ent->s.weapon != WP_NOGHRI_STICK )//gas bomb, don't reflect
@@ -1391,12 +1417,17 @@ void G_RunMissile( gentity_t *ent )
 			{//hit a lightsaber bbox
 				if ( other->owner
 					&& other->owner->client
-					&& !other->owner->client->ps.saberInFlight
-					&& ( Q_irand( 0, (other->owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]*other->owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]) ) == 0
-						|| !InFront( ent->currentOrigin, other->owner->currentOrigin, other->owner->client->ps.viewangles, SABER_REFLECT_MISSILE_CONE ) ) )//other->owner->s.number == 0 &&
-				{//Jedi cannot block shots from behind!
-					//re-trace from here, ignoring the lightsaber
-					gi.trace( &tr, tr.endpos, ent->mins, ent->maxs, origin, tr.entityNum, ent->clipmask, G2_RETURNONHIT, 10 );
+					&& !other->owner->client->ps.saberInFlight )
+				{
+					// Player with FP blocks all frontal shots; NPCs and zero-FP players use the miss-chance
+					const qboolean playerHasFP =
+						((!other->owner->s.number && other->owner->client->ps.forcePower > 0) ? qtrue : qfalse);
+					if ( (!playerHasFP && Q_irand( 0, (other->owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]*other->owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]) ) == 0)
+						|| !InFront( ent->currentOrigin, other->owner->currentOrigin, other->owner->client->ps.viewangles, SABER_REFLECT_MISSILE_CONE ) )
+					{//Jedi cannot block shots from behind!
+						//re-trace from here, ignoring the lightsaber
+						gi.trace( &tr, tr.endpos, ent->mins, ent->maxs, origin, tr.entityNum, ent->clipmask, G2_RETURNONHIT, 10 );
+					}
 				}
 			}
 		}

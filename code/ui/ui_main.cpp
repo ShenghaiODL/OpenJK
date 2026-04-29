@@ -2161,17 +2161,13 @@ static void UI_CalcForceStatus(void)
 		pState->forcePowerLevel[FP_TELEPATHY] +
 		pState->forcePowerLevel[FP_PROTECT] +
 		pState->forcePowerLevel[FP_ABSORB] +
-		pState->forcePowerLevel[FP_STASIS] +
-		pState->forcePowerLevel[FP_BLINDING] +
-		pState->forcePowerLevel[FP_INVULNERABILITY];
+		pState->forcePowerLevel[FP_STASIS];
 
 	darkSide = pState->forcePowerLevel[FP_GRIP] +
 		pState->forcePowerLevel[FP_LIGHTNING] +
 		pState->forcePowerLevel[FP_RAGE] +
 		pState->forcePowerLevel[FP_DRAIN] +
-		pState->forcePowerLevel[FP_DESTRUCTION] +
-		pState->forcePowerLevel[FP_INSANITY] +
-		pState->forcePowerLevel[FP_DEADLYSIGHT];
+		pState->forcePowerLevel[FP_INSANITY];
 
 	total = lightSide + darkSide;
 
@@ -5805,8 +5801,6 @@ static powerEnum_t powerEnums[MAX_POWER_ENUMS] =
 #ifndef JK2_MODE
 	{ "protect",		FP_PROTECT },
 	{ "stasis",		FP_STASIS },
-	{ "blinding",	FP_BLINDING },
-	{ "invulnerability",	FP_INVULNERABILITY },
 #endif // !JK2_MODE
 
 				// Core powers
@@ -5823,7 +5817,6 @@ static powerEnum_t powerEnums[MAX_POWER_ENUMS] =
 	{ "saboff",		FP_SABER_OFFENSE },
 	{ "sabthrow",		FP_SABERTHROW },
 #ifndef JK2_MODE
-	{ "repulse",	FP_REPULSE },
 #endif // !JK2_MODE
 
 				// Dark powers
@@ -5836,9 +5829,7 @@ static powerEnum_t powerEnums[MAX_POWER_ENUMS] =
 
 #ifndef JK2_MODE
 	{ "rage",			FP_RAGE },
-	{ "destruction",	FP_DESTRUCTION },
 	{ "insanity",	FP_INSANITY },
-	{ "deadlysight", FP_DEADLYSIGHT },
 #endif // !JK2_MODE
 };
 
@@ -6145,13 +6136,7 @@ static void	UI_DemoSetForceLevels( void )
 		uiInfo.forcePowerLevel[FP_RAGE]=0;
 		
 		uiInfo.forcePowerLevel[FP_INSANITY]=0;
-		uiInfo.forcePowerLevel[FP_DESTRUCTION]=0;
 		uiInfo.forcePowerLevel[FP_STASIS]=0;
-		uiInfo.forcePowerLevel[FP_BLINDING]=0;
-		
-		uiInfo.forcePowerLevel[FP_DEADLYSIGHT]=0;
-		uiInfo.forcePowerLevel[FP_REPULSE]=0;
-		uiInfo.forcePowerLevel[FP_INVULNERABILITY]=0;
 	}
 	else
 	{
@@ -6179,13 +6164,7 @@ static void	UI_DemoSetForceLevels( void )
 		uiInfo.forcePowerLevel[FP_RAGE]=0;
 		
 		uiInfo.forcePowerLevel[FP_INSANITY]=0;
-		uiInfo.forcePowerLevel[FP_DESTRUCTION]=0;
 		uiInfo.forcePowerLevel[FP_STASIS]=0;
-		uiInfo.forcePowerLevel[FP_BLINDING]=0;
-		
-		uiInfo.forcePowerLevel[FP_DEADLYSIGHT]=0;
-		uiInfo.forcePowerLevel[FP_REPULSE]=0;
-		uiInfo.forcePowerLevel[FP_INVULNERABILITY]=0;
 	}
 
 	if (pState)
@@ -6201,13 +6180,7 @@ static void	UI_DemoSetForceLevels( void )
 		uiInfo.forcePowerLevel[FP_RAGE]=Q_max(pState->forcePowerLevel[FP_RAGE], uiInfo.forcePowerLevel[FP_RAGE]);
 		
 		uiInfo.forcePowerLevel[FP_INSANITY]=Q_max(pState->forcePowerLevel[FP_INSANITY], uiInfo.forcePowerLevel[FP_INSANITY]);
-		uiInfo.forcePowerLevel[FP_DESTRUCTION]=Q_max(pState->forcePowerLevel[FP_DESTRUCTION], uiInfo.forcePowerLevel[FP_DESTRUCTION]);
 		uiInfo.forcePowerLevel[FP_STASIS]=Q_max(pState->forcePowerLevel[FP_STASIS], uiInfo.forcePowerLevel[FP_STASIS]);
-		uiInfo.forcePowerLevel[FP_BLINDING]=Q_max(pState->forcePowerLevel[FP_BLINDING], uiInfo.forcePowerLevel[FP_BLINDING]);
-		
-		uiInfo.forcePowerLevel[FP_DEADLYSIGHT]=Q_max(pState->forcePowerLevel[FP_DEADLYSIGHT], uiInfo.forcePowerLevel[FP_DEADLYSIGHT]);
-		uiInfo.forcePowerLevel[FP_REPULSE]=Q_max(pState->forcePowerLevel[FP_REPULSE], uiInfo.forcePowerLevel[FP_REPULSE]);
-		uiInfo.forcePowerLevel[FP_INVULNERABILITY]=Q_max(pState->forcePowerLevel[FP_INVULNERABILITY], uiInfo.forcePowerLevel[FP_INVULNERABILITY]);
 	}
 }
 #endif // !JK2_MODE

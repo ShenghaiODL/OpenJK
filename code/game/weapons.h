@@ -214,7 +214,7 @@ typedef struct ammoData_s
 
 // Wookie Bowcaster
 //----------
-#define	BOWCASTER_DAMAGE			45
+#define	BOWCASTER_DAMAGE			55
 #define	BOWCASTER_VELOCITY			1300
 #define	BOWCASTER_NPC_DAMAGE_EASY	12
 #define	BOWCASTER_NPC_DAMAGE_NORMAL	24
@@ -226,6 +226,10 @@ typedef struct ammoData_s
 #define BOWCASTER_ALT_SPREAD		5.0f
 #define BOWCASTER_VEL_RANGE			0.3f
 #define BOWCASTER_CHARGE_UNIT		200.0f	// bowcaster charging gives us one more unit every 200ms--if you change this, you'll have to do the same in bg_pmove
+
+#define BOWCASTER_ALT_DAMAGE		70		// base damage for uncharged explosive alt bolt
+#define BOWCASTER_ALT_SPLASH_DAMAGE	40		// AOE splash damage on alt bolt impact
+#define BOWCASTER_ALT_SPLASH_RADIUS	150.0f	// AOE splash radius
 
 // Heavy Repeater
 //----------

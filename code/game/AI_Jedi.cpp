@@ -49,7 +49,6 @@ extern void ForceProtect( gentity_t *self );
 extern void ForceAbsorb( gentity_t *self );
 extern qboolean ForceDrain2( gentity_t *self );
 extern void ForceStasis( gentity_t *self );
-extern void ForceDestruction( gentity_t *self );
 extern int WP_MissileBlockForBlock( int saberBlock );
 extern qboolean WP_ForcePowerUsable( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
 extern qboolean WP_ForcePowerAvailable( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
@@ -1906,11 +1905,6 @@ static void Jedi_CombatDistance( int enemy_dist )
 						else if ( WP_ForcePowerUsable( NPC, FP_STASIS, 0 ) && Q_irand(0, 1) && NPC->enemy && NPC->enemy->client && NPC->enemy->client->ps.stasisTime < level.time)
 						{
 							ForceStasis( NPC );
-							TIMER_Set( NPC, "attackDelay", NPC->client->ps.weaponTime );
-						}
-						else if ( WP_ForcePowerUsable( NPC, FP_DESTRUCTION, 0 ) && Q_irand(0, 1))
-						{
-							ForceDestruction( NPC );
 							TIMER_Set( NPC, "attackDelay", NPC->client->ps.weaponTime );
 						}
 						else

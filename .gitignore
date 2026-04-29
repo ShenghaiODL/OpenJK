@@ -124,7 +124,7 @@ UpgradeLog*.XML
 .vscode
 .claude/
 Game Assets/
-
+Mod Files/
 
 ############
 ## Windows

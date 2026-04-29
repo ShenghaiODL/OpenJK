@@ -34,9 +34,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 static void WP_BowcasterMainFire( gentity_t *ent )
 //---------------------------------------------------------
 {
-	int			damage	= weaponData[WP_BOWCASTER].damage, count;
-	float		vel;
-	vec3_t		angs, dir, start;
+	int			damage	= weaponData[WP_BOWCASTER].damage;
+	vec3_t		start;
 	gentity_t	*missile;
 
 	VectorCopy( muzzle, start );
@@ -59,6 +58,37 @@ static void WP_BowcasterMainFire( gentity_t *ent )
 		}
 	}
 
+	WP_MissileTargetHint(ent, start, forwardVec);
+
+	missile = CreateMissile( start, forwardVec, BOWCASTER_VELOCITY, 10000, ent );
+
+	missile->classname = "bowcaster_proj";
+	missile->s.weapon = WP_BOWCASTER;
+
+	VectorSet( missile->maxs, BOWCASTER_SIZE, BOWCASTER_SIZE, BOWCASTER_SIZE );
+	VectorScale( missile->maxs, -1, missile->mins );
+
+	missile->damage = damage;
+	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
+	missile->methodOfDeath = MOD_BOWCASTER;
+	missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
+	missile->splashDamage = weaponData[WP_BOWCASTER].splashDamage;
+	missile->splashRadius = weaponData[WP_BOWCASTER].splashRadius;
+
+	missile->bounceCount = 0;
+}
+
+//---------------------------------------------------------
+static void WP_BowcasterAltFire( gentity_t *ent )
+//---------------------------------------------------------
+{
+	vec3_t	start;
+	int		count;
+
+	VectorCopy( muzzle, start );
+	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );//make sure our start point isn't on the other side of a wall
+
+	// read charge level, same logic as the old main fire
 	count = ( level.time - ent->client->ps.weaponChargeTime ) / BOWCASTER_CHARGE_UNIT;
 
 	if ( count < 1 )
@@ -70,86 +100,15 @@ static void WP_BowcasterMainFire( gentity_t *ent )
 		count = 5;
 	}
 
-	if ( !(count & 1 ))
+	if ( !(count & 1) )
 	{
-		// if we aren't odd, knock us down a level
 		count--;
 	}
 
-//	if ( ent->client && ent->client->ps.powerups[PW_WEAPON_OVERCHARGE] > 0 && ent->client->ps.powerups[PW_WEAPON_OVERCHARGE] > cg.time )
-//	{
-//		// in overcharge mode, so doing double damage
-//		damage *= 2;
-//	}
+	// stronger base damage that scales with charge (60 at count 1, 100 at count 5)
+	int damage = BOWCASTER_ALT_DAMAGE + (count - 1) * 10;
 
-	WP_MissileTargetHint(ent, start, forwardVec);
-	for ( int i = 0; i < count; i++ )
-	{
-		// create a range of different velocities
-		vel = BOWCASTER_VELOCITY * ( Q_flrand(-1.0f, 1.0f) * BOWCASTER_VEL_RANGE + 1.0f );
-
-		vectoangles( forwardVec, angs );
-
-		if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
-			|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
-		{//force sight 2+ gives perfect aim
-			//FIXME: maybe force sight level 3 autoaims some?
-			// add some slop to the fire direction
-			angs[PITCH] += Q_flrand(-1.0f, 1.0f) * BOWCASTER_ALT_SPREAD * 0.2f;
-			angs[YAW]	+= ((i+0.5f) * BOWCASTER_ALT_SPREAD - count * 0.5f * BOWCASTER_ALT_SPREAD );
-			if ( ent->NPC )
-			{
-				angs[PITCH] += ( Q_flrand(-1.0f, 1.0f) * (BLASTER_NPC_SPREAD+(6-ent->NPC->currentAim)*0.25f) );
-				angs[YAW]	+= ( Q_flrand(-1.0f, 1.0f) * (BLASTER_NPC_SPREAD+(6-ent->NPC->currentAim)*0.25f) );
-			}
-		}
-
-		AngleVectors( angs, dir, NULL, NULL );
-
-		missile = CreateMissile( start, dir, vel, 10000, ent );
-
-		missile->classname = "bowcaster_proj";
-		missile->s.weapon = WP_BOWCASTER;
-
-		VectorSet( missile->maxs, BOWCASTER_SIZE, BOWCASTER_SIZE, BOWCASTER_SIZE );
-		VectorScale( missile->maxs, -1, missile->mins );
-
-//		if ( ent->client && ent->client->ps.powerups[PW_WEAPON_OVERCHARGE] > 0 && ent->client->ps.powerups[PW_WEAPON_OVERCHARGE] > cg.time )
-//		{
-//			missile->flags |= FL_OVERCHARGED;
-//		}
-
-		missile->damage = damage;
-		missile->dflags = DAMAGE_DEATH_KNOCKBACK;
-		missile->methodOfDeath = MOD_BOWCASTER;
-		missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
-		missile->splashDamage = weaponData[WP_BOWCASTER].splashDamage;
-		missile->splashRadius = weaponData[WP_BOWCASTER].splashRadius;
-
-		// we don't want it to bounce
-		missile->bounceCount = 0;
-		ent->client->sess.missionStats.shotsFired++;
-	}
-}
-
-//---------------------------------------------------------
-static void WP_BowcasterAltFire( gentity_t *ent )
-//---------------------------------------------------------
-{
-	vec3_t	start;
-	int		damage	= weaponData[WP_BOWCASTER].altDamage;
-
-	VectorCopy( muzzle, start );
-	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );//make sure our start point isn't on the other side of a wall
-
-	WP_MissileTargetHint(ent, start, forwardVec);
-
-	gentity_t *missile = CreateMissile( start, forwardVec, BOWCASTER_VELOCITY, 10000, ent, qtrue );
-
-	missile->classname = "bowcaster_alt_proj";
-	missile->s.weapon = WP_BOWCASTER;
-
-	// Do the damages
+	// NPC override
 	if ( ent->s.number != 0 )
 	{
 		if ( g_spskill->integer == 0 )
@@ -166,18 +125,15 @@ static void WP_BowcasterAltFire( gentity_t *ent )
 		}
 	}
 
+	WP_MissileTargetHint(ent, start, forwardVec);
+
+	gentity_t *missile = CreateMissile( start, forwardVec, BOWCASTER_VELOCITY, 10000, ent, qtrue );
+
+	missile->classname = "bowcaster_alt_proj";
+	missile->s.weapon = WP_BOWCASTER;
+
 	VectorSet( missile->maxs, BOWCASTER_SIZE, BOWCASTER_SIZE, BOWCASTER_SIZE );
 	VectorScale( missile->maxs, -1, missile->mins );
-
-//	if ( ent->client && ent->client->ps.powerups[PW_WEAPON_OVERCHARGE] > 0 && ent->client->ps.powerups[PW_WEAPON_OVERCHARGE] > cg.time )
-//	{
-//		// in overcharge mode, so doing double damage
-//		missile->flags |= FL_OVERCHARGED;
-//		damage *= 2;
-//	}
-
-	missile->s.eFlags |= EF_BOUNCE;
-	missile->bounceCount = 3;
 
 	missile->damage = damage;
 	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
@@ -185,6 +141,11 @@ static void WP_BowcasterAltFire( gentity_t *ent )
 	missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
 	missile->splashDamage = weaponData[WP_BOWCASTER].altSplashDamage;
 	missile->splashRadius = weaponData[WP_BOWCASTER].altSplashRadius;
+	missile->splashMethodOfDeath = MOD_BOWCASTER_ALT;
+
+	missile->bounceCount = 0;
+
+	ent->client->sess.missionStats.shotsFired++;
 }
 
 //---------------------------------------------------------

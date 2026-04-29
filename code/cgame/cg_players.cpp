@@ -4146,11 +4146,7 @@ static void CG_ForcePushRefraction( vec3_t org, centity_t *cent, float scaleFact
 	}
 
 	//scale from 1.0f to 0.1f then hold at 0.1 for the rest of the duration
-	if (cent->gent->client->ps.forcePowersActive & ( 1 << FP_REPULSE ) )
-	{
-		scale = 1.0f;
-	}
-	else if (cent->gent->client->ps.forcePowersActive & ( 1 << FP_PULL ) )
+	if (cent->gent->client->ps.forcePowersActive & ( 1 << FP_PULL ) )
 	{
 		scale = (float)(REFRACT_EFFECT_DURATION-tDif)*0.003f;
 	}
@@ -4168,11 +4164,6 @@ static void CG_ForcePushRefraction( vec3_t org, centity_t *cent, float scaleFact
 	}
 
 	//start alpha at 244, fade to 10
-	if (cent->gent->client->ps.forcePowersActive & ( 1 << FP_REPULSE ) )
-	{
-		alpha = 244.0f;
-	}
-	else
 	{
 		alpha = (float)tDif*0.488f;
 	}
@@ -9377,10 +9368,6 @@ SkipTrueView:
 			vec3_t orange;
 			VectorScale(colorTable[CT_VLTORANGE], 255.0f, orange);
 			CG_ForcePushRefraction(cent->gent->client->renderInfo.muzzlePoint, cent, 1.0f, orange);
-		}
-		else if ( cent->gent->client->ps.powerups[PW_FORCE_REPULSE] > cg.time )
-		{
-			CG_ForcePushRefraction(cent->gent->client->renderInfo.crotchPoint, cent, 2.0f, NULL);
 		}
 		else
 		{

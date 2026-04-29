@@ -13124,10 +13124,11 @@ static bool PM_DoChargedWeapons( void )
 	//------------------
 	case WP_BOWCASTER:
 
-		// main-fire charges the weapon
-		if ( pm->cmd.buttons & BUTTON_ATTACK )
+		// alt-fire charges the weapon
+		if ( pm->cmd.buttons & BUTTON_ALT_ATTACK )
 		{
 			charging = qtrue;
+			altFire = qtrue;
 		}
 		break;
 
@@ -13304,7 +13305,7 @@ static int PM_DoChargingAmmoUsage( int *amount )
 {
 	int count = 0;
 
-	if ( pm->ps->weapon == WP_BOWCASTER && !( pm->cmd.buttons & BUTTON_ALT_ATTACK ))
+	if ( pm->ps->weapon == WP_BOWCASTER && ( pm->cmd.buttons & BUTTON_ALT_ATTACK ))
 	{
 		// this code is duplicated ( I know, I know ) in G_weapon.cpp for the bowcaster alt-fire
 		count = ( level.time - pm->ps->weaponChargeTime ) / BOWCASTER_CHARGE_UNIT;
@@ -14212,7 +14213,11 @@ static void PM_Weapon( void )
 	{
 		PM_AddEvent( EV_ALT_FIRE );
 		addTime = weaponData[pm->ps->weapon].altFireTime;
-		if ( pm->ps->weapon == WP_THERMAL )
+		if ( pm->ps->weapon == WP_BOWCASTER )
+		{// charged explosive bolt — nerf fire rate significantly
+			addTime *= 3.0f;
+		}
+		else if ( pm->ps->weapon == WP_THERMAL )
 		{//threw our thermal
 			if ( pm->gent )
 			{// remove the thermal model if we had it.
@@ -14242,12 +14247,12 @@ static void PM_Weapon( void )
 			//melee with g_debugmelee on
 			addTime = pm->ps->torsoAnimTimer;
 			break;
+		case WP_BOWCASTER:
+			addTime *= 1.5f;
+			break;
 		case WP_REPEATER:
 			// repeater is supposed to do smoke after sustained bursts
 			pm->ps->weaponShotCount++;
-			break;
-		case WP_BOWCASTER:
-			addTime *= (( trueCount < 3 ) ? 0.35f : 1.0f );// if you only did a small charge shot with the bowcaster, use less time between shots
 			break;
 		case WP_THERMAL:
 			if ( pm->gent )
@@ -14467,13 +14472,8 @@ extern void ForceRage( gentity_t *self );
 extern void ForceProtect( gentity_t *self );
 extern void ForceAbsorb( gentity_t *self );
 extern void ForceSeeing( gentity_t *self );
-extern void ForceDestruction( gentity_t *self );
 extern void ForceInsanity( gentity_t *self );
 extern void ForceStasis( gentity_t *self );
-extern void ForceBlinding( gentity_t *self );
-extern void ForceDeadlySight( gentity_t *self );
-extern void ForceRepulse( gentity_t *self );
-extern void ForceInvulnerability( gentity_t *self );
 
 void PM_CheckForceUseButton( gentity_t *ent, usercmd_t *ucmd  )
 {
@@ -14517,23 +14517,11 @@ void PM_CheckForceUseButton( gentity_t *ent, usercmd_t *ucmd  )
 			case FP_SEE:		//duration - detect/see hidden enemies
 				ForceSeeing( ent );
 				break;
-			case FP_DESTRUCTION:
-				ForceDestruction( ent );
-				break;
 			case FP_INSANITY:
 				ForceInsanity( ent );
 				break;
 			case FP_STASIS:
 				ForceStasis( ent );
-				break;
-			case FP_BLINDING:
-				ForceBlinding( ent );
-				break;
-			case FP_DEADLYSIGHT:
-				ForceDeadlySight( ent );
-				break;
-			case FP_INVULNERABILITY:
-				ForceInvulnerability( ent );
 				break;
 			}
 		}
@@ -14555,9 +14543,6 @@ void PM_CheckForceUseButton( gentity_t *ent, usercmd_t *ucmd  )
 			break;
 		case FP_SABERTHROW:
 			ucmd->buttons |= BUTTON_SABERTHROW;
-			break;
-		case FP_REPULSE:
-			ucmd->buttons |= BUTTON_REPULSE;
 			break;
 //		default:
 //			Com_Printf( "Use Force: Unhandled force: %d\n", showPowers[cg.forcepowerSelect]);
