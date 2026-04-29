@@ -159,6 +159,9 @@ typedef enum //# animNumber_e
 	BOTH_ATTACK1,			//# Attack with stun baton
 	BOTH_ATTACK2,			//# Attack with one-handed pistol
 	BOTH_ATTACK3,			//# Attack with blaster rifle
+	BOTH_MINIGUN_ATTACK,	//# Attack with Z-6 rotary blaster
+	BOTH_MINIGUN_MELEE,		//# Z-6 melee strike
+	BOTH_MINIGUN_MELEE_KICK,//# Z-6 melee kick
 	BOTH_ATTACK4,			//# Attack with disruptor
 	BOTH_ATTACK5,			//# Another Rancor Attack
 	BOTH_ATTACK6,			//# Yet Another Rancor Attack
@@ -1293,7 +1296,12 @@ typedef enum //# animNumber_e
 	BOTH_WALK_STAFF,		//# Walk with saberstaff turned on
 	BOTH_WALKBACK_STAFF,	//# Walk backwards with saberstaff turned on
 	BOTH_WALK_DUAL,			//# Walk with dual turned on
-	BOTH_WALKBACK_DUAL,		//# Walk backwards with dual turned on
+	BOTH_WALKBACK_DUAL,			//# Walk backwards with dual turned on
+	BOTH_MINIGUN_WALK1,			//# Z-6 walk forward
+	BOTH_MINIGUN_WALK1_ATTACK,	//# Z-6 walk forward while firing
+	BOTH_MINIGUN_WALK1_STRAFE_L,//# Z-6 strafe left
+	BOTH_MINIGUN_WALK1_STRAFE_R,//# Z-6 strafe right
+	BOTH_MINIGUN_WALKBACK1,		//# Z-6 walk backward
 	BOTH_WALK5,				//# Tavion taunting Kyle (cin 22)
 	BOTH_WALK6,				//# Slow walk for Luke (cin 12)
 	BOTH_WALK7,				//# Fast walk
@@ -1656,10 +1664,15 @@ typedef enum //# animNumber_e
 	TORSO_WEAPONREADY1,		//# Ready to fire stun baton
 	TORSO_WEAPONREADY2,		//# Ready to fire one-handed blaster pistol
 	TORSO_WEAPONREADY3,		//# Ready to fire blaster rifle
+	BOTH_MINIGUN_IDLETOREADY,	//# Z-6 transition from idle to ready
+	BOTH_MINIGUN_READYTOIDLE,	//# Z-6 transition from ready to idle
+	BOTH_MINIGUN_READY,			//# Ready to fire Z-6 rotary blaster
 	TORSO_WEAPONREADY4,		//# Ready to fire sniper rifle
 	TORSO_WEAPONREADY10,	//# Ready to fire thermal det
 	TORSO_WEAPONIDLE2,		//# Holding one-handed blaster
 	TORSO_WEAPONIDLE3,		//# Holding blaster rifle
+	BOTH_MINIGUN_IDLE,		//# Holding Z-6 rotary blaster
+	BOTH_MINIGUN_IDLING,	//# Z-6 idle loop
 	TORSO_WEAPONIDLE4,		//# Holding sniper rifle
 	TORSO_WEAPONIDLE10,		//# Holding thermal det
 

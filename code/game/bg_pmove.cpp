@@ -6954,6 +6954,10 @@ qboolean PM_WalkingAnim( int anim )
 	case BOTH_WALKBACK2:			//# Walk2 backwards
 	case BOTH_WALKBACK_STAFF:		//# Walk backwards with staff
 	case BOTH_WALKBACK_DUAL:		//# Walk backwards with dual
+	case BOTH_MINIGUN_WALK1:
+	case BOTH_MINIGUN_WALKBACK1:
+	case BOTH_MINIGUN_WALK1_STRAFE_L:
+	case BOTH_MINIGUN_WALK1_STRAFE_R:
 		return qtrue;
 		break;
 	}
@@ -8477,6 +8481,10 @@ static void PM_Footsteps( void )
 					PM_SetAnim(pm,SETANIM_LEGS,BOTH_WALKBACK2,setAnimFlags);
 				}
 			}
+			else if ( pm->ps->weapon == WP_Z6_ROTARY )
+			{
+				PM_SetAnim(pm,SETANIM_LEGS,BOTH_MINIGUN_WALKBACK1,setAnimFlags);
+			}
 			else
 			{
 				PM_SetAnim(pm,SETANIM_LEGS,BOTH_WALKBACK1,setAnimFlags);
@@ -8594,6 +8602,10 @@ static void PM_Footsteps( void )
 					{
 						PM_SetAnim(pm,SETANIM_LEGS,BOTH_WALK2,setAnimFlags);
 					}
+				}
+				else if ( pm->ps->weapon == WP_Z6_ROTARY )
+				{
+					PM_SetAnim(pm,SETANIM_LEGS,BOTH_MINIGUN_WALK1,setAnimFlags);
 				}
 				else if ( pm->gent && pm->gent->client && pm->gent->client->NPC_class == CLASS_WAMPA )
 				{
@@ -13158,6 +13170,51 @@ static bool PM_DoChargedWeapons( void )
 		}
 		break;
 
+	//------------------
+	case WP_Z6_ROTARY:
+	{
+		if ( pm->cmd.buttons & BUTTON_ALT_ATTACK )
+		{
+			if ( pm->ps->weaponChargeTime == 0 )
+			{
+				if ( pm->ps->ammo[weaponData[pm->ps->weapon].ammoIndex] <= 0 )
+				{
+					PM_AddEvent( EV_NOAMMO );
+					pm->ps->weaponTime += 500;
+					return true;
+				}
+				pm->ps->weaponChargeTime = level.time;
+				G_SoundOnEnt( pm->gent, CHAN_WEAPON, "sound/weapons/z6/chaingun_spinup.wav" );
+			}
+			if ( pm->gent )
+			{
+				pm->gent->s.loopSound = G_SoundIndex( "sound/weapons/z6/spinny.wav" );
+			}
+			pm->ps->weaponstate = WEAPON_CHARGING_ALT;
+			if ( level.time - pm->ps->weaponChargeTime < 500 )
+			{
+				return true;
+			}
+			// Barrel spun up: suppress alt-fire path, let BUTTON_ATTACK fire normally
+			pm->cmd.buttons &= ~BUTTON_ALT_ATTACK;
+		}
+		else
+		{
+			if ( pm->ps->weaponChargeTime != 0 )
+			{
+				G_SoundOnEnt( pm->gent, CHAN_WEAPON, "sound/weapons/z6/chaingun_spindown.wav" );
+				pm->ps->weaponChargeTime = 0;
+			}
+			if ( pm->gent )
+			{
+				pm->gent->s.loopSound = 0;
+			}
+			// Cannot fire without the barrel spinning
+			pm->cmd.buttons &= ~BUTTON_ATTACK;
+		}
+		return false;
+	}
+
 	} // end switch
 
 	// set up the appropriate weapon state based on the button that's down.
@@ -13988,7 +14045,7 @@ static void PM_Weapon( void )
 				break;
 					
 			case WP_Z6_ROTARY:
-				PM_SetAnim( pm, SETANIM_TORSO, BOTH_ATTACK3, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART);
+				PM_SetAnim( pm, SETANIM_TORSO, BOTH_MINIGUN_ATTACK, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART);
 				break;
 					
 			case WP_DC15A_RIFLE:

@@ -6380,6 +6380,8 @@ void WP_SaberInFlightReflectCheck( gentity_t *self, usercmd_t *ucmd  )
 			continue;
 		if (ent->owner == self)
 			continue;
+		if ( ent->owner && ent->owner->client && OnSameTeam( self, ent->owner ) )
+			continue;
 		if ( !(ent->inuse) )
 			continue;
 		if ( ent->s.eType != ET_MISSILE )
@@ -7579,13 +7581,13 @@ void WP_SaberFireGun( gentity_t *self, usercmd_t *ucmd, int whichGun )
 //SABER BLOCKING============================================================================
 static int blockForceCost[] = {
 	0,   // SS_NONE
-	5,   // SS_FAST   — defensive style, low cost
-	8,   // SS_MEDIUM — balanced
-	10,  // SS_STRONG — offensive style, high cost
-	10,  // SS_DESANN — heavy variant
-	6,   // SS_TAVION — fast variant
-	9,   // SS_DUAL   — two blades
-	7,   // SS_STAFF  — wide coverage
+	5,   // SS_FAST
+	5,   // SS_MEDIUM
+	10,  // SS_STRONG
+	10,  // SS_DESANN
+	5,   // SS_TAVION
+	10,  // SS_DUAL
+	10,  // SS_STAFF
 };
 
 int WP_MissileBlockForBlock( int saberBlock )
@@ -7946,6 +7948,8 @@ void WP_SaberStartMissileBlockCheck( gentity_t *self, usercmd_t *ucmd  )
 		if (ent == self)
 			continue;
 		if (ent->owner == self)
+			continue;
+		if ( ent->owner && ent->owner->client && OnSameTeam( self, ent->owner ) )
 			continue;
 		if ( !(ent->inuse) )
 			continue;
@@ -15640,7 +15644,9 @@ void WP_ForcePowersUpdate( gentity_t *self, usercmd_t *ucmd )
 		if ( self->client->ps.forcePowerRegenDebounceTime < level.time )
 		{
 			int regenTime;
-			WP_ForcePowerRegenerate( self, self->client->ps.forcePowerRegenAmount );
+			int defLevel = self->client->ps.forcePowerLevel[FP_SABER_DEFENSE];
+			int regenMult = ( defLevel >= FORCE_LEVEL_3 ) ? 2 : 1;
+			WP_ForcePowerRegenerate( self, self->client->ps.forcePowerRegenAmount * regenMult );
 			if (!self->s.number && self->client->NPC_class == CLASS_PLAYER)
 			{
 				regenTime = Q_max(g_forceRegenTime->integer, 1);

@@ -160,6 +160,9 @@ stringID_table_t animTable [MAX_ANIMATIONS+1] =
 	ENUM2STRING(BOTH_ATTACK1),			//# Attack with stun baton
 	ENUM2STRING(BOTH_ATTACK2),			//# Attack with one-handed pistol
 	ENUM2STRING(BOTH_ATTACK3),			//# Attack with blaster rifle
+	ENUM2STRING(BOTH_MINIGUN_ATTACK),		//# Attack with Z-6 rotary blaster
+	ENUM2STRING(BOTH_MINIGUN_MELEE),		//# Z-6 melee strike
+	ENUM2STRING(BOTH_MINIGUN_MELEE_KICK),	//# Z-6 melee kick
 	ENUM2STRING(BOTH_ATTACK4),			//# Attack with disruptor
 	ENUM2STRING(BOTH_ATTACK5),			//# Another Rancor Attack
 	ENUM2STRING(BOTH_ATTACK6),			//# Yet Another Rancor Attack
@@ -1293,7 +1296,12 @@ stringID_table_t animTable [MAX_ANIMATIONS+1] =
 	ENUM2STRING(BOTH_WALK_STAFF),		//# Walk with saberstaff turned on
 	ENUM2STRING(BOTH_WALKBACK_STAFF),	//# Walk backwards with saberstaff turned on
 	ENUM2STRING(BOTH_WALK_DUAL),			//# Walk with dual turned on
-	ENUM2STRING(BOTH_WALKBACK_DUAL),		//# Walk backwards with dual turned on
+	ENUM2STRING(BOTH_WALKBACK_DUAL),			//# Walk backwards with dual turned on
+	ENUM2STRING(BOTH_MINIGUN_WALK1),			//# Z-6 walk forward
+	ENUM2STRING(BOTH_MINIGUN_WALK1_ATTACK),		//# Z-6 walk forward while firing
+	ENUM2STRING(BOTH_MINIGUN_WALK1_STRAFE_L),	//# Z-6 strafe left
+	ENUM2STRING(BOTH_MINIGUN_WALK1_STRAFE_R),	//# Z-6 strafe right
+	ENUM2STRING(BOTH_MINIGUN_WALKBACK1),		//# Z-6 walk backward
 	ENUM2STRING(BOTH_WALK5),				//# Tavion taunting Kyle (cin 22)
 	ENUM2STRING(BOTH_WALK6),				//# Slow walk for Luke (cin 12)
 	ENUM2STRING(BOTH_WALK7),				//# Fast walk
@@ -1650,10 +1658,15 @@ stringID_table_t animTable [MAX_ANIMATIONS+1] =
 	ENUM2STRING(TORSO_WEAPONREADY1),		//# Ready to fire stun baton
 	ENUM2STRING(TORSO_WEAPONREADY2),		//# Ready to fire one-handed blaster pistol
 	ENUM2STRING(TORSO_WEAPONREADY3),		//# Ready to fire blaster rifle
+	ENUM2STRING(BOTH_MINIGUN_IDLETOREADY),	//# Z-6 transition from idle to ready
+	ENUM2STRING(BOTH_MINIGUN_READYTOIDLE),	//# Z-6 transition from ready to idle
+	ENUM2STRING(BOTH_MINIGUN_READY),		//# Ready to fire Z-6 rotary blaster
 	ENUM2STRING(TORSO_WEAPONREADY4),		//# Ready to fire sniper rifle
 	ENUM2STRING(TORSO_WEAPONREADY10),	//# Ready to fire thermal det
 	ENUM2STRING(TORSO_WEAPONIDLE2),		//# Holding one-handed blaster
 	ENUM2STRING(TORSO_WEAPONIDLE3),		//# Holding blaster rifle
+	ENUM2STRING(BOTH_MINIGUN_IDLE),		//# Holding Z-6 rotary blaster
+	ENUM2STRING(BOTH_MINIGUN_IDLING),	//# Z-6 idle loop
 	ENUM2STRING(TORSO_WEAPONIDLE4),		//# Holding sniper rifle
 	ENUM2STRING(TORSO_WEAPONIDLE10),		//# Holding thermal det
 

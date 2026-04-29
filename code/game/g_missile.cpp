@@ -838,39 +838,34 @@ extern cvar_t *g_saberAutoBlocking;
 				}
 				else
 				{
-					int blockChance = 0;
+					int reflectChance = 0;
 					switch ( other->owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] )
-					{//level 1 reflects 50% of the time, level 2 reflects 75% of the time
-					case FORCE_LEVEL_3:
-						blockChance = 10;
-						break;
-					case FORCE_LEVEL_2:
-						blockChance = 3;
-						break;
-					case FORCE_LEVEL_1:
-						blockChance = 1;
-						break;
-					}
-					if ( blockChance && (other->owner->client->ps.forcePowersActive&(1<<FP_SPEED)) )
-					{//in in force speed, better chance of deflecting the shot
-						blockChance += other->owner->client->ps.forcePowerLevel[FP_SPEED]*2;
-					}
-					if ( Q_irand( 0, blockChance ) )
 					{
-						VectorSubtract(ent->currentOrigin, other->currentOrigin, diff);
-						VectorNormalize(diff);
-						G_ReflectMissile( other, ent, diff);
+					case FORCE_LEVEL_3:  reflectChance = 90;  break;
+					case FORCE_LEVEL_2:  reflectChance = 60;  break;
+					case FORCE_LEVEL_1:  reflectChance = 40;  break;
+					}
+					if ( reflectChance && (other->owner->client->ps.forcePowersActive&(1<<FP_SPEED)) )
+					{
+						reflectChance += other->owner->client->ps.forcePowerLevel[FP_SPEED]*10;
+					}
+					VectorSubtract( ent->currentOrigin, other->currentOrigin, diff );
+					VectorNormalize( diff );
+					if ( Q_irand( 0, 99 ) < reflectChance )
+					{
+						G_ReflectMissile( other, ent, diff );
 						if ( other->owner && other->owner->client )
 						{
 							other->owner->client->ps.saberEventFlags |= SEF_DEFLECTED;
 						}
-						//do the effect
-						VectorCopy( ent->s.pos.trDelta, diff );
-						VectorNormalize( diff );
-						G_MissileReflectEffect( ent, trace->endpos, trace->plane.normal );
-						return;
 					}
-				}
+					else
+					{
+						G_ReflectMissile( other, ent, trace->plane.normal );
+					}
+					G_MissileReflectEffect( ent, trace->endpos, trace->plane.normal );
+					return;
+					}
 			}
 		}
 		else

@@ -5405,6 +5405,11 @@ void PM_TorsoAnimLightsaber()
 			PM_SetAnim(pm,SETANIM_TORSO,BOTH_WALK_DUAL,SETANIM_FLAG_NORMAL);
 			pm->ps->saberMove = LS_READY;
 		}
+		else if( pm->ps->legsAnim == BOTH_MINIGUN_WALK1 )
+		{
+			PM_SetAnim(pm,SETANIM_TORSO,BOTH_MINIGUN_WALK1,SETANIM_FLAG_NORMAL);
+			pm->ps->saberMove = LS_READY;
+		}
 		else if( pm->ps->legsAnim == BOTH_CROUCH1IDLE && pm->ps->clientNum != 0 )//player falls through
 		{
 			//??? Why nothing?  What if you were running???
@@ -5900,6 +5905,10 @@ void PM_TorsoAnimation( void )
 		{
 			PM_SetAnim(pm,SETANIM_TORSO,BOTH_WALK_DUAL,SETANIM_FLAG_NORMAL);
 		}
+		else if( pm->ps->legsAnim == BOTH_MINIGUN_WALK1 && !weaponBusy )
+		{
+			PM_SetAnim(pm,SETANIM_TORSO,BOTH_MINIGUN_WALK1,SETANIM_FLAG_NORMAL);
+		}
 		else if( pm->ps->legsAnim == BOTH_CROUCH1IDLE && pm->ps->clientNum != 0 )//player falls through
 		{
 			//??? Why nothing?  What if you were running???
@@ -6089,7 +6098,7 @@ void PM_TorsoAnimation( void )
 					break;
 						
 				case WP_Z6_ROTARY:
-					PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY3,SETANIM_FLAG_NORMAL);
+					PM_SetAnim(pm,SETANIM_TORSO,BOTH_MINIGUN_READY,SETANIM_FLAG_NORMAL);
 					break;
 						
 				case WP_DC15A_RIFLE:
@@ -6424,11 +6433,11 @@ void PM_TorsoAnimation( void )
 				case WP_Z6_ROTARY:
 					if ( weaponBusy )
 					{
-						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY3,SETANIM_FLAG_NORMAL);
+						PM_SetAnim(pm,SETANIM_TORSO,BOTH_MINIGUN_READY,SETANIM_FLAG_NORMAL);
 					}
 					else
 					{
-						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONIDLE3,SETANIM_FLAG_NORMAL);
+						PM_SetAnim(pm,SETANIM_TORSO,BOTH_MINIGUN_IDLE,SETANIM_FLAG_NORMAL);
 					}
 					break;
 
