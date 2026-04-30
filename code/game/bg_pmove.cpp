@@ -13701,6 +13701,16 @@ static void PM_Weapon( void )
 			switch(pm->ps->weapon)
 			{
 			case WP_BRYAR_PISTOL:
+				if ( pm->gent
+					&& pm->gent->weaponModel[1] > 0 )
+				{//dual pistols
+					PM_SetAnim(pm,SETANIM_TORSO,BOTH_STAND1,SETANIM_FLAG_NORMAL);
+				}
+				else
+				{//single pistol
+					PM_SetAnim(pm,SETANIM_TORSO,BOTH_PISTOL_IDLE2,SETANIM_FLAG_NORMAL);
+				}
+				break;
 			case WP_BLASTER_PISTOL:
 				if ( pm->gent
 					&& pm->gent->weaponModel[1] > 0 )
@@ -13710,7 +13720,7 @@ static void PM_Weapon( void )
 				}
 				else
 				{//single pistol
-					PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONIDLE2,SETANIM_FLAG_NORMAL);
+					PM_SetAnim(pm,SETANIM_TORSO,BOTH_PISTOL_IDLE,SETANIM_FLAG_NORMAL);
 				}
 				break;
 			default:
@@ -13879,6 +13889,15 @@ static void PM_Weapon( void )
 				break;
 	*/
 			case WP_BRYAR_PISTOL://1-handed
+				if ( pm->gent && pm->gent->weaponModel[1] > 0 )
+				{//dual pistols
+					PM_SetAnim(pm,SETANIM_TORSO,BOTH_GUNSIT1,SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_RESTART|SETANIM_FLAG_HOLD);
+				}
+				else
+				{//single pistol
+					PM_SetAnim(pm,SETANIM_TORSO,BOTH_PISTOL_ATTACK,SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_RESTART|SETANIM_FLAG_HOLD);
+				}
+				break;
 			case WP_BLASTER_PISTOL://1-handed
 				if ( pm->gent && pm->gent->weaponModel[1] > 0 )
 				{//dual pistols
@@ -13886,7 +13905,7 @@ static void PM_Weapon( void )
 				}
 				else
 				{//single pistol
-					PM_SetAnim(pm,SETANIM_TORSO,BOTH_ATTACK2,SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_RESTART|SETANIM_FLAG_HOLD);
+					PM_SetAnim(pm,SETANIM_TORSO,BOTH_PISTOL_ATTACK,SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_RESTART|SETANIM_FLAG_HOLD);
 				}
 				break;
 
@@ -14248,7 +14267,7 @@ static void PM_Weapon( void )
 			addTime = pm->ps->torsoAnimTimer;
 			break;
 		case WP_BOWCASTER:
-			addTime *= 1.5f;
+			addTime *= 2.5f;
 			break;
 		case WP_REPEATER:
 			// repeater is supposed to do smoke after sustained bursts

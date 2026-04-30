@@ -159,6 +159,7 @@ stringID_table_t animTable [MAX_ANIMATIONS+1] =
 	//# #sep ENUM2STRING(BOTH_ ATTACKS
 	ENUM2STRING(BOTH_ATTACK1),			//# Attack with stun baton
 	ENUM2STRING(BOTH_ATTACK2),			//# Attack with one-handed pistol
+	ENUM2STRING(BOTH_PISTOL_ATTACK),		//# Attack with blaster pistol
 	ENUM2STRING(BOTH_ATTACK3),			//# Attack with blaster rifle
 	ENUM2STRING(BOTH_MINIGUN_ATTACK),		//# Attack with Z-6 rotary blaster
 	ENUM2STRING(BOTH_MINIGUN_MELEE),		//# Z-6 melee strike
@@ -1667,6 +1668,10 @@ stringID_table_t animTable [MAX_ANIMATIONS+1] =
 	ENUM2STRING(TORSO_WEAPONIDLE3),		//# Holding blaster rifle
 	ENUM2STRING(BOTH_MINIGUN_IDLE),		//# Holding Z-6 rotary blaster
 	ENUM2STRING(BOTH_MINIGUN_IDLING),	//# Z-6 idle loop
+	ENUM2STRING(BOTH_PISTOL_READY),		//# Ready to fire blaster pistol
+	ENUM2STRING(BOTH_PISTOL_IDLE),		//# Holding blaster pistol
+	ENUM2STRING(BOTH_PISTOL_IDLE2),		//# Holding bryar pistol
+	ENUM2STRING(BOTH_PISTOL_IDLING),	//# Blaster pistol idle loop
 	ENUM2STRING(TORSO_WEAPONIDLE4),		//# Holding sniper rifle
 	ENUM2STRING(TORSO_WEAPONIDLE10),		//# Holding thermal det
 

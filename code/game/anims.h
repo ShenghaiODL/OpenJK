@@ -158,6 +158,7 @@ typedef enum //# animNumber_e
 	//# #sep BOTH_ ATTACKS
 	BOTH_ATTACK1,			//# Attack with stun baton
 	BOTH_ATTACK2,			//# Attack with one-handed pistol
+	BOTH_PISTOL_ATTACK,		//# Attack with blaster pistol
 	BOTH_ATTACK3,			//# Attack with blaster rifle
 	BOTH_MINIGUN_ATTACK,	//# Attack with Z-6 rotary blaster
 	BOTH_MINIGUN_MELEE,		//# Z-6 melee strike
@@ -1673,6 +1674,10 @@ typedef enum //# animNumber_e
 	TORSO_WEAPONIDLE3,		//# Holding blaster rifle
 	BOTH_MINIGUN_IDLE,		//# Holding Z-6 rotary blaster
 	BOTH_MINIGUN_IDLING,	//# Z-6 idle loop
+	BOTH_PISTOL_READY,		//# Ready to fire blaster pistol
+	BOTH_PISTOL_IDLE,		//# Holding blaster pistol
+	BOTH_PISTOL_IDLE2,		//# Holding bryar pistol
+	BOTH_PISTOL_IDLING,		//# Blaster pistol idle loop
 	TORSO_WEAPONIDLE4,		//# Holding sniper rifle
 	TORSO_WEAPONIDLE10,		//# Holding thermal det
 

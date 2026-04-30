@@ -1718,7 +1718,7 @@ void CG_AddViewWeapon( playerState_t *ps )
 		{
 			// Hardcoded max charge time of 1 second
 			val = ( cg.time - ps->weaponChargeTime ) * 0.001f;
-			shader = cgi_R_RegisterShader( "gfx/effects/greenFrontFlash" );
+			shader = cgi_R_RegisterShader( "gfx/effects/blasterFrontFlash" );
 		}
 		else if ( ps->weapon == WP_DEMP2 )
 		{

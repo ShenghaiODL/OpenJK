@@ -5991,7 +5991,7 @@ void PM_TorsoAnimation( void )
 					//FIXME: if recently fired, hold the ready!
 					if ( pm->ps->weaponstate == WEAPON_CHARGING_ALT || weaponBusy )
 					{
-						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
+						PM_SetAnim(pm,SETANIM_TORSO,BOTH_PISTOL_READY,SETANIM_FLAG_NORMAL);
 					}
 					else if ( PM_RunningAnim( pm->ps->legsAnim )
 						|| PM_WalkingAnim( pm->ps->legsAnim )
@@ -6002,7 +6002,7 @@ void PM_TorsoAnimation( void )
 					}
 					else
 					{
-						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
+						PM_SetAnim(pm,SETANIM_TORSO,BOTH_PISTOL_READY,SETANIM_FLAG_NORMAL);
 					}
 					break;
 				case WP_BLASTER_PISTOL:
@@ -6029,7 +6029,7 @@ void PM_TorsoAnimation( void )
 					{//single pistols
 						if ( pm->ps->weaponstate == WEAPON_CHARGING_ALT || weaponBusy )
 						{
-							PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
+							PM_SetAnim(pm,SETANIM_TORSO,BOTH_PISTOL_READY,SETANIM_FLAG_NORMAL);
 						}
 						else if ( PM_RunningAnim( pm->ps->legsAnim )
 							|| PM_WalkingAnim( pm->ps->legsAnim )
@@ -6040,7 +6040,7 @@ void PM_TorsoAnimation( void )
 						}
 						else
 						{
-							PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
+							PM_SetAnim(pm,SETANIM_TORSO,BOTH_PISTOL_READY,SETANIM_FLAG_NORMAL);
 						}
 					}
 					break;
@@ -6312,7 +6312,7 @@ void PM_TorsoAnimation( void )
 				case WP_BRYAR_PISTOL:
 					if ( pm->ps->weaponstate == WEAPON_CHARGING_ALT || weaponBusy )
 					{
-						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
+						PM_SetAnim(pm,SETANIM_TORSO,BOTH_PISTOL_READY,SETANIM_FLAG_NORMAL);
 					}
 					else if ( PM_RunningAnim( pm->ps->legsAnim )
 						|| PM_WalkingAnim( pm->ps->legsAnim )
@@ -6323,7 +6323,7 @@ void PM_TorsoAnimation( void )
 					}
 					else
 					{
-						PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONIDLE2,SETANIM_FLAG_NORMAL);
+						PM_SetAnim(pm,SETANIM_TORSO,BOTH_PISTOL_IDLE2,SETANIM_FLAG_NORMAL);
 					}
 					break;
 				case WP_BLASTER_PISTOL:
@@ -6350,7 +6350,7 @@ void PM_TorsoAnimation( void )
 					{//single pistols
 						if ( pm->ps->weaponstate == WEAPON_CHARGING_ALT || weaponBusy )
 						{
-							PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY2,SETANIM_FLAG_NORMAL);
+							PM_SetAnim(pm,SETANIM_TORSO,BOTH_PISTOL_READY,SETANIM_FLAG_NORMAL);
 						}
 						else if ( PM_RunningAnim( pm->ps->legsAnim )
 								|| PM_WalkingAnim( pm->ps->legsAnim )
@@ -6361,7 +6361,7 @@ void PM_TorsoAnimation( void )
 						}
 						else
 						{
-							PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONIDLE2,SETANIM_FLAG_NORMAL);
+							PM_SetAnim(pm,SETANIM_TORSO,BOTH_PISTOL_IDLE,SETANIM_FLAG_NORMAL);
 						}
 					}
 					break;
