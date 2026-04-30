@@ -7576,6 +7576,7 @@ static int blockForceCost[] = {
 	10,  // SS_STRONG
 	10,  // SS_DESANN
 	5,   // SS_TAVION
+	10,  // SS_KATARN
 	10,  // SS_DUAL
 	10,  // SS_STAFF
 };

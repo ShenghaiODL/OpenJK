@@ -2363,6 +2363,8 @@ using playerState_t = PlayerStateBase<saberInfo_t>;
 
 #define BUTTON_SABERBLOCK	2048
 
+#define BUTTON_KICK			4096	// bit 12, maps to in_buttons[12]
+
 #define	MOVE_RUN			120			// if forwardmove or rightmove are >= MOVE_RUN,
 										// then BUTTON_WALKING should be set
 

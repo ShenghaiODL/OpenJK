@@ -9308,23 +9308,51 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 			{
 				anim = BOTH_INAIR1;//FIXME: is there a better anim for this?
 			}
-			else if ( pm->ps->dualSabers && pm->ps->saber[1].Active() )
-			{
-				anim = BOTH_INAIR1;
-			}
 			else
 			{
 				signed char rm = pm->cmd.rightmove;
 				signed char fm = pm->cmd.forwardmove;
-				if ( rm > 40 )
-					anim = (fm < -40) ? BOTH_P1_S1_BR : BOTH_P1_S1_TR;
-				else if ( rm < -40 )
-					anim = (fm < -40) ? BOTH_P1_S1_BL : BOTH_P1_S1_TL;
-				else if ( fm < -40 )
-					anim = BOTH_P1_S1_BR;
+				bool hasInput = (rm > 40 || rm < -40 || fm > 40 || fm < -40);
+				if ( !hasInput )
+				{
+					// No directional input — hold the style's idle stance
+					if ( pm->ps->dualSabers && pm->ps->saber[1].Active() )
+						anim = BOTH_SABERDUAL_STANCE;
+					else if ( pm->ps->SaberStaff() )
+						anim = BOTH_SABERSTAFF_STANCE;
+					else
+						anim = PM_ReadyPoseForSaberAnimLevel();
+				}
+				else if ( pm->ps->dualSabers && pm->ps->saber[1].Active() )
+				{
+					setflags |= SETANIM_FLAG_OVERRIDE;
+					if ( rm > 40 )
+						anim = (fm < -40) ? BOTH_P6_S6_BR : BOTH_P6_S6_TR;
+					else if ( rm < -40 )
+						anim = (fm < -40) ? BOTH_P6_S6_BL : BOTH_P6_S6_TL;
+					else
+						anim = BOTH_P6_S6_T_;
+				}
+				else if ( pm->ps->SaberStaff() )
+				{
+					setflags |= SETANIM_FLAG_OVERRIDE;
+					if ( rm > 40 )
+						anim = (fm < -40) ? BOTH_P7_S7_BR : BOTH_P7_S7_TR;
+					else if ( rm < -40 )
+						anim = (fm < -40) ? BOTH_P7_S7_BL : BOTH_P7_S7_TL;
+					else
+						anim = BOTH_P7_S7_T_;
+				}
 				else
-					anim = BOTH_P1_S1_T_;
-				setflags |= SETANIM_FLAG_OVERRIDE;
+				{
+					setflags |= SETANIM_FLAG_OVERRIDE;
+					if ( rm > 40 )
+						anim = (fm < -40) ? BOTH_P1_S1_BR : BOTH_P1_S1_TR;
+					else if ( rm < -40 )
+						anim = (fm < -40) ? BOTH_P1_S1_BL : BOTH_P1_S1_TL;
+					else
+						anim = BOTH_P1_S1_T_;
+				}
 			}
 		}
 		else if ( pm->ps->saber[0].readyAnim != -1 )
@@ -12630,6 +12658,17 @@ void PM_WeaponLightsaber(void)
 		{//not cancelled
 			return;
 		}
+	}
+
+	// Dedicated kick button — available to all saber styles for the player
+	if ( (pm->cmd.buttons & BUTTON_KICK)
+		&& pm->ps->SaberActive()
+		&& !(pm->ps->saber[0].saberFlags & SFL_NO_KICKS)
+		&& (!pm->ps->dualSabers || !(pm->ps->saber[1].saberFlags & SFL_NO_KICKS))
+		&& (pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer()) )
+	{
+		PM_CheckKick();
+		return;
 	}
 
 	if ( PM_CheckAltKickAttack() )
