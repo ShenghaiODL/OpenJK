@@ -3861,7 +3861,6 @@ qboolean WP_SabersCheckLock( gentity_t *ent1, gentity_t *ent2 )
 	{//still finishing the last lock break!
 		return qfalse;
 	}
-	//BR to TL lock
 	if ( ent1->client->ps.torsoAnim == BOTH_A1_BR_TL ||
 		ent1->client->ps.torsoAnim == BOTH_A2_BR_TL ||
 		ent1->client->ps.torsoAnim == BOTH_A3_BR_TL ||

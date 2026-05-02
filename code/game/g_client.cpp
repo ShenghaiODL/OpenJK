@@ -2486,6 +2486,355 @@ qboolean G_PlayerSpawned( void )
 	return qtrue;
 }
 
+static void G_SaberLoadClearTransientSaberState( gentity_t *ent )
+{
+	if ( !ent || !ent->client )
+	{
+		return;
+	}
+
+	playerState_t *ps = &ent->client->ps;
+
+	ps->saberBlockingTime = 0;
+	ps->saberBlocking = BLK_NO;
+	ps->saberBlocked = BLOCKED_NONE;
+	ps->saberMoveNext = LS_NONE;
+	ps->saberBounceMove = LS_NONE;
+	ps->saberAttackChainCount = 0;
+
+	if ( ps->weapon == WP_SABER
+		&& ps->pm_type < PM_DEAD
+		&& ps->stats[STAT_HEALTH] > 0 )
+	{
+		ps->weaponstate = WEAPON_READY;
+		ps->weaponTime = 0;
+		ps->saberMove = LS_READY;
+	}
+}
+
+static const char *G_SaberLoadAnimName( int anim )
+{
+	if ( anim >= 0 && anim < MAX_ANIMATIONS )
+	{
+		return animTable[anim].name;
+	}
+	return "INVALID";
+}
+
+static qboolean G_SaberLoadAnimDefined( gentity_t *ent, int anim )
+{
+	if ( !ent || !ent->client || anim < 0 || anim >= MAX_ANIMATIONS )
+	{
+		return qfalse;
+	}
+
+	const int animFileIndex = ent->client->clientInfo.animFileIndex;
+	if ( animFileIndex < 0 || animFileIndex >= level.numKnownAnimFileSets || animFileIndex >= MAX_ANIM_FILES )
+	{
+		return qfalse;
+	}
+
+	return (qboolean)(level.knownAnimFileSets[animFileIndex].animations[anim].numFrames > 0);
+}
+
+static void G_SaberLoadDumpState( gentity_t *ent, const char *context, const char *phase )
+{
+	if ( !g_saberLoadDebug || !g_saberLoadDebug->integer || !ent || !ent->client )
+	{
+		return;
+	}
+
+	gclient_t *client = ent->client;
+	playerState_t *ps = &client->ps;
+
+	gi.Printf(
+		S_COLOR_CYAN "[saber-load:%s:%s] weapon=%d cmdWeapon=%d weaponstate=%d active=%d dual=%d saberEntityNum=%d\n",
+		context ? context : "unknown",
+		phase ? phase : "state",
+		ps->weapon,
+		client->usercmd.weapon,
+		ps->weaponstate,
+		ps->SaberActive() ? 1 : 0,
+		ps->dualSabers ? 1 : 0,
+		ps->saberEntityNum );
+	gi.Printf(
+		"  saber0 name=%s blades=%d length=%.1f max=%.1f moveScale=%.3f animScale=%.3f saber1 name=%s blades=%d length=%.1f max=%.1f moveScale=%.3f animScale=%.3f\n",
+		ps->saber[0].name ? ps->saber[0].name : "<null>",
+		ps->saber[0].numBlades,
+		ps->saber[0].Length(),
+		ps->saber[0].LengthMax(),
+		ps->saber[0].moveSpeedScale,
+		ps->saber[0].animSpeedScale,
+		ps->saber[1].name ? ps->saber[1].name : "<null>",
+		ps->saber[1].numBlades,
+		ps->saber[1].Length(),
+		ps->saber[1].LengthMax(),
+		ps->saber[1].moveSpeedScale,
+		ps->saber[1].animSpeedScale );
+}
+
+static void G_SaberLoadWarnMissingAnim( gentity_t *ent, const char *context, int anim, const char *group )
+{
+	if ( !G_SaberLoadAnimDefined( ent, anim ) )
+	{
+		gi.Printf(
+			S_COLOR_YELLOW "[saber-load:%s] missing %s anim %d(%s) in animFileIndex %d\n",
+			context ? context : "unknown",
+			group,
+			anim,
+			G_SaberLoadAnimName( anim ),
+			ent && ent->client ? ent->client->clientInfo.animFileIndex : -1 );
+	}
+}
+
+static void G_SaberLoadValidateAnimRange( gentity_t *ent, const char *context, int firstAnim, int lastAnim, const char *group )
+{
+	for ( int anim = firstAnim; anim <= lastAnim; anim++ )
+	{
+		G_SaberLoadWarnMissingAnim( ent, context, anim, group );
+	}
+}
+
+static void G_SaberLoadValidateAnimList( gentity_t *ent, const char *context, const int *anims, size_t numAnims, const char *group )
+{
+	for ( size_t i = 0; i < numAnims; i++ )
+	{
+		G_SaberLoadWarnMissingAnim( ent, context, anims[i], group );
+	}
+}
+
+static qboolean G_SaberLoadSaberDataMissing( saberInfo_t *saber )
+{
+	return (qboolean)(
+		!saber
+		|| !saber->name
+		|| !saber->model
+		|| saber->numBlades <= 0
+		|| saber->LengthMax() <= 0.0f );
+}
+
+static qboolean G_SaberLoadRepairMissingSaberData( gentity_t *ent, const char *context )
+{
+	if ( !ent || !ent->client )
+	{
+		return qfalse;
+	}
+
+	playerState_t *ps = &ent->client->ps;
+	if ( ps->weapon != WP_SABER && !ps->weapons[WP_SABER] )
+	{
+		return qfalse;
+	}
+
+	const qboolean saber0Missing = G_SaberLoadSaberDataMissing( &ps->saber[0] );
+	const qboolean saber1Missing = (qboolean)(ps->dualSabers && G_SaberLoadSaberDataMissing( &ps->saber[1] ));
+	if ( !saber0Missing && !saber1Missing )
+	{
+		return qfalse;
+	}
+
+	const qboolean wasActive = ps->SaberActive();
+
+	if ( g_saberLoadDebug && g_saberLoadDebug->integer )
+	{
+		gi.Printf(
+			S_COLOR_YELLOW "[saber-load:%s] missing saber data saber0=%d saber1=%d; reloading from player saber cvars\n",
+			context ? context : "unknown",
+			saber0Missing ? 1 : 0,
+			saber1Missing ? 1 : 0 );
+	}
+
+	G_SetSabersFromCVars( ent );
+	WP_SaberInitBladeData( ent );
+
+	if ( ps->weapon == WP_SABER )
+	{
+		if ( ent->weaponModel[0] <= 0 || ( ps->dualSabers && ent->weaponModel[1] <= 0 ) )
+		{
+			WP_SaberAddG2SaberModels( ent );
+			G_RemoveHolsterModels( ent );
+		}
+
+		if ( wasActive )
+		{
+			ps->SaberActivate();
+		}
+		else
+		{
+			ps->SaberDeactivate();
+		}
+	}
+
+	return qtrue;
+}
+
+static void G_SaberLoadRepairSaberScales( playerState_t *ps, const char *context )
+{
+	for ( int saberNum = 0; saberNum < MAX_SABERS; saberNum++ )
+	{
+		if ( saberNum > 0 && !ps->dualSabers )
+		{
+			continue;
+		}
+
+		if ( ps->saber[saberNum].moveSpeedScale <= 0.0f )
+		{
+			if ( g_saberLoadDebug && g_saberLoadDebug->integer )
+			{
+				gi.Printf(
+					S_COLOR_YELLOW "[saber-load:%s] saber%d invalid moveSpeedScale %.3f; restoring default 1.0\n",
+					context ? context : "unknown",
+					saberNum,
+					ps->saber[saberNum].moveSpeedScale );
+			}
+			ps->saber[saberNum].moveSpeedScale = 1.0f;
+		}
+
+		if ( ps->saber[saberNum].animSpeedScale <= 0.0f )
+		{
+			if ( g_saberLoadDebug && g_saberLoadDebug->integer )
+			{
+				gi.Printf(
+					S_COLOR_YELLOW "[saber-load:%s] saber%d invalid animSpeedScale %.3f; restoring default 1.0\n",
+					context ? context : "unknown",
+					saberNum,
+					ps->saber[saberNum].animSpeedScale );
+			}
+			ps->saber[saberNum].animSpeedScale = 1.0f;
+		}
+	}
+}
+
+static void G_SaberLoadValidatePlayerAnims( gentity_t *ent, const char *context )
+{
+	if ( !g_saberLoadDebug || g_saberLoadDebug->integer < 2 || !ent || !ent->client )
+	{
+		return;
+	}
+
+	static const int individualAnims[] = {
+		BOTH_STAND1,
+		BOTH_STAND2,
+		BOTH_SABERFAST_STANCE,
+		BOTH_SABERSLOW_STANCE,
+		BOTH_SABERDUAL_STANCE,
+		BOTH_SABERSTAFF_STANCE,
+		BOTH_S1_S6,
+		BOTH_S6_S1,
+		BOTH_S1_S7,
+		BOTH_S7_S1,
+		BOTH_RUN1,
+		BOTH_RUN2,
+		BOTH_RUN_DUAL,
+		BOTH_RUN_STAFF,
+		BOTH_WALK1,
+		BOTH_WALK2,
+		BOTH_WALK_DUAL,
+		BOTH_WALK_STAFF,
+		BOTH_GETUP1,
+		BOTH_GETUP2,
+		BOTH_GETUP3,
+		BOTH_GETUP4,
+		BOTH_GETUP5,
+		BOTH_DEATH1,
+		BOTH_DEAD1,
+		BOTH_P1_S1_BK
+	};
+	static const int singleReturnAnims[] = {
+		BOTH_R1_B__S1,
+		BOTH_R1__L_S1,
+		BOTH_R1__R_S1,
+		BOTH_R1_TL_S1,
+		BOTH_R1_BR_S1,
+		BOTH_R1_BL_S1,
+		BOTH_R1_TR_S1
+	};
+	static const int dualReturnAnims[] = {
+		BOTH_R6_B__S6,
+		BOTH_R6__L_S6,
+		BOTH_R6__R_S6,
+		BOTH_R6_TL_S6,
+		BOTH_R6_BR_S6,
+		BOTH_R6_BL_S6,
+		BOTH_R6_TR_S6
+	};
+	static const int staffReturnAnims[] = {
+		BOTH_R7_B__S7,
+		BOTH_R7__L_S7,
+		BOTH_R7__R_S7,
+		BOTH_R7_TL_S7,
+		BOTH_R7_BR_S7,
+		BOTH_R7_BL_S7,
+		BOTH_R7_TR_S7
+	};
+	static const int dualReflectedAnims[] = {
+		BOTH_V6_BR_S6,
+		BOTH_V6__R_S6,
+		BOTH_V6_TR_S6,
+		BOTH_V6_T__S6,
+		BOTH_V6_TL_S6,
+		BOTH_V6__L_S6,
+		BOTH_V6_BL_S6,
+		BOTH_V6_B__S6
+	};
+	static const int staffReflectedAnims[] = {
+		BOTH_V7_BR_S7,
+		BOTH_V7__R_S7,
+		BOTH_V7_TR_S7,
+		BOTH_V7_T__S7,
+		BOTH_V7_TL_S7,
+		BOTH_V7__L_S7,
+		BOTH_V7_BL_S7,
+		BOTH_V7_B__S7
+	};
+
+	for ( size_t i = 0; i < ARRAY_LEN( individualAnims ); i++ )
+	{
+		G_SaberLoadWarnMissingAnim( ent, context, individualAnims[i], "core" );
+	}
+
+	G_SaberLoadValidateAnimList( ent, context, singleReturnAnims, ARRAY_LEN( singleReturnAnims ), "single return" );
+	G_SaberLoadValidateAnimRange( ent, context, BOTH_P1_S1_T_, BOTH_P1_S1_BR, "single parry" );
+	G_SaberLoadValidateAnimRange( ent, context, BOTH_K1_S1_T_, BOTH_K1_S1_BR, "single knockaway" );
+	G_SaberLoadValidateAnimRange( ent, context, BOTH_V1_BR_S1, BOTH_V1_B__S1, "single reflected" );
+	G_SaberLoadValidateAnimRange( ent, context, BOTH_H1_S1_T_, BOTH_H1_S1_BR, "single broken parry" );
+	G_SaberLoadValidateAnimList( ent, context, dualReturnAnims, ARRAY_LEN( dualReturnAnims ), "dual return" );
+	G_SaberLoadValidateAnimRange( ent, context, BOTH_P6_S6_T_, BOTH_P6_S6_BR, "dual parry" );
+	G_SaberLoadValidateAnimRange( ent, context, BOTH_K6_S6_T_, BOTH_K6_S6_BR, "dual knockaway" );
+	G_SaberLoadValidateAnimList( ent, context, dualReflectedAnims, ARRAY_LEN( dualReflectedAnims ), "dual reflected" );
+	G_SaberLoadValidateAnimRange( ent, context, BOTH_H6_S6_T_, BOTH_H6_S6_BR, "dual broken parry" );
+	G_SaberLoadValidateAnimList( ent, context, staffReturnAnims, ARRAY_LEN( staffReturnAnims ), "staff return" );
+	G_SaberLoadValidateAnimRange( ent, context, BOTH_P7_S7_T_, BOTH_P7_S7_BR, "staff parry" );
+	G_SaberLoadValidateAnimRange( ent, context, BOTH_K7_S7_T_, BOTH_K7_S7_BR, "staff knockaway" );
+	G_SaberLoadValidateAnimList( ent, context, staffReflectedAnims, ARRAY_LEN( staffReflectedAnims ), "staff reflected" );
+	G_SaberLoadValidateAnimRange( ent, context, BOTH_H7_S7_T_, BOTH_H7_S7_BR, "staff broken parry" );
+}
+
+void G_RepairPlayerSaberLoadState( gentity_t *ent, const char *context )
+{
+	if ( !ent || !ent->client || ent->s.number != 0 )
+	{
+		return;
+	}
+
+	gclient_t *client = ent->client;
+	playerState_t *ps = &client->ps;
+	if ( ps->stats[STAT_HEALTH] <= 0 || ( ps->weapon != WP_SABER && !ps->weapons[WP_SABER] ) )
+	{
+		return;
+	}
+
+	G_SaberLoadDumpState( ent, context, "before" );
+	G_SaberLoadValidatePlayerAnims( ent, context );
+
+	G_SaberLoadClearTransientSaberState( ent );
+	G_SaberLoadRepairMissingSaberData( ent, context );
+	G_SaberLoadRepairSaberScales( ps, context );
+	ent->lastMoveTime = level.time;
+
+	G_SaberLoadDumpState( ent, context, "after" );
+}
+
 /*
 ===========
 ClientSpawn
@@ -2547,11 +2896,6 @@ qboolean ClientSpawn(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded 
 
 		client->airOutTime = level.time + 12000;
 
-		// Blocking and knockback state can be serialized into the save with future timestamps,
-		// causing controls to freeze on load. Reset them here to guarantee a clean state.
-		client->ps.saberBlockingTime = 0;
-		client->ps.pm_time = 0;
-		client->ps.pm_flags &= ~PMF_TIME_KNOCKBACK;
 		ent->aimDebounceTime = level.time;
 
 		{// enforce defense-scaled max FP; save files may have stale values
@@ -2905,6 +3249,11 @@ qboolean ClientSpawn(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded 
 		&& !ent->client->ps.saberStylesKnown )
 	{//um, if you have a saber, you need at least 1 style to use it with...
 		ent->client->ps.saberStylesKnown |= (1<<SS_MEDIUM);
+	}
+
+	if ( eSavedGameJustLoaded != eNO && ent->s.number == 0 )
+	{
+		G_RepairPlayerSaberLoadState( ent, "ClientSpawn" );
 	}
 
 	return beamInEffect;

@@ -1347,6 +1347,11 @@ void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition)
 	extern void CG_ReadTheEvilCGHackStuff(void);
 	CG_ReadTheEvilCGHackStuff();
 
+	if ( g_entities[0].inuse && g_entities[0].client )
+	{
+		G_RepairPlayerSaberLoadState( &g_entities[0], "ReadLevel" );
+	}
+
 	// (Do NOT put any read-code below this line)
 	//
 	// check that the whole file content was loaded by specifically requesting an end-marker...

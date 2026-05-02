@@ -1836,6 +1836,9 @@ typedef enum //# animNumber_e
 	BOTH_CIN_49,		//# Level specific cinematic
 	BOTH_CIN_50,		//# Level specific cinematic
 
+	// Extra config-declared saber anims kept at the end so existing animation IDs stay stable.
+	BOTH_P1_S1_BK,		//# Block shot/saber back
+
 	//# #eol
 	MAX_ANIMATIONS,
 	MAX_TOTALANIMATIONS,

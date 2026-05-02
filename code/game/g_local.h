@@ -361,6 +361,7 @@ extern	cvar_t	*g_inactivity;
 extern	cvar_t	*g_debugMove;
 extern	cvar_t	*g_subtitles;
 extern	cvar_t	*g_removeDoors;
+extern	cvar_t	*g_saberLoadDebug;
 
 extern	cvar_t	*g_ICARUSDebug;
 
@@ -608,6 +609,7 @@ void ClientUserinfoChanged( int clientNum );
 void ClientDisconnect( int clientNum );
 void ClientBegin( int clientNum, usercmd_t *cmd, SavedGameJustLoaded_e eSavedGameJustLoaded );
 void ClientCommand( int clientNum );
+void G_RepairPlayerSaberLoadState( gentity_t *ent, const char *context );
 
 //
 // g_active.c

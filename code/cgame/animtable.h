@@ -1827,6 +1827,9 @@ stringID_table_t animTable [MAX_ANIMATIONS+1] =
 	ENUM2STRING(BOTH_CIN_49),		//# Level specific cinematic
 	ENUM2STRING(BOTH_CIN_50),		//# Level specific cinematic
 
+	// Extra config-declared saber anims kept at the end so existing animation IDs stay stable.
+	ENUM2STRING(BOTH_P1_S1_BK),		//# Block shot/saber back
+
 	//must be terminated
 	{ NULL,-1 }
 };
