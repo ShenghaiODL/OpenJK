@@ -665,6 +665,9 @@ void CG_RegisterWeapon( int weaponNum ) {
 
 	case WP_DC15S_CARBINE:
 	case WP_Z6_ROTARY:
+		cgs.effects.cloneBlasterShotEffect		= theFxScheduler.RegisterEffect( "z6/shot" );
+		cgs.effects.cloneBlasterWallImpactEffect		= theFxScheduler.RegisterEffect( "blaster/wall_impact" );
+		cgs.effects.cloneBlasterFleshImpactEffect	= theFxScheduler.RegisterEffect( "blaster/flesh_impact" );
 	case WP_DC15A_RIFLE:
 		cgs.effects.cloneBlasterShotEffect		= theFxScheduler.RegisterEffect( "clone/shot" );
 		cgs.effects.cloneBlasterWallImpactEffect		= theFxScheduler.RegisterEffect( "blaster/wall_impact" );
