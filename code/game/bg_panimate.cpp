@@ -5860,6 +5860,30 @@ void PM_TorsoAnimation( void )
 		weaponBusy = qtrue;
 	}
 
+	// Cycler Rifle: drive reload animation during the bolt-action cooldown
+	if ( pm->ps->weapon == WP_CYCLER_RIFLE && pm->ps->weaponstate == WEAPON_FIRING )
+	{
+		bool inSequence = ( pm->ps->torsoAnim == BOTH_AMBAN_AIM_ATTACK ||
+							pm->ps->torsoAnim == BOTH_AMBAN_CROUCH_AIM_ATTACK ||
+							pm->ps->torsoAnim == BOTH_AMBAN_RELOAD ||
+							pm->ps->torsoAnim == BOTH_AMBAN_CROUCH_RELOAD );
+		if ( inSequence )
+		{
+			if ( pm->ps->pm_flags & PMF_DUCKED )
+				PM_SetAnim(pm, SETANIM_TORSO, BOTH_AMBAN_CROUCH_RELOAD, SETANIM_FLAG_NORMAL|SETANIM_FLAG_HOLD);
+			else
+				PM_SetAnim(pm, SETANIM_TORSO, BOTH_AMBAN_RELOAD, SETANIM_FLAG_NORMAL|SETANIM_FLAG_HOLD);
+		}
+		else
+		{
+			if ( pm->ps->pm_flags & PMF_DUCKED )
+				PM_SetAnim(pm, SETANIM_TORSO, BOTH_AMBAN_CROUCH_AIM_READY, SETANIM_FLAG_NORMAL);
+			else
+				PM_SetAnim(pm, SETANIM_TORSO, BOTH_AMBAN_AIM_READY, SETANIM_FLAG_NORMAL);
+		}
+		return;
+	}
+
 	if (	pm->ps->weapon == WP_NONE ||
 			pm->ps->weaponstate == WEAPON_READY ||
 			pm->ps->weaponstate == WEAPON_CHARGING ||
@@ -6100,7 +6124,25 @@ void PM_TorsoAnimation( void )
 				case WP_Z6_ROTARY:
 					PM_SetAnim(pm,SETANIM_TORSO,BOTH_MINIGUN_READY,SETANIM_FLAG_NORMAL);
 					break;
-						
+
+				case WP_CYCLER_RIFLE:
+					if ( PM_RunningAnim( pm->ps->legsAnim )
+						|| PM_WalkingAnim( pm->ps->legsAnim )
+						|| PM_JumpingAnim( pm->ps->legsAnim )
+						|| PM_SwimmingAnim( pm->ps->legsAnim ) )
+					{
+						PM_SetAnim(pm, SETANIM_TORSO, TORSO_WEAPONREADY3, SETANIM_FLAG_NORMAL);
+					}
+					else if ( pm->ps->pm_flags & PMF_DUCKED )
+					{
+						PM_SetAnim(pm, SETANIM_TORSO, BOTH_AMBAN_CROUCH_AIM_READY, SETANIM_FLAG_NORMAL);
+					}
+					else
+					{
+						PM_SetAnim(pm, SETANIM_TORSO, BOTH_AMBAN_AIM_READY, SETANIM_FLAG_NORMAL);
+					}
+					break;
+
 				case WP_DC15A_RIFLE:
 					PM_SetAnim(pm,SETANIM_TORSO,TORSO_WEAPONREADY3,SETANIM_FLAG_NORMAL);
 					break;
@@ -6440,6 +6482,26 @@ void PM_TorsoAnimation( void )
 						PM_SetAnim(pm,SETANIM_TORSO,BOTH_MINIGUN_IDLE,SETANIM_FLAG_NORMAL);
 					}
 					break;
+
+				case WP_CYCLER_RIFLE:
+				{
+					bool cyclerMoving = PM_RunningAnim(pm->ps->legsAnim) || PM_WalkingAnim(pm->ps->legsAnim) ||
+					                    PM_JumpingAnim(pm->ps->legsAnim) || PM_SwimmingAnim(pm->ps->legsAnim);
+					// PMF_DUCKED alone sets weaponBusy; use direct firing checks so crouch_idle is reachable
+					bool cyclerFiredRecently = (pm->ps->lastShotTime > level.time - 3000) ||
+					                           (pm->ps->weaponTime > 0) ||
+					                           (pm->gent && pm->gent->client->fireDelay > 0);
+					bool cyclerScoped = ((pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer()) && cg.zoomMode == 2);
+					bool cyclerDucked = (pm->ps->pm_flags & PMF_DUCKED) != 0;
+
+					if ( cyclerMoving )
+						PM_SetAnim(pm, SETANIM_TORSO, TORSO_WEAPONREADY3, SETANIM_FLAG_NORMAL);
+					else if ( cyclerFiredRecently || cyclerScoped )
+						PM_SetAnim(pm, SETANIM_TORSO, cyclerDucked ? BOTH_AMBAN_CROUCH_AIM_READY : BOTH_AMBAN_AIM_READY, SETANIM_FLAG_NORMAL);
+					else
+						PM_SetAnim(pm, SETANIM_TORSO, cyclerDucked ? BOTH_AMBAN_CROUCH_IDLE : BOTH_AMBAN_IDLE, SETANIM_FLAG_NORMAL);
+					break;
+				}
 
 				case WP_DC15A_RIFLE:
 					if ( weaponBusy )

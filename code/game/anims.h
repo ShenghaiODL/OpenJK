@@ -163,6 +163,8 @@ typedef enum //# animNumber_e
 	BOTH_MINIGUN_ATTACK,	//# Attack with Z-6 rotary blaster
 	BOTH_MINIGUN_MELEE,		//# Z-6 melee strike
 	BOTH_MINIGUN_MELEE_KICK,//# Z-6 melee kick
+	BOTH_AMBAN_ATTACK,		//# Attack with Amban/Cycler sniper rifle (standing)
+	BOTH_AMBAN_MELEE,		//# Amban rifle melee strike
 	BOTH_ATTACK4,			//# Attack with disruptor
 	BOTH_ATTACK5,			//# Another Rancor Attack
 	BOTH_ATTACK6,			//# Yet Another Rancor Attack
@@ -1668,6 +1670,16 @@ typedef enum //# animNumber_e
 	BOTH_MINIGUN_IDLETOREADY,	//# Z-6 transition from idle to ready
 	BOTH_MINIGUN_READYTOIDLE,	//# Z-6 transition from ready to idle
 	BOTH_MINIGUN_READY,			//# Ready to fire Z-6 rotary blaster
+	BOTH_AMBAN_AIM_ATTACK,		//# Fire Amban/Cycler rifle (standing, aimed)
+	BOTH_AMBAN_AIM_READY,		//# Aim-ready pose (standing)
+	BOTH_AMBAN_READY,			//# Ready pose (standing, un-aimed)
+	BOTH_AMBAN_CROUCH_AIM_ATTACK,//# Fire Amban/Cycler rifle (crouched, aimed)
+	BOTH_AMBAN_CROUCH_AIM_READY,//# Aim-ready pose (crouched)
+	BOTH_AMBAN_CROUCH_IDLE,		//# Crouch idle with Amban/Cycler rifle
+	BOTH_AMBAN_CROUCH_RELOAD,	//# Crouch reload Amban/Cycler rifle
+	BOTH_AMBAN_IDLE,			//# Holding Amban/Cycler rifle at rest
+	BOTH_AMBAN_IDLING,			//# Amban/Cycler idle loop
+	BOTH_AMBAN_RELOAD,			//# Reload Amban/Cycler rifle (standing)
 	TORSO_WEAPONREADY4,		//# Ready to fire sniper rifle
 	TORSO_WEAPONREADY10,	//# Ready to fire thermal det
 	TORSO_WEAPONIDLE2,		//# Holding one-handed blaster

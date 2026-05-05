@@ -27,8 +27,13 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #ifdef _G2_GORE
 
 #define MAX_LODS (8)
+#ifdef REND2_SP
+#define MAX_GORE_VERTS (SHADER_MAX_VERTEXES + 1)
+#define MAX_GORE_INDECIES (SHADER_MAX_INDEXES + 3)
+#else
 #define MAX_GORE_VERTS (3000)
 #define MAX_GORE_INDECIES (6000)
+#endif
 
 //TODO: This needs to be set via a scalability cvar with some reasonable minimum value if pgore is used at all
 #define MAX_GORE_RECORDS (500)

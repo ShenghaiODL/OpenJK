@@ -636,7 +636,14 @@ void CG_RegisterWeapon( int weaponNum ) {
 		theFxScheduler.RegisterEffect( "tusken/shot" );
 		theFxScheduler.RegisterEffect( "tusken/hit" );
 		theFxScheduler.RegisterEffect( "tusken/hitwall" );
+		break;
 
+	case WP_CYCLER_RIFLE:
+		theFxScheduler.RegisterEffect( "tusken/shot" );
+		theFxScheduler.RegisterEffect( "tusken/hit" );
+		theFxScheduler.RegisterEffect( "tusken/hitwall" );
+		cgs.media.disruptorLight        = cgi_R_RegisterShader( "gfx/2d/cropCircleGlow" );
+		cgs.media.disruptorInsertTick   = cgi_R_RegisterShader( "gfx/2d/insertTick" );
 		break;
 
 	case WP_SCEPTER:
@@ -668,6 +675,7 @@ void CG_RegisterWeapon( int weaponNum ) {
 		cgs.effects.cloneBlasterShotEffect		= theFxScheduler.RegisterEffect( "z6/shot" );
 		cgs.effects.cloneBlasterWallImpactEffect		= theFxScheduler.RegisterEffect( "blaster/wall_impact" );
 		cgs.effects.cloneBlasterFleshImpactEffect	= theFxScheduler.RegisterEffect( "blaster/flesh_impact" );
+		break;
 	case WP_DC15A_RIFLE:
 		cgs.effects.cloneBlasterShotEffect		= theFxScheduler.RegisterEffect( "clone/shot" );
 		cgs.effects.cloneBlasterWallImpactEffect		= theFxScheduler.RegisterEffect( "blaster/wall_impact" );
@@ -1863,6 +1871,7 @@ const char *weaponDesc[WP_NUM_WEAPONS - 1] =
 "DC15S_CARBINE_DESC",
 "DC15A_RIFLE_DESC",
 "Z6_ROTARY_DESC",
+"CYCLER_RIFLE_DESC",
 };
 
 /*
@@ -3513,6 +3522,7 @@ void CG_MissileHitWall( centity_t *cent, int weapon, vec3_t origin, vec3_t dir, 
 		break;
 
 	case WP_TUSKEN_RIFLE:
+	case WP_CYCLER_RIFLE:
 		FX_TuskenShotWeaponHitWall( origin, dir );
 		break;
 
@@ -3670,6 +3680,7 @@ void CG_MissileHitPlayer( centity_t *cent, int weapon, vec3_t origin, vec3_t dir
 		}
 		break;
 	case WP_TUSKEN_RIFLE:
+	case WP_CYCLER_RIFLE:
 		FX_TuskenShotWeaponHitPlayer( other, origin, dir, humanoid );
 		break;
 

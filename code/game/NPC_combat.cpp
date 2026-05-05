@@ -324,6 +324,7 @@ void G_AttackDelay( gentity_t *self, gentity_t *enemy )
 			attDelay -= Q_irand( 500, 1500 );
 			break;
 		case WP_DISRUPTOR://sniper's don't delay?
+		case WP_CYCLER_RIFLE:
 			return;
 			break;
 		case WP_THERMAL://grenade-throwing has a built-in delay
@@ -819,15 +820,24 @@ void ChangeWeapon( gentity_t *ent, int newWeapon )
 		}
 		break;
 
+	case WP_CYCLER_RIFLE:
+		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
+		if ( g_spskill->integer == 0 )
+			ent->NPC->burstSpacing = 1500;//attackdebounce
+		else if ( g_spskill->integer == 1 )
+			ent->NPC->burstSpacing = 1100;//attackdebounce
+		else
+			ent->NPC->burstSpacing = 750;//attackdebounce
+		break;
+
 	case WP_BOWCASTER:
 		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-	//	ent->NPC->burstSpacing = 1000;//attackdebounce
 		if ( g_spskill->integer == 0 )
-			ent->NPC->burstSpacing = 1000;//attack debounce
+			ent->NPC->burstSpacing = 2500;//attack debounce
 		else if ( g_spskill->integer == 1 )
-			ent->NPC->burstSpacing = 750;//attack debounce
+			ent->NPC->burstSpacing = 1875;//attack debounce
 		else
-			ent->NPC->burstSpacing = 500;//attack debounce
+			ent->NPC->burstSpacing = 1250;//attack debounce
 		break;
 
 	case WP_REPEATER:
@@ -1158,9 +1168,13 @@ void NPC_ApplyWeaponFireDelay(void)
 
 	case WP_TUSKEN_RIFLE:
 		if ( !(NPCInfo->scriptFlags&SCF_ALT_FIRE) )
-		{//FIXME: should be unique per melee anim
+		{
 			client->fireDelay = 300;
 		}
+		break;
+
+	case WP_CYCLER_RIFLE:
+		client->fireDelay = 0;
 		break;
 
 	default:
@@ -1563,6 +1577,7 @@ float NPC_MaxDistSquaredForWeapon (void)
 
 	case WP_DISRUPTOR://disruptor
 	case WP_TUSKEN_RIFLE:
+	case WP_CYCLER_RIFLE:
 		if ( NPCInfo->scriptFlags & SCF_ALT_FIRE )
 		{
 			return ( 4096 * 4096 );

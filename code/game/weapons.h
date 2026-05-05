@@ -80,12 +80,13 @@ typedef enum //# weapon_e
 	WP_NOGHRI_STICK,
 	
 	WP_SONIC_BLASTER,
-	
+
 	WP_E5_CARBINE,
 	WP_DC15S_CARBINE,
 	WP_DC15A_RIFLE,
 	WP_Z6_ROTARY,
-	
+	WP_CYCLER_RIFLE,
+
 
 	//# #eol
 	WP_NUM_WEAPONS
@@ -217,8 +218,8 @@ typedef struct ammoData_s
 #define	BOWCASTER_DAMAGE			55
 #define	BOWCASTER_VELOCITY			1300
 #define	BOWCASTER_NPC_DAMAGE_EASY	12
-#define	BOWCASTER_NPC_DAMAGE_NORMAL	24
-#define	BOWCASTER_NPC_DAMAGE_HARD	36
+#define	BOWCASTER_NPC_DAMAGE_NORMAL	25
+#define	BOWCASTER_NPC_DAMAGE_HARD	50
 #define BOWCASTER_SPLASH_DAMAGE		0
 #define BOWCASTER_SPLASH_RADIUS		0
 #define BOWCASTER_SIZE				2
@@ -395,9 +396,9 @@ typedef struct ammoData_s
 // Tusken Rifle Shot
 //--------------
 #define TUSKEN_RIFLE_VEL			3000	// fast
-#define TUSKEN_RIFLE_DAMAGE_EASY	20		// damaging
+#define TUSKEN_RIFLE_DAMAGE_EASY	15		// damaging
 #define TUSKEN_RIFLE_DAMAGE_MEDIUM	30		// very damaging
-#define TUSKEN_RIFLE_DAMAGE_HARD	50		// extremely damaging
+#define TUSKEN_RIFLE_DAMAGE_HARD	60		// extremely damaging
 
 
 #endif//#ifndef __WEAPONS_H__

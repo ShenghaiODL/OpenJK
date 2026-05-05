@@ -803,12 +803,12 @@ struct SVertexTemp
 	}
 };
 
-#define MAX_GORE_VERTS (3000)
+#define MAX_GORE_VERTS (SHADER_MAX_VERTEXES + 1)
 static SVertexTemp GoreVerts[MAX_GORE_VERTS];
 static int GoreIndexCopy[MAX_GORE_VERTS];
 static int GoreTouch=1;
 
-#define MAX_GORE_INDECIES (6000)
+#define MAX_GORE_INDECIES (SHADER_MAX_INDEXES + 3)
 static int GoreIndecies[MAX_GORE_INDECIES];
 
 #define GORE_MARGIN (0.0f)
@@ -1124,7 +1124,7 @@ struct SVertexTemp
 	}
 };
 
-#define MAX_GORE_VERTS (3000)
+#define MAX_GORE_VERTS (SHADER_MAX_VERTEXES + 1)
 static SVertexTemp GoreVerts[MAX_GORE_VERTS];
 #endif
 

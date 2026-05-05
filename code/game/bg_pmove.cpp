@@ -13161,6 +13161,23 @@ static bool PM_DoChargedWeapons( void )
 		break;
 
 	//------------------
+	case WP_CYCLER_RIFLE:
+
+		// zoom+charge mechanic — only for players; NPCs fire the projectile normally
+		if ( (pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer()) )
+		{
+			if ( cg.zoomMode == 2 )
+			{
+				if ( pm->cmd.buttons & BUTTON_ATTACK )
+				{
+					charging = qtrue;
+					altFire = qtrue;
+				}
+			}
+		}
+		break;
+
+	//------------------
 	case WP_BOWCASTER:
 
 		// alt-fire charges the weapon
@@ -13213,6 +13230,29 @@ static bool PM_DoChargedWeapons( void )
 	//------------------
 	case WP_Z6_ROTARY:
 	{
+		if ( pm->gent && pm->gent->NPC )
+		{
+			// Drive spin sounds off BUTTON_ATTACK; don't gate firing
+			if ( pm->cmd.buttons & BUTTON_ATTACK )
+			{
+				if ( pm->ps->weaponChargeTime == 0 )
+				{
+					G_SoundOnEnt( pm->gent, CHAN_WEAPON, "sound/weapons/z6/chaingun_spinup.wav" );
+					pm->ps->weaponChargeTime = level.time;
+				}
+				pm->gent->s.loopSound = G_SoundIndex( "sound/weapons/z6/spinny.wav" );
+			}
+			else
+			{
+				if ( pm->ps->weaponChargeTime != 0 )
+				{
+					G_SoundOnEnt( pm->gent, CHAN_WEAPON, "sound/weapons/z6/chaingun_spindown.wav" );
+					pm->ps->weaponChargeTime = 0;
+				}
+				pm->gent->s.loopSound = 0;
+			}
+			return false;
+		}
 		if ( pm->cmd.buttons & BUTTON_ALT_ATTACK )
 		{
 			if ( pm->ps->weaponChargeTime == 0 )
@@ -14106,7 +14146,14 @@ static void PM_Weapon( void )
 			case WP_Z6_ROTARY:
 				PM_SetAnim( pm, SETANIM_TORSO, BOTH_MINIGUN_ATTACK, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART);
 				break;
-					
+
+			case WP_CYCLER_RIFLE:
+				if ( pm->ps->pm_flags & PMF_DUCKED )
+					PM_SetAnim( pm, SETANIM_TORSO, BOTH_AMBAN_CROUCH_AIM_ATTACK, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART);
+				else
+					PM_SetAnim( pm, SETANIM_TORSO, BOTH_AMBAN_AIM_ATTACK, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART);
+				break;
+
 			case WP_DC15A_RIFLE:
 				PM_SetAnim( pm, SETANIM_TORSO, BOTH_ATTACK3, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART);
 				break;
@@ -14788,8 +14835,8 @@ void PM_AdjustAttackStates( pmove_t *pm )
 		}
 	}
 
-	// disruptor alt-fire should toggle the zoom mode, but only bother doing this for the player?
-	if ( pm->ps->weapon == WP_DISRUPTOR && pm->gent && (pm->gent->s.number<MAX_CLIENTS||G_ControlledByPlayer(pm->gent)) && pm->ps->weaponstate != WEAPON_DROPPING )
+	// disruptor/cycler alt-fire should toggle the zoom mode, but only bother doing this for the player?
+	if ( (pm->ps->weapon == WP_DISRUPTOR || pm->ps->weapon == WP_CYCLER_RIFLE) && pm->gent && (pm->gent->s.number<MAX_CLIENTS||G_ControlledByPlayer(pm->gent)) && pm->ps->weaponstate != WEAPON_DROPPING )
 	{
 		// we are not alt-firing yet, but the alt-attack button was just pressed and
 		//	we either are ducking ( in which case we don't care if they are moving )...or they are not ducking...and also not moving right/forward.
@@ -14912,8 +14959,8 @@ void PM_AdjustAttackStates( pmove_t *pm )
 		*/
 	}
 
-	// disruptor should convert a main fire to an alt-fire if the gun is currently zoomed
-	if ( pm->ps->weapon == WP_DISRUPTOR && pm->gent && (pm->gent->s.number<MAX_CLIENTS||G_ControlledByPlayer(pm->gent)) )
+	// disruptor/cycler should convert a main fire to an alt-fire if the gun is currently zoomed
+	if ( (pm->ps->weapon == WP_DISRUPTOR || pm->ps->weapon == WP_CYCLER_RIFLE) && pm->gent && (pm->gent->s.number<MAX_CLIENTS||G_ControlledByPlayer(pm->gent)) )
 	{
 		if ( pm->cmd.buttons & BUTTON_ATTACK && cg.zoomMode == 2 )
 		{

@@ -775,7 +775,7 @@ int NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type )
 		}
 		if ( Q_stricmp( "granshooter", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_BLASTER);
+			return (( 1 << WP_BLASTER)|( 1 << WP_Z6_ROTARY));
 		}
 		if ( Q_stricmp( "granboxer", NPC_type ) == 0 )
 		{
@@ -787,11 +787,11 @@ int NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type )
 		}
 		if ( Q_stricmp( "rodian", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_DISRUPTOR);
+			return (( 1 << WP_CYCLER_RIFLE)|( 1 << WP_Z6_ROTARY));
 		}
 		if ( Q_stricmp( "rodian2", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_BLASTER);
+			return (( 1 << WP_BLASTER)|( 1 << WP_Z6_ROTARY));
 		}
 
 		if (( Q_stricmp( "interrogator",NPC_type) == 0) || ( Q_stricmp( "sentry",NPC_type) == 0) || (Q_stricmpn( "protocol",NPC_type,8) == 0) )
@@ -821,7 +821,7 @@ int NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type )
 		}
 		if ( Q_stricmp( "trandoshan", NPC_type ) == 0 )
 		{
-			return (1<<WP_REPEATER);
+			return (( 1 << WP_REPEATER)|( 1 << WP_Z6_ROTARY));
 		}
 		if ( Q_stricmp( "atst", NPC_type ) == 0 )
 		{

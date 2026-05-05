@@ -164,6 +164,8 @@ stringID_table_t animTable [MAX_ANIMATIONS+1] =
 	ENUM2STRING(BOTH_MINIGUN_ATTACK),		//# Attack with Z-6 rotary blaster
 	ENUM2STRING(BOTH_MINIGUN_MELEE),		//# Z-6 melee strike
 	ENUM2STRING(BOTH_MINIGUN_MELEE_KICK),	//# Z-6 melee kick
+	ENUM2STRING(BOTH_AMBAN_ATTACK),			//# Attack with Amban/Cycler sniper rifle (standing)
+	ENUM2STRING(BOTH_AMBAN_MELEE),			//# Amban rifle melee strike
 	ENUM2STRING(BOTH_ATTACK4),			//# Attack with disruptor
 	ENUM2STRING(BOTH_ATTACK5),			//# Another Rancor Attack
 	ENUM2STRING(BOTH_ATTACK6),			//# Yet Another Rancor Attack
@@ -1662,6 +1664,16 @@ stringID_table_t animTable [MAX_ANIMATIONS+1] =
 	ENUM2STRING(BOTH_MINIGUN_IDLETOREADY),	//# Z-6 transition from idle to ready
 	ENUM2STRING(BOTH_MINIGUN_READYTOIDLE),	//# Z-6 transition from ready to idle
 	ENUM2STRING(BOTH_MINIGUN_READY),		//# Ready to fire Z-6 rotary blaster
+	ENUM2STRING(BOTH_AMBAN_AIM_ATTACK),		//# Fire Amban/Cycler rifle (standing, aimed)
+	ENUM2STRING(BOTH_AMBAN_AIM_READY),		//# Aim-ready pose (standing)
+	ENUM2STRING(BOTH_AMBAN_READY),			//# Ready pose (standing, un-aimed)
+	ENUM2STRING(BOTH_AMBAN_CROUCH_AIM_ATTACK),//# Fire Amban/Cycler rifle (crouched, aimed)
+	ENUM2STRING(BOTH_AMBAN_CROUCH_AIM_READY),//# Aim-ready pose (crouched)
+	ENUM2STRING(BOTH_AMBAN_CROUCH_IDLE),	//# Crouch idle with Amban/Cycler rifle
+	ENUM2STRING(BOTH_AMBAN_CROUCH_RELOAD),	//# Crouch reload Amban/Cycler rifle
+	ENUM2STRING(BOTH_AMBAN_IDLE),			//# Holding Amban/Cycler rifle at rest
+	ENUM2STRING(BOTH_AMBAN_IDLING),			//# Amban/Cycler idle loop
+	ENUM2STRING(BOTH_AMBAN_RELOAD),			//# Reload Amban/Cycler rifle (standing)
 	ENUM2STRING(TORSO_WEAPONREADY4),		//# Ready to fire sniper rifle
 	ENUM2STRING(TORSO_WEAPONREADY10),	//# Ready to fire thermal det
 	ENUM2STRING(TORSO_WEAPONIDLE2),		//# Holding one-handed blaster

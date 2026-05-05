@@ -1415,6 +1415,23 @@ void FireWeapon( gentity_t *ent, qboolean alt_fire )
 		}
 		break;
 
+	case WP_CYCLER_RIFLE:
+		if ( alt_fire )
+		{
+			int chargeLevel = 0;
+			if ( ent->client && ent->client->ps.weaponChargeTime )
+			{
+				chargeLevel = (int)( ( level.time - ent->client->ps.weaponChargeTime ) / 300.0f );
+				if ( chargeLevel > 10 ) chargeLevel = 10;
+			}
+			WP_FireCyclerRifle( ent, chargeLevel );
+		}
+		else
+		{
+			WP_FireCyclerRifle( ent, 0 );
+		}
+		break;
+
 	case WP_DISRUPTOR:
 		alert = 50; // if you want it to alert enemies, remove this
 		WP_FireDisruptor( ent, alt_fire );

@@ -88,3 +88,54 @@ void WP_FireTuskenRifle( gentity_t *ent )
 	// we don't want it to bounce forever
 	missile->bounceCount = 8;
 }
+
+//---------------------------------------------------------
+void WP_FireCyclerRifle( gentity_t *ent, int chargeLevel )
+//---------------------------------------------------------
+{
+	vec3_t	start;
+
+	VectorCopy( muzzle, start );
+	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );
+
+	if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
+		|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
+	{
+		if ( ent->NPC && ent->NPC->currentAim < 5 )
+		{
+			vec3_t	angs;
+			vectoangles( forwardVec, angs );
+			angs[PITCH] += ( Q_flrand(-1.0f, 1.0f) * ((5-ent->NPC->currentAim)*0.25f) );
+			angs[YAW]	+= ( Q_flrand(-1.0f, 1.0f) * ((5-ent->NPC->currentAim)*0.25f) );
+			AngleVectors( angs, forwardVec, NULL, NULL );
+		}
+	}
+
+	WP_MissileTargetHint(ent, start, forwardVec);
+
+	gentity_t *missile = CreateMissile( start, forwardVec, TUSKEN_RIFLE_VEL, 10000, ent, qfalse );
+
+	missile->classname = "cycler_proj";
+	missile->s.weapon = WP_CYCLER_RIFLE;
+
+	if ( ent->s.number < MAX_CLIENTS || g_spskill->integer >= 2 )
+	{
+		missile->damage = TUSKEN_RIFLE_DAMAGE_HARD;
+	}
+	else if ( g_spskill->integer > 0 )
+	{
+		missile->damage = TUSKEN_RIFLE_DAMAGE_MEDIUM;
+	}
+	else
+	{
+		missile->damage = TUSKEN_RIFLE_DAMAGE_EASY;
+	}
+	if ( chargeLevel > 0 )
+	{
+		missile->damage = missile->damage * ( 1 + chargeLevel / 5 );
+	}
+	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
+	missile->methodOfDeath = ( chargeLevel > 0 ) ? MOD_SNIPER : MOD_BRYAR;
+	missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
+	missile->bounceCount = 8;
+}

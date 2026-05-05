@@ -167,6 +167,7 @@ qboolean playerUsableWeapons[WP_NUM_WEAPONS] =
 	qtrue,//WP_DC15S_CARBINE,
 	qtrue,//WP_DC15A_RIFLE,
 	qtrue,//WP_Z6_ROTARY,
+	qtrue,//WP_CYCLER_RIFLE,
 
 	//# #eol
 	//WP_NUM_WEAPONS
@@ -283,6 +284,7 @@ const int defaultDamage[] = {
 	BLASTER_DAMAGE,				// WP_DC15S_CARBINE,
 	BRYAR_PISTOL_DAMAGE,		// WP_DC15A_RIFLE,
 	REPEATER_DAMAGE,			// WP_Z6_ROTARY,
+	TUSKEN_RIFLE_DAMAGE_HARD,	// WP_CYCLER_RIFLE,
 };
 
 const int defaultAltDamage[] = {
@@ -326,6 +328,7 @@ const int defaultAltDamage[] = {
 	BLASTER_DAMAGE,			// WP_DC15S_CARBINE,
 	0,						// WP_DC15A_RIFLE,
 	0,						// WP_Z6_ROTARY,
+	0,						// WP_CYCLER_RIFLE,
 };
 
 const int defaultSplashDamage[] = {
@@ -369,6 +372,7 @@ const int defaultSplashDamage[] = {
 	0,								// WP_DC15S_CARBINE,
 	0,								// WP_DC15A_RIFLE,
 	0,								// WP_Z6_ROTARY,
+	0,								// WP_CYCLER_RIFLE,
 };
 
 const float defaultSplashRadius[] = {
@@ -412,6 +416,7 @@ const float defaultSplashRadius[] = {
 	0.0f,							// WP_DC15S_CARBINE,
 	0.0f,							// WP_DC15A_RIFLE,
 	0.0f,							// WP_Z6_ROTARY,
+	0.0f,							// WP_CYCLER_RIFLE,
 };
 
 const int defaultAltSplashDamage[] = {
@@ -455,6 +460,7 @@ const int defaultAltSplashDamage[] = {
 	0,								// WP_DC15S_CARBINE,
 	0,								// WP_DC15A_RIFLE,
 	0,								// WP_Z6_ROTARY,
+	0,								// WP_CYCLER_RIFLE,
 };
 
 const float defaultAltSplashRadius[] = {
@@ -498,6 +504,7 @@ const float defaultAltSplashRadius[] = {
 	0.0f,							// WP_DC15S_CARBINE,
 	0.0f,							// WP_DC15A_RIFLE,
 	0.0f,							// WP_Z6_ROTARY,
+	0.0f,							// WP_CYCLER_RIFLE,
 };
 
 wpnParms_t WpnParms[] =
@@ -645,6 +652,8 @@ void WPN_WeaponType( const char **holdBuf)
 		weaponNum = WP_DC15A_RIFLE;
 	else if (!Q_stricmp(tokenStr,"WP_Z6_ROTARY"))
 		weaponNum = WP_Z6_ROTARY;
+	else if (!Q_stricmp(tokenStr,"WP_CYCLER_RIFLE"))
+		weaponNum = WP_CYCLER_RIFLE;
 	else
 	{
 		weaponNum = 0;
