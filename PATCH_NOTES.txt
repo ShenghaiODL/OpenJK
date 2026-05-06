@@ -1,0 +1,94 @@
+Patch Notes -- JKEnhanced / OpenJK
+=====================================
+
+
+MANUAL SABER BLOCKING
+---------------------
+- Replaced auto-blocking with a dedicated manual block button (+saberblock)
+- Blocking costs force points, scaling with your Saber Defense level; fails with a "no force" sound when depleted
+- Directional parrying: when an enemy fires from your left or right, you must strafe toward the shot to successfully parry
+- Block button can share a bind with alt-attack: bind mouse2 "+saberblock; +altattack"
+- Saber Staff block bug fixed
+
+
+MISSILE DEFLECTION REWORK
+--------------------------
+- Reflection accuracy is now tied to FP Saber Defense level:
+    Level 3: 75% chance, aimed along the player's crosshair
+    Level 2: 50% chance, aimed back at the shooter with medium spread
+    Level 1: 10% chance, aimed back at the shooter with large spread
+- Bowcaster bolts are now blockable at all difficulty levels; they dissipate on saber contact instead of reflecting
+
+
+WOOKIEE BOWCASTER REWORK
+-------------------------
+- Main fire fires a single green bolt (no longer a multi-bolt spread)
+- Alt fire fires a charged explosive bolt -- hold to charge, release to fire; damage scales 70-100 based on charge time
+- Player damage increased: 45 -> 55
+- NPC hard difficulty damage: 36 -> 50
+- Explosive bolt knocks down anyone within half the splash radius
+- Alt fire nerf: significantly slower fire rate when charged
+
+
+Z-6 ROTARY BLASTER CANNON (New Weapon)
+----------------------------------------
+- Spin-up mechanic: must hold fire to spin up the barrel (500ms minimum) before it fires
+- Loop sound plays while spinning; spin-down sound plays on button release
+- Model and animations courtesy of MBII
+- Stormtroopers, officers, and select NPCs can now spawn with the Z-6 as a weapon pool option
+- EFX fix pass
+
+
+CYCLER RIFLE / AMBAN SNIPER (Replaces Disruptor for player)
+------------------------------------------------------------
+- New weapon using the Amban model and MB2 skeleton animations
+- Dedicated animation set: idle, aim-ready, aim-attack, crouch variants
+- Zoom + charge mechanic: alt fire toggles scope; main fire while scoped charges a precision shot
+- Scoped shots now correctly fire from eye level, hitting the center of the crosshair
+- NPC cycler users get staggered burst spacing (750ms / 1100ms / 1500ms by difficulty)
+
+
+KICK SYSTEM
+-----------
+- Kick (+kick) is now available to all saber styles for the player
+- Previously restricted to certain styles
+
+
+BLASTER BALANCING
+-----------------
+- Blaster bolt velocity: 2300 -> 3000
+- Tusken Rifle: easy damage 20 -> 15, hard damage 50 -> 60
+
+
+SHIELD SYSTEM REDESIGN (uncommitted)
+--------------------------------------
+- Shield cap raised to 200 (100 on Jedi Master)
+- Three-tier absorption replaces the old binary threshold:
+    126-200 shields: 100% damage absorbed
+     76-125 shields:  75% absorbed
+       1-75 shields:  50% absorbed
+    On Jedi Master (cap 100), the 100% tier is never reachable
+- Passive shield regen: +5 every 250ms after 5 seconds without taking damage;
+  caps at 75 (50 on Jedi Master); requires a pickup to exceed the regen cap
+
+
+NPC AI IMPROVEMENTS (uncommitted)
+-----------------------------------
+- Ranged NPCs now hold their ground and continue shooting when the enemy is in FOV,
+  rather than chasing whenever they lack a perfect shot line
+- Ranged NPCs stop advancing when the enemy closes within ~150 units; will step back
+  rather than rush into melee
+- NPCs seek cover when below 50% health
+- When an NPC discovers a dead teammate, it broadcasts the alert to nearby allies
+
+
+DEATH ANIMATION FIX
+--------------------
+- Fixed a longstanding bug where the death animation could lock up and prevent the proper death state
+- New console command g_saberloaddebug to inspect animation and movement state for debugging
+
+
+RENDERER
+--------
+- Vertex limit per surface raised (no immediate gameplay use; opens options for future custom geometry)
+- Various upstream rend2 fixes merged

@@ -1126,6 +1126,7 @@ Ghoul2 Insert End
 	int			pushDebounceTime;
 	int			aimDebounceTime;
 	int			useDebounceTime;
+	int			regenDebounceTime;
 
 //Unions for miscellaneous fields used under very specific circumstances
 	union

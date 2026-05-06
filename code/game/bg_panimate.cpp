@@ -5893,6 +5893,23 @@ void PM_TorsoAnimation( void )
 		{
 			PM_SetAnim(pm,SETANIM_TORSO,BOTH_ATTACK1,SETANIM_FLAG_NORMAL);//TORSO_WEAPONREADY1
 		}
+		else if ( pm->ps->weapon == WP_CYCLER_RIFLE )
+		{
+			bool cyclerMoving = PM_RunningAnim(pm->ps->legsAnim) || PM_WalkingAnim(pm->ps->legsAnim) ||
+			                    PM_JumpingAnim(pm->ps->legsAnim) || PM_SwimmingAnim(pm->ps->legsAnim);
+			bool cyclerFiredRecently = (pm->ps->lastShotTime > level.time - 3000) ||
+			                           (pm->ps->weaponTime > 0) ||
+			                           (pm->gent && pm->gent->client->fireDelay > 0);
+			bool cyclerScoped = ((pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer()) && cg.zoomMode == 2);
+			bool cyclerDucked = (pm->ps->pm_flags & PMF_DUCKED) != 0;
+
+			if ( cyclerMoving )
+				PM_SetAnim(pm, SETANIM_TORSO, cyclerDucked ? BOTH_AMBAN_CROUCH_AIM_READY : BOTH_AMBAN_AIM_READY, SETANIM_FLAG_OVERRIDE);
+			else if ( cyclerFiredRecently || cyclerScoped )
+				PM_SetAnim(pm, SETANIM_TORSO, cyclerDucked ? BOTH_AMBAN_CROUCH_AIM_READY : BOTH_AMBAN_AIM_READY, SETANIM_FLAG_NORMAL);
+			else
+				PM_SetAnim(pm, SETANIM_TORSO, cyclerDucked ? BOTH_AMBAN_CROUCH_IDLE : BOTH_AMBAN_IDLE, SETANIM_FLAG_NORMAL);
+		}
 		else if( pm->ps->legsAnim == BOTH_RUN1 && !weaponBusy )
 		{
 			PM_SetAnim(pm,SETANIM_TORSO,BOTH_RUN1,SETANIM_FLAG_NORMAL);
@@ -6131,7 +6148,7 @@ void PM_TorsoAnimation( void )
 						|| PM_JumpingAnim( pm->ps->legsAnim )
 						|| PM_SwimmingAnim( pm->ps->legsAnim ) )
 					{
-						PM_SetAnim(pm, SETANIM_TORSO, TORSO_WEAPONREADY3, SETANIM_FLAG_NORMAL);
+						PM_SetAnim(pm, SETANIM_TORSO, (pm->ps->pm_flags & PMF_DUCKED) ? BOTH_AMBAN_CROUCH_IDLE : BOTH_AMBAN_READY, SETANIM_FLAG_NORMAL);
 					}
 					else if ( pm->ps->pm_flags & PMF_DUCKED )
 					{
@@ -6495,7 +6512,7 @@ void PM_TorsoAnimation( void )
 					bool cyclerDucked = (pm->ps->pm_flags & PMF_DUCKED) != 0;
 
 					if ( cyclerMoving )
-						PM_SetAnim(pm, SETANIM_TORSO, TORSO_WEAPONREADY3, SETANIM_FLAG_NORMAL);
+						PM_SetAnim(pm, SETANIM_TORSO, cyclerDucked ? BOTH_AMBAN_CROUCH_IDLE : BOTH_AMBAN_READY, SETANIM_FLAG_NORMAL);
 					else if ( cyclerFiredRecently || cyclerScoped )
 						PM_SetAnim(pm, SETANIM_TORSO, cyclerDucked ? BOTH_AMBAN_CROUCH_AIM_READY : BOTH_AMBAN_AIM_READY, SETANIM_FLAG_NORMAL);
 					else

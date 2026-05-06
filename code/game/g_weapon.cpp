@@ -503,6 +503,12 @@ void CalcMuzzlePoint( gentity_t *const ent, vec3_t forwardVec, vec3_t right, vec
 		VectorMA( muzzlePoint, 1, vrightVec, muzzlePoint );
 		break;
 
+	case WP_CYCLER_RIFLE:
+		ViewHeightFix(ent);
+		muzzlePoint[2] += ent->client->ps.viewheight;
+		VectorMA( muzzlePoint, 8, forwardVec, muzzlePoint );
+		break;
+
 	case WP_SABER:
 		if(ent->NPC!=NULL &&
 			(ent->client->ps.torsoAnim == TORSO_WEAPONREADY2 ||

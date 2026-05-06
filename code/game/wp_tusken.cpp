@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_functions.h"
 #include "wp_saber.h"
 #include "w_local.h"
+#include "../cgame/cg_local.h"
 
 //---------------------------------------------------------
 void WP_FireTuskenRifle( gentity_t *ent )
@@ -95,7 +96,15 @@ void WP_FireCyclerRifle( gentity_t *ent, int chargeLevel )
 {
 	vec3_t	start;
 
-	VectorCopy( muzzle, start );
+	if ( ent->s.number < MAX_CLIENTS && cg.zoomMode == 2 )
+	{//when scoped, fire from eye level so the shot matches the scope crosshair center
+		VectorCopy( ent->currentOrigin, start );
+		start[2] += ent->client->ps.viewheight;
+	}
+	else
+	{
+		VectorCopy( muzzle, start );
+	}
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );
 
 	if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))

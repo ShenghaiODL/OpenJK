@@ -884,7 +884,17 @@ static qboolean NPC_ST_InvestigateEvent( int eventID, bool extraSuspicious )
 				!level.alertEvents[eventID].owner->client ||
 				level.alertEvents[eventID].owner->health <= 0 ||
 				level.alertEvents[eventID].owner->client->playerTeam != NPC->client->enemyTeam )
-			{//not an enemy
+			{//not a living enemy
+				//if it's a dead teammate, broadcast so nearby allies come to check
+				if ( level.alertEvents[eventID].owner
+					&& level.alertEvents[eventID].owner->client
+					&& level.alertEvents[eventID].owner->health <= 0
+					&& level.alertEvents[eventID].owner->client->playerTeam == NPC->client->playerTeam
+					&& TIMER_Done( NPC, "bodyFoundBroadcast" ) )
+				{
+					AddSoundEvent( NPC, NPC->currentOrigin, 512, AEL_DISCOVERED, qfalse );
+					TIMER_Set( NPC, "bodyFoundBroadcast", 10000 );
+				}
 				return qfalse;
 			}
 			//FIXME: what if can't actually see enemy, don't know where he is... should we make them just become very alert and start looking for him?  Or just let combat AI handle this... (act as if you lost him)
@@ -2121,6 +2131,14 @@ void ST_Commander( void )
 		}
 
 
+		//seek cover when wounded (below half health)
+		if ( NPC->health < NPC->max_health / 2
+			&& TIMER_Done( NPC, "healthCoverDebounce" ) )
+		{
+			cpFlags |= CP_COVER|CP_DUCK;
+			TIMER_Set( NPC, "healthCoverDebounce", Q_irand( 5000, 10000 ) );
+		}
+
 		//clear the local state
 		NPCInfo->localState = LSTATE_NONE;
 
@@ -2285,10 +2303,12 @@ void NPC_BSST_Attack( void )
 	if ( TIMER_Done( NPC, "interrogating" ) )
 	{
 		AI_GetGroup( NPC );//, 45, 512, NPC->enemy );
-	}
-	else
-	{
-		//FIXME: when done interrogating, I should send out a team alert!
+		//On first contact this engagement, alert nearby allies to the enemy
+		if ( NPC->enemy && TIMER_Done( NPC, "firstContactAlert" ) )
+		{
+			G_AlertTeam( NPC, NPC->enemy, 1024, 512 );
+			TIMER_Set( NPC, "firstContactAlert", Q_irand( 20000, 30000 ) );
+		}
 	}
 
 	if ( NPCInfo->group )
@@ -2456,6 +2476,15 @@ void NPC_BSST_Attack( void )
 		if ( enemyCS )
 		{
 			shoot = qtrue;
+		}
+		else if ( enemyLOS && !hitAlly
+			&& level.time - NPCInfo->enemyLastSeenTime < 2000
+			&& enemyDist < (450*450) )
+		{//have LOS but no clean shot angle (off-axis while chasing) — suppression fire
+			if ( !Q_irand( 0, 2 ) )
+			{
+				shoot = qtrue;
+			}
 		}
 	}
 

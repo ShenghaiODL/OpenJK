@@ -1736,6 +1736,21 @@ void ClientTimerActions( gentity_t *ent, int msec ) {
 				ent->flags &= ~FL_OVERCHARGED_HEALTH;
 			}
 		}
+
+		// passive shield regen — player only, out of combat, caps at regen threshold
+		if ( ent->health > 0 && ent->s.number < MAX_CLIENTS )
+		{
+			int regenCap = ( g_spskill->integer >= 3 ) ? 50 : 75;
+			if ( client->ps.stats[STAT_ARMOR] < regenCap
+				&& level.time > ent->painDebounceTime + 5000
+				&& level.time > ent->regenDebounceTime )
+			{
+				client->ps.stats[STAT_ARMOR] += 5;
+				if ( client->ps.stats[STAT_ARMOR] > regenCap )
+					client->ps.stats[STAT_ARMOR] = regenCap;
+				ent->regenDebounceTime = level.time + 250;
+			}
+		}
 	}
 }
 

@@ -4963,21 +4963,22 @@ int CheckArmor (gentity_t *ent, int damage, int dflags, int mod)
 		// armor
 		count = client->ps.stats[STAT_ARMOR];
 
-		// No damage to entity until armor is at less than 50% strength
-		if (count > (client->ps.stats[STAT_MAX_HEALTH]/2)) // MAX_HEALTH is considered max armor. Or so I'm told.
+		// Three-tier absorption: full shields absorb all damage, mid-tier absorbs 75%, low absorbs 50%
+		if ( !ent->s.number && client->NPC_class == CLASS_ATST )
+		{//player in ATST... armor takes *all* the damage regardless of shield level
+			save = damage;
+		}
+		else if ( count > 125 )
 		{
 			save = damage;
 		}
+		else if ( count > 75 )
+		{
+			save = (int)ceil( (float)damage * 0.75f );
+		}
 		else
 		{
-			if ( !ent->s.number && client->NPC_class == CLASS_ATST )
-			{//player in ATST... armor takes *all* the damage
-				save = damage;
-			}
-			else
-			{
-				save = ceil( (float) damage * ARMOR_PROTECTION );
-			}
+			save = (int)ceil( (float)damage * 0.50f );
 		}
 
 		//Always round up

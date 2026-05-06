@@ -274,16 +274,18 @@ void NPC_BSHuntAndKill( void )
 			//FIXME, use IdealDistance to determin if we need to close distance
 			VectorSubtract(NPC->enemy->currentOrigin, NPC->currentOrigin, vec);
 			enemyDist = VectorLength(vec);
-			if( enemyDist > 48 && ((enemyDist*1.5)*(enemyDist*1.5) >= NPC_MaxDistSquaredForWeapon() ||
-				oEVis != VIS_SHOOT ||
-				//!(ucmd.buttons & BUTTON_ATTACK) ||
+			qboolean hasRangedWeapon = (qboolean)( NPC->s.weapon != WP_SABER && NPC->s.weapon != WP_MELEE && NPC->s.weapon != WP_NONE );
+			if( enemyDist > 48
+				&& ( !hasRangedWeapon || enemyDist > 150 )
+				&& ((enemyDist*1.5)*(enemyDist*1.5) >= NPC_MaxDistSquaredForWeapon() ||
+				( hasRangedWeapon ? oEVis < VIS_FOV : oEVis != VIS_SHOOT ) ||
 				enemyDist > IdealDistance(NPC)*3 ) )
 			{//We should close in?
 				NPCInfo->goalEntity = NPC->enemy;
 
 				NPC_MoveToGoal( qtrue );
 			}
-			else if(enemyDist < IdealDistance(NPC))
+			else if(enemyDist < IdealDistance(NPC) || (hasRangedWeapon && enemyDist < 150))
 			{//We should back off?
 				//if(ucmd.buttons & BUTTON_ATTACK)
 				{

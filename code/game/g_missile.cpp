@@ -814,7 +814,7 @@ extern cvar_t *g_saberAutoBlocking;
 		}
 		if ( ( g_spskill->integer <= 0//on easy, it reflects all shots
 				|| (g_spskill->integer == 1 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 )//on medium it won't reflect flechette or demp shots
-				|| (g_spskill->integer >= 2 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 && ent->s.weapon != WP_BOWCASTER )//on hard it won't reflect flechette, demp, or bowcaster shots
+				|| (g_spskill->integer >= 2 && ent->s.weapon != WP_FLECHETTE && ent->s.weapon != WP_DEMP2 )//on hard it won't reflect flechette or demp shots
 			 )
 			&& (!ent->splashDamage || !ent->splashRadius) //this would be cool, though, to "bat" the thermal det away...
 			&& ent->s.weapon != WP_NOGHRI_STICK )//gas bomb, don't reflect
@@ -824,6 +824,12 @@ extern cvar_t *g_saberAutoBlocking;
 				|| (InFront( ent->currentOrigin, other->owner->currentOrigin, other->owner->client->ps.viewangles, SABER_REFLECT_MISSILE_CONE ) &&
 				!WP_DoingMoronicForcedAnimationForForcePowers(other)) )//other->owner->s.number != 0 ||
 			{//Jedi cannot block shots from behind!
+				if ( ent->s.weapon == WP_BOWCASTER )
+				{
+					G_MissileReflectEffect( ent, trace->endpos, trace->plane.normal );
+					G_FreeEntity( ent );
+					return;
+				}
 				// Player with no force power cannot deflect missiles
 				if ( other->owner && other->owner->client && !other->owner->s.number
 					&& !g_saberAutoBlocking->integer

@@ -614,7 +614,14 @@ int Pickup_Armor( gentity_t *ent, gentity_t *other ) {
 	other->client->ps.powerups[PW_BATTLESUIT] = Q3_INFINITE;
 
 	other->client->ps.stats[STAT_ARMOR] += ent->item->quantity;
-	if ( other->client->ps.stats[STAT_ARMOR] > other->client->ps.stats[STAT_MAX_HEALTH] ) {
+	if ( other->s.number < MAX_CLIENTS )
+	{
+		int armorCap = ( g_spskill->integer >= 3 ) ? 100 : 200;
+		if ( other->client->ps.stats[STAT_ARMOR] > armorCap )
+			other->client->ps.stats[STAT_ARMOR] = armorCap;
+	}
+	else if ( other->client->ps.stats[STAT_ARMOR] > other->client->ps.stats[STAT_MAX_HEALTH] )
+	{
 		other->client->ps.stats[STAT_ARMOR] = other->client->ps.stats[STAT_MAX_HEALTH];
 	}
 

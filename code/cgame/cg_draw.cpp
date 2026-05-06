@@ -508,8 +508,8 @@ static void CG_DrawArmor(const int x,const int y,const int w,const int h, const 
 	// Print all the tics of the armor graphic
 	// Look at the amount of armor left and show only as much of the graphic as there is armor.
 	// Use alpha to fade out partial section of armor
-	// MAX_HEALTH is the same thing as max armor
-	float inc = (float) ps->stats[STAT_MAX_HEALTH] / MAX_HUD_TICS;
+	// Scale to 200 — the new shield cap (pickups can push above the base 100)
+	float inc = 200.0f / MAX_HUD_TICS;
 	float currValue = ps->stats[STAT_ARMOR];
 
 	memcpy(calcColor, colorTable[CT_WHITE], sizeof(vec4_t));
@@ -574,7 +574,7 @@ static void CG_DrawArmor(const int x,const int y,const int w,const int h, const 
 	// If armor is low, flash a graphic to warn the player
 	if (ps->stats[STAT_ARMOR])	// Is there armor? Draw the HUD Armor TIC
 	{
-		float quarterArmor = (float) (ps->stats[STAT_MAX_HEALTH] / 4.0f);
+		float quarterArmor = 50.0f; // 25% of 200 shield cap
 
 		// Make tic flash if armor is at 25% of full armor
 		if (ps->stats[STAT_ARMOR] < quarterArmor)		// Do whatever the flash timer says
