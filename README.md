@@ -1,72 +1,98 @@
-# JAEnhanced
+## Patch Notes -- JKEnhanced / OpenJK
+## =====================================
 
-### [Visit the JKHub Page to download](https://jkhub.org/files/file/2550-jedi-academy-enhanced)
+SABER REWORK:
+---------------------
 
-NOTE: If you don't already have it and you're on Windows, you'll need the [Visual C++ 2015 redistributable](https://www.microsoft.com/en-gb/download/details.aspx?id=48145).
+MANUAL SABER BLOCKING
+---------------------
+Replaced auto-blocking with a dedicated manual block button (+saberblock) //Saberlocks are very infrequent as a side effect, might have had one total in my testing since.
+Blocking costs force points, scaling with your Saber Defense level; fails with a "no force" sound when depleted //Still don't think this is 100% perfect, probably a fair few edge cases. 
+Block button can share a bind with alt-attack: bind mouse2 "+saberblock; +altattack"
 
-**Jedi Academy: Enhanced** is a mod for Jedi Academy Single Payer which adds RGB sabers, saber customization, holstering, new force powers, some extra character customization options using "head swapping" and optionally allows you to use AJL's SFX Sabers, and many more. Full feature list below.
 
-It's based on OpenJK (so the code is released under the GPL and available at <https://github.com/redsaurus/OpenJK/tree/custom>) and a slightly modified version (for SP) of AJL's SFX Saber code. It also uses Open Jedi Project code for TrueView.
+MISSILE DEFLECTION
+--------------------------
+Reflection accuracy is now tied to FP Saber Defense level:
+  Level 3: 75% chance, aimed along the player's crosshair
+  Level 2: 50% chance, aimed back at the shooter with medium spread
+  Level 1: 10% chance, aimed back at the shooter with large spread
+Bowcaster bolts are now blockable at all difficulty levels; they dissipate on saber contact instead of reflecting //Made balancing around NPCs with the bowcaster very difficult. Might revisit this and just reduce the number of bowcasters, but hey.
 
-**Features and Commands**
+Weapon Rework:
+---------------------
 
--   **All OpenJK features and fixes**.
--   **RGB Sabers -** These can be set in the menus or by setting the sabercolor to a hex code in the console - for example "**sabercolor 1 xff0000**" will set the first lightsaber blade to be red. It is possible to set the sabercolors of NPCs by setting their sabercolor to a hex code in the .npc file. If you want to set one sabercolor for base and one for this mod, you can set the sabercolor of the NPC or lightsaber to the base value, and sabercolorRGB to the RGB value for this mod. Higher blade numbers are set with saberColorRGB2, saber2ColorRGB3, etc.
--   **SFX Sabers -** SFX Sabers can be enabled in the console by setting cg_SFXSabers to 1. This is on by default, allows for more vibrant and high quality saber blades.
--   **Ignition Flare -** A lightsaber ignition flare can be enabled in the console by setting **cg_ignitionFlare** to 1. A custom ignition flare can be specified for a lightsaber with "ignitionFlare <shader>" in the .sab file.
--   **Ignition twirl animation disable -** If that little twirl of the saber that you do in SP when activating it bothered you, you can now disable it to be more like MP with **g_noIgniteTwirl 1**.
--   **Disable idle animations** - Use the command **g_UseIdleAnims 0** to disable them. Very helpful when taking screenshots.
--   **Saber Holsters -** Lightsabers are now holstered on the belt when not in use. ~~A tag_holsterorigin can be added to a hilt for better placement. Adding "holsterPlace <none/hips/back/lhip>" in the .sab file specifies where a hilt will be holstered.~~ Currently broken, default is right hip for now.
--   **Headswapping -** Several new heads are available for the human male and human female species. You can add your own heads - see the .headswap files in the sp_custom.pk3 for examples. NPCs can have heads set using the playerHeadModel and customHeadSkin commands in their .npc file.
--   **RGB Character Colors -** Adds an RGB slider option to all player species.
--   **Better Entity Spawning -** The /spawn command now supports entity keys, e.g. "**spawn fx_runner fxFile the/file**".
--   **.eent files -** Maps now load entities from mapentities/mapname.eent in addition to loading them from the .bsp file.
--   **MP Movement** - Not identical to MP but close. Allows for bunny hopping and less "slide" effect when moving. **g_bunnyhopping 1**. Also in the menu.
--   **Extra Player Tints -** (Unused) Playermodels are able to have multiple tints. If you enter "newPlayerTint 0 R G B", any shader stages for the player with "rgbGen lightingDiffuseEntity 0" will be tinted to this color rather than the usual.
--   **Ghoul2 view models** First person view weapon models are now allowed to use .glm models using eezstreet's code.
--   **Detachable E-Web** The player can detach an E-Web from its mount by pressing the Use Force button whilst using it. While the E-Web is equipped, the player moves more slowly.
--   **More usable weapons** The tusken rifle and noghri stick are fully usable by the player. The DC-15A clone rifle (made by Pahricida), DC-15S clone blaster (Made by AshuraDX) and E-5 droid blaster (made by KhorneSyrup) have also been added. Only given via cheats right now.
-    -   give weapon_tusken_rifle
-    -   give weapon_noghri_stick
-    -   give weapon_e5
-    -   give weapon_dc15s
-    -   give weapon_dc15a
--   **Saber throw is now a force power -** This was to be compatible with the katarn saber style (listed below) - this was restored to alt attack to work with all styles like before.
--   **New force powers -** Force Insanity, Destruction, Repulse and Stasis have been added. Force Repulse is gained automatically during the SP campaign. Bind the keys in the Controls menu. NPCs can use Destruction and Stasis. For faster force regeneration, **g_forceRegenTime** has been brought over from MP.
--   **First person lightsaber with TrueView -** As seen in Open Jedi Project and all the other mods that used it, TrueView shows the player model in first person view. You can turn it on for guns with **cg_trueguns** and turn it on for sabers with **cg_fpls** or through the menu. Change FOV with **cg_trueFOV**. Recommend set to 120 if using first person lightsaber.
--   **Radar -** The radar system from Siege in MP now works in SP. Giving NPCs and misc_radar_icon entities the icon key will set a custom icon. A 2D minimap is also loaded from minimaps/mapname.mmap.
--   **AI workshop -** Created by eezstreet to give more control over NPC AI. [See full thread here](https://jkhub.org/forums/topic/10194-ai-workshop/).
--   **Switch pistols -** Toggle between DL-44 and Bryar if added to inventory with pistol bind (+weapon_2)
--   **Saber ignition speed** - cg_ignitionSpeed scales saber ignition speed
--   **Click-drag to rotate player model in customization screen - **To help with seeing your character more easily instead of waiting on it to rotate around again.
--   **MP-style saber hilt list -** Lists lightsabers in the menu without the need for adding menu listings
--   **r_mode -2 is now default -** sets the game to the monitor's native resolution at launch. Change back to r_mode -1 to use windowed mode.
--   **Widescreen HUD fix -** Fixes the HUD to support widescreen resolutions without stretching the HUD elements, default to on. **r_ratioFix**.
--   **Removed black bars in cutscenes -** this helps with widescreen resolutions not cutting off half of the scene.
+WOOKIEE BOWCASTER REWORK
+-------------------------
+Main fire fires a single green bolt (no longer a multi-bolt spread)
+Alt fire fires a charged explosive bolt -- hold to charge, release to fire; damage scales 70-100 based on charge time
+Player damage increased: 45 -> 55
+NPC hard difficulty damage: 36 -> 50
+Explosive bolt knocks down anyone within half the splash radius
+Alt fire nerf: significantly slower fire rate when charged
 
-**Optional features (separate PK3's):**
 
--   **Improved jedi_hm -** DT's very nice improved Human Male jedi is included with Jedi Robe options with RGB tinting features.
--   **Build Your Own Lightsaber** - Now lightsabers can be customized like the player species. Example customizable hilts are included thanks to AshuraDX and Plasma.
+Z-6 ROTARY BLASTER CANNON (from JKEnhanced)
+----------------------------------------
+Spin-up mechanic: must hold fire to spin up the barrel (500ms minimum) before it fires
+Loop sound plays while spinning; spin-down sound plays on button release
+Model and animations courtesy of MBII
+Stormtroopers, officers, and select NPCs can now spawn with the Z-6 as a weapon pool option
+Currently shoots red blaster EFX.
+// Not currently super happy with the projectiles and damage. Will probably adjust.
 
-**Unfinished features, only use if testing:**
 
--   **Katarn saber style -** A gun / saber stance. No animations yet, but you play around with it (with cheats enabled) by doing "**give weapon_bryar_pistol**" and then "**setsaberstyle katarn**" in the console.
--   **Z-6 rotary cannon -** Added slot for this weapon, but it has no model yet. **give weapon_z6**
+CYCLER RIFLE / AMBAN SNIPER (Replaces Disruptor for player and will eventually for NPCs)
+------------------------------------------------------------
+New weapon using the Amban model and MB2 skeleton animations
+Cycler rifle that needs to be reloaded in between shots.
+Keeps disruptor mechanic, but needs to charge for longer.
 
-**Known bugs:**
 
--   holsterPlace for .sab files currently does not work
--   The ingame saber menu won't let you switch from dual sabers to single saber. Workaround is to use /saber kyle (or any single saber) and then use the menu to choose one.
--   g_forceRegenTime doesn't go less than the default value
--   Player RGB tints can't be removed in the menu
+KICK SYSTEM
+-----------
+Kick (+kick) is now available to all saber styles for the player
+Previously restricted to double bladed saber
+//TODO: Be able to throw Staff Saber
 
-**Potential future features:**
 
--   Health regeneration
--   Add new weapons like sabers, fitting them to existing classes - like add a new model but it functions just like a blaster pistol with a unique sound and effect color, like sabers do. Instead of .sab files we could have .weap or files or something similar. As opposed to how it is now where you have to code in new weapons directly.
--   Adding to the above bullet point, SFX sabers translated into blaster effects with RGB and everything
--   Headswap, but for all parts, so you can use the pants of one model, the torso of another, and the head of another
+BLASTER BALANCING
+-----------------
+Blaster bolt velocity: 2300 -> 3000
+
+
+SHIELD SYSTEM REDESIGN
+--------------------------------------
+Shield cap raised to 200 (100 on Jedi Master)
+New Three-tier absorption:
+  126-200 shields: 100% damage absorbed
+   76-125 shields:  75% absorbed
+     1-75 shields:  50% absorbed
+  On Jedi Master (cap 100), the 100% absorption tier is never reachable
+Passive shield regen: +5 every 250ms after 5 seconds without taking damage;
+caps at 75 (50 on Jedi Master); requires a pickup to exceed the regen cap // Pickups currently bugged? Will also probably make this faster.
+
+
+NPC AI IMPROVEMENTS
+-----------------------------------
+Ranged NPCs now hold their ground and continue shooting when the enemy is in FOV,
+rather than chasing whenever they lack a perfect shot line
+Ranged NPCs stop advancing when the enemy closes within ~150 units; will step back
+rather than rush into melee
+NPCs seek cover when below 50% health
+When an NPC discovers a dead teammate, it alerts nearby allies
+New AI Class_Mando; same as a stormtrooper, but has a flamethrower. //Might add more to this later, this was just to see if I could.
+
+
+DEATH ANIMATION FIX
+--------------------
+During manual block ideation, ran into an issue where if the player died, and tried to reload the game, they could not move or use their saber. This is now fixed.
+New console command g_saberloaddebug to inspect animation and movement state for debugging
+
+
+RENDERER
+--------
+Vertex limit per surface raised (from my brief testing, negligible impact on fps/performance. Opens up a couple of cool possibilties with rend2 I think.)
 
 
 ## Based on OpenJK
