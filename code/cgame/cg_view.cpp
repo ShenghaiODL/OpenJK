@@ -740,6 +740,15 @@ static void CG_OffsetThirdPersonView( void )
 	camWaterAdjust = 0;
 	cameraStiffFactor = 0.0;
 
+	qboolean isShooterMode = (qboolean)( cg.snap
+		&& cg.renderingThirdPerson
+		&& cg.snap->ps.weapon != WP_SABER
+		&& cg.snap->ps.weapon != WP_MELEE
+		&& cg.snap->ps.weapon != WP_NONE );
+
+	// Smooth blend 0..1 so the camera glides between saber-orbit and shooter-aim modes.
+	float shooterBlend = isShooterMode ? 1.0f : 0.0f;
+
 	// Set camera viewing direction.
 	VectorCopy( cg.refdefViewAngles, cameraFocusAngles );
 
@@ -788,22 +797,16 @@ static void CG_OffsetThirdPersonView( void )
 		}
 	}
 	else
-	{	// Add in the third Person Angle.
-		if ( cg.overrides.active & CG_OVERRIDE_3RD_PERSON_ANG )
+	{	// Add in the third Person Angle — fade out as we enter shooter mode.
+		float angleFactor = 1.0f - shooterBlend;
+		if ( angleFactor > 0.001f )
 		{
-			cameraFocusAngles[YAW] += cg.overrides.thirdPersonAngle;
-		}
-		else
-		{
-			cameraFocusAngles[YAW] += cg_thirdPersonAngle.value;
-		}
-		if ( cg.overrides.active & CG_OVERRIDE_3RD_PERSON_POF )
-		{
-			cameraFocusAngles[PITCH] += cg.overrides.thirdPersonPitchOffset;
-		}
-		else
-		{
-			cameraFocusAngles[PITCH] += cg_thirdPersonPitchOffset.value;
+			float yawAdd   = ( cg.overrides.active & CG_OVERRIDE_3RD_PERSON_ANG )
+				? cg.overrides.thirdPersonAngle   : cg_thirdPersonAngle.value;
+			float pitchAdd = ( cg.overrides.active & CG_OVERRIDE_3RD_PERSON_POF )
+				? cg.overrides.thirdPersonPitchOffset : cg_thirdPersonPitchOffset.value;
+			cameraFocusAngles[YAW]   += yawAdd   * angleFactor;
+			cameraFocusAngles[PITCH] += pitchAdd * angleFactor;
 		}
 	}
 
@@ -861,8 +864,17 @@ static void CG_OffsetThirdPersonView( void )
 		cameraLastYaw = cameraFocusAngles[YAW];
 
 		// Move the target to the new location.
-		CG_UpdateThirdPersonTargetDamp();
-		CG_UpdateThirdPersonCameraDamp();
+		// Blend damp factors toward 1.0 (instant) as shooterBlend increases.
+		{
+			float savedTargetDamp = cg_thirdPersonTargetDamp.value;
+			float savedCamDamp    = cg_thirdPersonCameraDamp.value;
+			cg_thirdPersonTargetDamp.value += shooterBlend * (1.0f - savedTargetDamp);
+			cg_thirdPersonCameraDamp.value  += shooterBlend * (1.0f - savedCamDamp);
+			CG_UpdateThirdPersonTargetDamp();
+			CG_UpdateThirdPersonCameraDamp();
+			cg_thirdPersonTargetDamp.value = savedTargetDamp;
+			cg_thirdPersonCameraDamp.value = savedCamDamp;
+		}
 	}
 
 	// Now interestingly, the Quake method is to calculate a target focus point above the player, and point the camera at it.
@@ -878,12 +890,34 @@ static void CG_OffsetThirdPersonView( void )
 	}
 	vectoangles(diff, cg.refdefViewAngles);
 
-	// Temp: just move the camera to the side a bit
+	// Over-left-shoulder offset in shooter mode; blends smoothly on weapon switch.
 	extern vmCvar_t cg_thirdPersonHorzOffset;
-	if ( cg_thirdPersonHorzOffset.value != 0.0f )
+	float horzOffset = cg_thirdPersonHorzOffset.value + shooterBlend * (-20.0f - cg_thirdPersonHorzOffset.value);
+	float vertAdjust = shooterBlend * -10.0f;
+	if ( horzOffset != 0.0f || vertAdjust != 0.0f )
 	{
-		AnglesToAxis( cg.refdefViewAngles, cg.refdef.viewaxis );
-		VectorMA( cameraCurLoc, cg_thirdPersonHorzOffset.value, cg.refdef.viewaxis[1], cameraCurLoc );
+		vec3_t offsetAxes[3];
+		AnglesToAxis( cameraFocusAngles, offsetAxes );
+		if ( horzOffset != 0.0f )
+			VectorMA( cameraCurLoc, horzOffset, offsetAxes[1], cameraCurLoc );
+		if ( vertAdjust != 0.0f )
+			VectorMA( cameraCurLoc, vertAdjust, offsetAxes[2], cameraCurLoc );
+	}
+	// Blend view direction toward ps.viewangles so screen-centre == crosshair == shot direction.
+	if ( shooterBlend > 0.001f )
+	{
+		cg.refdefViewAngles[YAW]   += shooterBlend * AngleNormalize180( cameraFocusAngles[YAW]   - cg.refdefViewAngles[YAW] );
+		cg.refdefViewAngles[PITCH] += shooterBlend * AngleNormalize180( cameraFocusAngles[PITCH] - cg.refdefViewAngles[PITCH] );
+	}
+
+	// Re-check after shoulder offsets — they can push the camera into map geometry or
+	// entity models, which makes entities invisible.  Retreat to the last clear point.
+	{
+		trace_t camTrace;
+		CG_Trace( &camTrace, cameraCurTarget, cameramins, cameramaxs, cameraCurLoc,
+		          cg.predicted_player_state.clientNum, MASK_CAMERACLIP );
+		if ( camTrace.startsolid || camTrace.fraction < 1.0f )
+			VectorCopy( camTrace.endpos, cameraCurLoc );
 	}
 
 	// ...and of course we should copy the new view location to the proper spot too.
@@ -1703,6 +1737,15 @@ static qboolean CG_CalcViewValues( void ) {
 			}
 		}*/
 		CG_OffsetThirdPersonView();
+		// Update eye info so game code (WP_MissileTargetHint) aims correctly in third person
+		{
+			centity_t *playerCent = &cg_entities[0];
+			if ( playerCent && playerCent->gent && playerCent->gent->client )
+			{
+				VectorCopy( cg.refdef.vieworg, playerCent->gent->client->renderInfo.eyePoint );
+				VectorCopy( cg.refdefViewAngles, playerCent->gent->client->renderInfo.eyeAngles );
+			}
+		}
 //		}
 	}
 	else
@@ -2142,6 +2185,20 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 		inwater = CG_CalcViewValues();
 	}
 
+	// Save camera position for shooter mode — CG_Player will overwrite renderInfo.eyePoint
+	// with the player body origin, but WP_MissileTargetHint needs the actual camera position.
+	qboolean restoreShooterCam = qfalse;
+	vec3_t shooterCamPos = {0,0,0};
+	if ( cg.renderingThirdPerson && cg.snap )
+	{
+		int w = cg.snap->ps.weapon;
+		if ( w != WP_SABER && w != WP_MELEE && w != WP_NONE )
+		{
+			restoreShooterCam = qtrue;
+			VectorCopy( cg.refdef.vieworg, shooterCamPos );
+		}
+	}
+
 	if (cg.zoomMode)
 	{ //zooming with binoculars or sniper, set the fog range based on the zoom level -rww
 		cg_rangedFogging = qtrue;
@@ -2171,6 +2228,15 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 		CG_AddPacketEntities(qfalse);			// adter calcViewValues, so predicted player state is correct
 		CG_AddMarks();
 		CG_DrawMiscEnts();
+	}
+
+	// CG_Player just overwrote renderInfo.eyePoint with the player body origin.
+	// Restore it to the camera position so WP_MissileTargetHint traces from the right spot.
+	if ( restoreShooterCam )
+	{
+		centity_t *playerCent = &cg_entities[0];
+		if ( playerCent && playerCent->gent && playerCent->gent->client )
+			VectorCopy( shooterCamPos, playerCent->gent->client->renderInfo.eyePoint );
 	}
 
 	//check for opaque water

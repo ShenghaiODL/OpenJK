@@ -598,9 +598,10 @@ int ITM_AddArmor (gentity_t *ent, int count)
 
 	ent->client->ps.stats[STAT_ARMOR] += count;
 
-	if (ent->client->ps.stats[STAT_ARMOR] > ent->client->ps.stats[STAT_MAX_HEALTH])
+	int armorCap = ( g_spskill->integer >= 3 ) ? 100 : 200;
+	if (ent->client->ps.stats[STAT_ARMOR] > armorCap)
 	{
-		ent->client->ps.stats[STAT_ARMOR] = ent->client->ps.stats[STAT_MAX_HEALTH];
+		ent->client->ps.stats[STAT_ARMOR] = armorCap;
 		return qfalse;
 	}
 

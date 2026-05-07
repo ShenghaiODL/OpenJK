@@ -2034,7 +2034,7 @@ void shield_power_converter_use( gentity_t *self, gentity_t *other, gentity_t *a
 	{
 		self->setTime = level.time + 100;
 
-		dif = 100 - activator->client->ps.stats[STAT_ARMOR]; // FIXME: define for max armor?
+		dif = activator->client->ps.stats[STAT_MAX_ARMOR] - activator->client->ps.stats[STAT_ARMOR];
 
 		if ( dif > 0 && self->count )	// Already at full armor?..and do I even have anything to give
 		{
@@ -2071,7 +2071,7 @@ void shield_power_converter_use( gentity_t *self, gentity_t *other, gentity_t *a
 	 			self->s.frame = 1;
 			}
 		}
-		else if ( activator->client->ps.stats[STAT_ARMOR] >= 100 ) // FIXME: define for max
+		else if ( activator->client->ps.stats[STAT_ARMOR] >= activator->client->ps.stats[STAT_MAX_ARMOR] )
 		{
 			// play full sound
 			G_Sound( self, G_SoundIndex( "sound/interface/shieldcon_done.mp3" ));

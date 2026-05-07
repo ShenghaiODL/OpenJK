@@ -1673,9 +1673,8 @@ qboolean CanUseInfrontOf(gentity_t *ent)
 	}
 
 
-	//FIXME: this does not match where the new accurate crosshair aims...
-	//cg.refdef.vieworg, basically
-	VectorCopy( ent->client->renderInfo.eyePoint, src );
+	VectorCopy( ent->currentOrigin, src );
+	src[2] += ent->client->ps.viewheight;
 
 	AngleVectors( ent->client->ps.viewangles, vf, NULL, NULL );
 	//extend to find end of use trace
@@ -1783,11 +1782,10 @@ void TryUse( gentity_t *ent )
 		return;
 	}*/
 
-	//FIXME: this does not match where the new accurate crosshair aims...
-	//cg.refdef.vieworg, basically
-	VectorCopy( ent->client->renderInfo.eyePoint, src );
+	VectorCopy( ent->currentOrigin, src );
+	src[2] += ent->client->ps.viewheight;
 
-	AngleVectors( ent->client->ps.viewangles, vf, NULL, NULL );//ent->client->renderInfo.eyeAngles was cg.refdef.viewangles, basically
+	AngleVectors( ent->client->ps.viewangles, vf, NULL, NULL );
 	//extend to find end of use trace
 	VectorMA( src, USE_DISTANCE, vf, dest );
 

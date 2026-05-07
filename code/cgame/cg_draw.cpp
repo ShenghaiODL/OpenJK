@@ -3045,62 +3045,25 @@ static void CG_ScanForCrosshairEntity( qboolean scanAll )
 	}
 	if ( !cg_forceCrosshair )
 	{
-		if ( cg_dynamicCrosshair.integer )
-		{//100% accurate
+		// Always trace from camera center — crosshair is fixed at screen center in all modes
+		VectorCopy( cg.refdef.vieworg, start );
+		VectorMA( start, 131072, cg.refdef.viewaxis[0], end );
+
+		/*
+		// SS_KATARN dual-wield crosshair — shots come from the left hand instead of eye
+		// Kept for reference if dual-wield ever gets proper crosshair support
+		if (cg.snap->ps.weapon == WP_SABER && cg.snap->ps.viewEntity == 0 && cg_entities[0].gent->client->ps.saberAnimLevel == SS_KATARN)
+		{
+			extern void CalcMuzzlePoint( gentity_t *const ent, vec3_t forward, vec3_t right, vec3_t up, vec3_t muzzlePoint, float lead_in );
 			vec3_t d_f, d_rt, d_up;
-			// If you're riding a vehicle and not being drawn.
-			if ( ( pVeh = G_IsRidingVehicle( cg_entities[0].gent ) ) != NULL && cg_entities[0].currentState.eFlags & EF_NODRAW )
-			{
-				VectorCopy( cg_entities[pVeh->m_pParentEntity->s.number].lerpOrigin, start );
-				AngleVectors( cg_entities[pVeh->m_pParentEntity->s.number].lerpAngles, d_f, d_rt, d_up );
-			}
-			else if ( cg.snap->ps.weapon == WP_NONE || cg.snap->ps.weapon == WP_SABER || cg.snap->ps.weapon == WP_STUN_BATON )
-			{
-				if ( cg.snap->ps.viewEntity > 0 && cg.snap->ps.viewEntity < ENTITYNUM_WORLD )
-				{//in camera ent view
-					ignoreEnt = cg.snap->ps.viewEntity;
-					if ( g_entities[cg.snap->ps.viewEntity].client )
-					{
-						VectorCopy( g_entities[cg.snap->ps.viewEntity].client->renderInfo.eyePoint, start );
-					}
-					else
-					{
-						VectorCopy( cg_entities[cg.snap->ps.viewEntity].lerpOrigin, start );
-					}
-					AngleVectors( cg_entities[cg.snap->ps.viewEntity].lerpAngles, d_f, d_rt, d_up );
-				}
-				//temporary fix for third person aiming with gun/saber dual wield. shots should come from left hand anyway
-				else if (cg.snap->ps.weapon == WP_SABER && cg.snap->ps.viewEntity == 0 && cg_entities[0].gent->client->ps.saberAnimLevel == SS_KATARN)
-				{
-					extern void CalcMuzzlePoint( gentity_t *const ent, vec3_t forward, vec3_t right, vec3_t up, vec3_t muzzlePoint, float lead_in );
-					AngleVectors( cg_entities[0].lerpAngles, d_f, d_rt, d_up );
-					int oldWeapon = g_entities[0].s.weapon;
-					g_entities[0].s.weapon = WP_BRYAR_PISTOL;//Should be whichever weapon is being dual wielded, not always set to bryar!
-					CalcMuzzlePoint( &g_entities[0], d_f, d_rt, d_up, start , 0 );
-					g_entities[0].s.weapon = oldWeapon;
-				}
-				else
-				{
-					VectorCopy( g_entities[0].client->renderInfo.eyePoint, start );
-					AngleVectors( cg_entities[0].lerpAngles, d_f, d_rt, d_up );
-				}
-			}
-			else
-			{
-				extern void CalcMuzzlePoint( gentity_t *const ent, vec3_t forward, vec3_t right, vec3_t up, vec3_t muzzlePoint, float lead_in );
-				AngleVectors( cg_entities[0].lerpAngles, d_f, d_rt, d_up );
-				CalcMuzzlePoint( &g_entities[0], d_f, d_rt, d_up, start , 0 );
-			}
-			//VectorCopy( g_entities[0].client->renderInfo.muzzlePoint, start );
-			//FIXME: increase this?  Increase when zoom in?
-			VectorMA( start, 4096, d_f, end );//was 8192
+			AngleVectors( cg_entities[0].lerpAngles, d_f, d_rt, d_up );
+			int oldWeapon = g_entities[0].s.weapon;
+			g_entities[0].s.weapon = WP_BRYAR_PISTOL;
+			CalcMuzzlePoint( &g_entities[0], d_f, d_rt, d_up, start, 0 );
+			g_entities[0].s.weapon = oldWeapon;
+			VectorMA( start, 4096, d_f, end );
 		}
-		else
-		{//old way
-			VectorCopy( cg.refdef.vieworg, start );
-			//FIXME: increase this?  Increase when zoom in?
-			VectorMA( start, 131072, cg.refdef.viewaxis[0], end );//was 8192
-		}
+		*/
 		//YES!  This is very very bad... but it works!  James made me do it.  Really, he did.  Blame James.
 		gi.trace( &trace, start, vec3_origin, vec3_origin, end,
 			ignoreEnt, MASK_OPAQUE|CONTENTS_TERRAIN|CONTENTS_SHOTCLIP|CONTENTS_BODY|CONTENTS_ITEM, G2_NOCOLLIDE, 10 );// ); took out CONTENTS_SOLID| so you can target people through glass.... took out CONTENTS_CORPSE so disintegrated guys aren't shown, could just remove their body earlier too...

@@ -38,6 +38,7 @@ vec3_t	muzzle;
 
 gentity_t *ent_list[MAX_GENTITIES];
 extern cvar_t	*g_debugMelee;
+extern void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
 
 // some naughty little things that are used cg side
 int g_rocketLockEntNum = ENTITYNUM_NONE;
@@ -256,7 +257,62 @@ void WP_ExplosiveDie( gentity_t *self, gentity_t *inflictor, gentity_t *attacker
 
 bool WP_MissileTargetHint(gentity_t* shooter, vec3_t start, vec3_t out)
 {
-	return false;
+	if ( shooter->s.number >= MAX_CLIENTS )
+		return false;
+
+	// Trace from the crosshair's exact origin (= cg.refdef.vieworg, stored in renderInfo.eyePoint)
+	// to find the world aim target, then redirect the shot from the muzzle toward it.
+	// In third person the camera is behind the player; this corrects the parallax so the
+	// shot lands exactly where the screen-center crosshair shows.
+	vec3_t fwd;
+	AngleVectors( shooter->client->ps.viewangles, fwd, NULL, NULL );
+
+	vec3_t traceOrg;
+	VectorCopy( shooter->client->renderInfo.eyePoint, traceOrg );
+
+	// If the camera is clipped into geometry (third-person wall clip), fall back to player's eye.
+	trace_t tr;
+	gi.trace( &tr, traceOrg, vec3_origin, vec3_origin, traceOrg,
+	          shooter->s.number, MASK_SOLID, G2_NOCOLLIDE, 0 );
+	if ( tr.startsolid )
+	{
+		ViewHeightFix( shooter );
+		VectorCopy( shooter->currentOrigin, traceOrg );
+		traceOrg[2] += shooter->client->ps.viewheight;
+	}
+
+	vec3_t aimTarget;
+	VectorMA( traceOrg, 8192, fwd, aimTarget );
+	gi.trace( &tr, traceOrg, vec3_origin, vec3_origin, aimTarget,
+	          shooter->s.number, MASK_SHOT, G2_NOCOLLIDE, 0 );
+	if ( tr.fraction < 1.0f )
+		VectorCopy( tr.endpos, aimTarget );
+
+	vec3_t aimDir;
+	VectorSubtract( aimTarget, start, aimDir );
+	float len = VectorNormalize( aimDir );
+	if ( len < 1.0f || DotProduct( aimDir, fwd ) < 0.0f )
+		return true; // unreliable correction — leave out (with spread) unchanged
+
+	// Compute the correction axis and angle.
+	// Cap at 12 degrees so close-range targets don't produce steep bolt trajectories
+	// while still giving full correction at medium/far range (>~70 units).
+	vec3_t axis;
+	CrossProduct( fwd, aimDir, axis );
+	float sinAngle = VectorNormalize( axis );
+	if ( sinAngle < 0.001f )
+		return true; // already aligned
+
+	float cosAngle = DotProduct( fwd, aimDir );
+	float angleRad = atan2f( sinAngle, cosAngle );
+	const float maxRad = DEG2RAD( 12.0f );
+	if ( angleRad > maxRad )
+		angleRad = maxRad;
+
+	vec3_t rotated;
+	RotatePointAroundVector( rotated, axis, out, RAD2DEG( angleRad ) );
+	VectorCopy( rotated, out );
+	return true;
 }
 
 int G_GetHitLocFromTrace( trace_t *trace, int mod )
@@ -501,6 +557,12 @@ void CalcMuzzlePoint( gentity_t *const ent, vec3_t forwardVec, vec3_t right, vec
 			VectorMA( muzzlePoint, 2, forwardVec, muzzlePoint ); // NPC, don't set too far forwardVec otherwise the projectile can go through doors
 
 		VectorMA( muzzlePoint, 1, vrightVec, muzzlePoint );
+		break;
+
+	case WP_TUSKEN_RIFLE:
+		muzzlePoint[2] += 16;
+		VectorMA( muzzlePoint, 16, forwardVec, muzzlePoint );
+		VectorMA( muzzlePoint,  8, vrightVec,  muzzlePoint );
 		break;
 
 	case WP_CYCLER_RIFLE:
@@ -1576,6 +1638,8 @@ void FireWeapon( gentity_t *ent, qboolean alt_fire )
 		break;
 			
 	case WP_Z6_ROTARY:
+		if ( ent->s.number < MAX_CLIENTS )
+			WP_ForcePowerDrain( ent, FP_LEVITATION, 2 );
 		WP_FireRepeater( ent, qfalse );
 		break;
 			

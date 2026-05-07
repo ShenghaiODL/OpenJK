@@ -2981,6 +2981,7 @@ qboolean ClientSpawn(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded 
 
 		// clear entity values
 		client->ps.stats[STAT_MAX_HEALTH] = client->pers.maxHealth;
+		client->ps.stats[STAT_MAX_ARMOR] = ( g_spskill->integer >= 3 ) ? 100 : 200;
 		ent->s.groundEntityNum = ENTITYNUM_NONE;
 		ent->client = &level.clients[index];
 		ent->mass = 10;
