@@ -312,6 +312,20 @@ vmCvar_t	cg_gunAutoFirst;
 vmCvar_t	cg_thirdPersonAlpha;
 vmCvar_t	cg_thirdPersonAutoAlpha;
 vmCvar_t	cg_thirdPersonHorzOffset;
+vmCvar_t	cg_thirdPersonShoulder;
+vmCvar_t	cg_thirdPersonProfileDamp;
+vmCvar_t	cg_thirdPersonExploreRange;
+vmCvar_t	cg_thirdPersonExploreVertOffset;
+vmCvar_t	cg_thirdPersonExploreHorzOffset;
+vmCvar_t	cg_thirdPersonExplorePitchOffset;
+vmCvar_t	cg_thirdPersonSaberRange;
+vmCvar_t	cg_thirdPersonSaberVertOffset;
+vmCvar_t	cg_thirdPersonSaberHorzOffset;
+vmCvar_t	cg_thirdPersonSaberPitchOffset;
+vmCvar_t	cg_thirdPersonShooterRange;
+vmCvar_t	cg_thirdPersonShooterVertOffset;
+vmCvar_t	cg_thirdPersonShooterHorzOffset;
+vmCvar_t	cg_thirdPersonShooterPitchOffset;
 
 vmCvar_t	cg_stereoSeparation;
 vmCvar_t 	cg_developer;
@@ -459,6 +473,20 @@ static cvarTable_t cvarTable[] = {
 	{ &cg_thirdPersonTargetDamp, "cg_thirdPersonTargetDamp", "0.5", 0},
 
 	{ &cg_thirdPersonHorzOffset, "cg_thirdPersonHorzOffset", "0", 0},
+	{ &cg_thirdPersonShoulder, "cg_thirdPersonShoulder", "1", CVAR_ARCHIVE },
+	{ &cg_thirdPersonProfileDamp, "cg_thirdPersonProfileDamp", "0.18", CVAR_ARCHIVE },
+	{ &cg_thirdPersonExploreRange, "cg_thirdPersonExploreRange", "115", CVAR_ARCHIVE },
+	{ &cg_thirdPersonExploreVertOffset, "cg_thirdPersonExploreVertOffset", "10", CVAR_ARCHIVE },
+	{ &cg_thirdPersonExploreHorzOffset, "cg_thirdPersonExploreHorzOffset", "25", CVAR_ARCHIVE },
+	{ &cg_thirdPersonExplorePitchOffset, "cg_thirdPersonExplorePitchOffset", "0", CVAR_ARCHIVE },
+	{ &cg_thirdPersonSaberRange, "cg_thirdPersonSaberRange", "155", CVAR_ARCHIVE },
+	{ &cg_thirdPersonSaberVertOffset, "cg_thirdPersonSaberVertOffset", "10", CVAR_ARCHIVE },
+	{ &cg_thirdPersonSaberHorzOffset, "cg_thirdPersonSaberHorzOffset", "10", CVAR_ARCHIVE },
+	{ &cg_thirdPersonSaberPitchOffset, "cg_thirdPersonSaberPitchOffset", "0", CVAR_ARCHIVE },
+	{ &cg_thirdPersonShooterRange, "cg_thirdPersonShooterRange", "92", CVAR_ARCHIVE },
+	{ &cg_thirdPersonShooterVertOffset, "cg_thirdPersonShooterVertOffset", "16", CVAR_ARCHIVE },
+	{ &cg_thirdPersonShooterHorzOffset, "cg_thirdPersonShooterHorzOffset", "20", CVAR_ARCHIVE },
+	{ &cg_thirdPersonShooterPitchOffset, "cg_thirdPersonShooterPitchOffset", "0", CVAR_ARCHIVE },
 	{ &cg_thirdPersonAlpha, "cg_thirdPersonAlpha", "1.0", CVAR_ARCHIVE },
 	{ &cg_thirdPersonAutoAlpha,	"cg_thirdPersonAutoAlpha",	"0", 0 },
 	// NOTE: also declare this in UI_Init

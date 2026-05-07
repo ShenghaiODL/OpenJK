@@ -326,6 +326,190 @@ int		cameraLastFrame=0;
 float	cameraLastYaw=0;
 float	cameraStiffFactor=0.0f;
 
+typedef struct thirdPersonCameraProfile_s
+{
+	float range;
+	float vertOffset;
+	float horzOffset;
+	float pitchOffset;
+	float viewVertOffset;
+	float targetDamp;
+	float cameraDamp;
+	float aimBlend;
+} thirdPersonCameraProfile_t;
+
+static thirdPersonCameraProfile_t cameraProfile = { 80.0f, 16.0f, 0.0f, 0.0f, 0.0f, 0.5f, 0.3f, 0.0f };
+static qboolean cameraProfileValid = qfalse;
+
+static float CG_ClampFloat( float value, float minValue, float maxValue )
+{
+	if ( value < minValue )
+	{
+		return minValue;
+	}
+	if ( value > maxValue )
+	{
+		return maxValue;
+	}
+	return value;
+}
+
+static float CG_ThirdPersonShoulderScale( void )
+{
+	return ( cg_thirdPersonShoulder.integer == 2 ) ? 1.0f : -1.0f;
+}
+
+static qboolean CG_ThirdPersonSpecialCameraState( void )
+{
+	if ( !cg.snap )
+	{
+		return qtrue;
+	}
+
+	return (qboolean)( ( cg.snap->ps.eFlags & ( EF_HELD_BY_RANCOR|EF_HELD_BY_SAND_CREATURE|EF_HELD_BY_WAMPA ) )
+		|| G_IsRidingVehicle( &g_entities[0] )
+		|| cg.predicted_player_state.stats[STAT_HEALTH] <= 0 );
+}
+
+static qboolean CG_PlayerSaberActiveForCamera( void )
+{
+	centity_t *cent;
+
+	if ( !cg.snap || cg.snap->ps.weapon != WP_SABER )
+	{
+		return qfalse;
+	}
+
+	if ( cg.predicted_player_state.SaberActive() || cg.predicted_player_state.SaberLength() > 0.0f )
+	{
+		return qtrue;
+	}
+
+	cent = &cg_entities[cg.snap->ps.clientNum];
+	if ( cent->currentState.saberActive )
+	{
+		return qtrue;
+	}
+
+	if ( cent->gent && cent->gent->client
+		&& ( cent->gent->client->ps.SaberActive() || cent->gent->client->ps.SaberLength() > 0.0f ) )
+	{
+		return qtrue;
+	}
+
+	return qfalse;
+}
+
+static thirdPersonCameraProfile_t CG_LegacyThirdPersonCameraProfile( void )
+{
+	thirdPersonCameraProfile_t profile;
+
+	profile.range = cg_thirdPersonRange.value;
+	profile.vertOffset = cg_thirdPersonVertOffset.value;
+	profile.horzOffset = cg_thirdPersonHorzOffset.value;
+	profile.pitchOffset = cg_thirdPersonPitchOffset.value;
+	profile.viewVertOffset = 0.0f;
+	profile.targetDamp = cg_thirdPersonTargetDamp.value;
+	profile.cameraDamp = cg_thirdPersonCameraDamp.value;
+	profile.aimBlend = 0.0f;
+
+	return profile;
+}
+
+static thirdPersonCameraProfile_t CG_TargetThirdPersonCameraProfile( void )
+{
+	thirdPersonCameraProfile_t profile = CG_LegacyThirdPersonCameraProfile();
+
+	if ( CG_ThirdPersonSpecialCameraState() )
+	{
+		return profile;
+	}
+
+	if ( cg.snap->ps.weapon != WP_SABER
+		&& cg.snap->ps.weapon != WP_MELEE
+		&& cg.snap->ps.weapon != WP_NONE )
+	{
+		profile.range = cg_thirdPersonShooterRange.value;
+		profile.vertOffset = cg_thirdPersonShooterVertOffset.value;
+		profile.horzOffset = cg_thirdPersonShooterHorzOffset.value;
+		profile.pitchOffset = cg_thirdPersonShooterPitchOffset.value;
+		profile.viewVertOffset = -10.0f;
+		profile.targetDamp = 1.0f;
+		profile.cameraDamp = 1.0f;
+		profile.aimBlend = 1.0f;
+	}
+	else if ( CG_PlayerSaberActiveForCamera() )
+	{
+		profile.range = cg_thirdPersonSaberRange.value;
+		profile.vertOffset = cg_thirdPersonSaberVertOffset.value;
+		profile.horzOffset = cg_thirdPersonSaberHorzOffset.value;
+		profile.pitchOffset = cg_thirdPersonSaberPitchOffset.value;
+		profile.viewVertOffset = 0.0f;
+		profile.targetDamp = 1.0f;
+		profile.cameraDamp = 1.0f;
+		profile.aimBlend = 1.0f;
+	}
+	else
+	{
+		profile.range = cg_thirdPersonExploreRange.value;
+		profile.vertOffset = cg_thirdPersonExploreVertOffset.value;
+		profile.horzOffset = cg_thirdPersonExploreHorzOffset.value;
+		profile.pitchOffset = cg_thirdPersonExplorePitchOffset.value;
+		profile.viewVertOffset = -6.0f;
+		profile.targetDamp = 1.0f;
+		profile.cameraDamp = 1.0f;
+		profile.aimBlend = 1.0f;
+	}
+
+	return profile;
+}
+
+static float CG_ThirdPersonProfileBlendAmount( void )
+{
+	float damp = CG_ClampFloat( cg_thirdPersonProfileDamp.value, 0.0f, 1.0f );
+	float dtime;
+	float timescale = ( cg_timescale.value != 0.0f ) ? cg_timescale.value : 1.0f;
+
+	if ( damp >= 1.0f || cameraLastFrame <= 0 || cameraLastFrame > cg.time )
+	{
+		return 1.0f;
+	}
+
+	dtime = (float)( cg.time - cameraLastFrame ) * ( 1.0f / timescale ) * ( 1.0f / (float)CAMERA_DAMP_INTERVAL );
+	if ( dtime <= 0.0f )
+	{
+		return 0.0f;
+	}
+
+	if ( cg_smoothCamera.integer )
+	{
+		return 1.0f - powf( 1.0f - damp, dtime );
+	}
+	return 1.0f - Q_powf( 1.0f - damp, dtime );
+}
+
+static void CG_UpdateThirdPersonCameraProfile( void )
+{
+	thirdPersonCameraProfile_t target = CG_TargetThirdPersonCameraProfile();
+	float blend = CG_ThirdPersonProfileBlendAmount();
+
+	if ( CG_ThirdPersonSpecialCameraState() || !cameraProfileValid || blend >= 1.0f )
+	{
+		cameraProfile = target;
+		cameraProfileValid = qtrue;
+		return;
+	}
+
+	cameraProfile.range += ( target.range - cameraProfile.range ) * blend;
+	cameraProfile.vertOffset += ( target.vertOffset - cameraProfile.vertOffset ) * blend;
+	cameraProfile.horzOffset += ( target.horzOffset - cameraProfile.horzOffset ) * blend;
+	cameraProfile.pitchOffset += ( target.pitchOffset - cameraProfile.pitchOffset ) * blend;
+	cameraProfile.viewVertOffset += ( target.viewVertOffset - cameraProfile.viewVertOffset ) * blend;
+	cameraProfile.targetDamp += ( target.targetDamp - cameraProfile.targetDamp ) * blend;
+	cameraProfile.cameraDamp += ( target.cameraDamp - cameraProfile.cameraDamp ) * blend;
+	cameraProfile.aimBlend += ( target.aimBlend - cameraProfile.aimBlend ) * blend;
+}
+
 /*
 ===============
 Notes on the camera viewpoint in and out...
@@ -400,7 +584,7 @@ static void CG_CalcIdealThirdPersonViewTarget(void)
 	{
 		// Add in a vertical offset from the viewpoint, which puts the actual target above the head, regardless of angle.
 		VectorCopy( cameraFocusLoc, cameraIdealTarget );
-		cameraIdealTarget[2] += cg_thirdPersonVertOffset.value;
+		cameraIdealTarget[2] += cameraProfile.vertOffset;
 		//VectorMA(cameraFocusLoc, cg_thirdPersonVertOffset.value, cameraup, cameraIdealTarget);
 	}
 
@@ -460,7 +644,7 @@ static void CG_CalcIdealThirdPersonViewLocation(void)
 	}
 	else
 	{
-		VectorMA(cameraIdealTarget, -(cg_thirdPersonRange.value), camerafwd, cameraIdealLoc);
+		VectorMA(cameraIdealTarget, -(cameraProfile.range), camerafwd, cameraIdealLoc);
 	}
 
 	if ( cg.renderingThirdPerson && (cg.snap->ps.forcePowersActive&(1<<FP_SPEED)) && player->client->ps.forcePowerDuration[FP_SPEED] )
@@ -545,18 +729,18 @@ static void CG_UpdateThirdPersonTargetDamp(void)
 	{//if moving on a plat, camera is *tight*
 		VectorCopy(cameraIdealTarget, cameraCurTarget);
 	}
-	else if (cg_thirdPersonTargetDamp.value>=1.0)//||cg.thisFrameTeleport)
+	else if (cameraProfile.targetDamp>=1.0)//||cg.thisFrameTeleport)
 	{	// No damping.
 		VectorCopy(cameraIdealTarget, cameraCurTarget);
 	}
-	else if (cg_thirdPersonTargetDamp.value>=0.0)
+	else if (cameraProfile.targetDamp>=0.0)
 	{
 		// Calculate the difference from the current position to the new one.
 		VectorSubtract(cameraIdealTarget, cameraCurTarget, targetdiff);
 
 		// Now we calculate how much of the difference we cover in the time allotted.
 		// The equation is (Damp)^(time)
-		dampfactor = 1.0-cg_thirdPersonTargetDamp.value;	// We must exponent the amount LEFT rather than the amount bled off
+		dampfactor = 1.0-cameraProfile.targetDamp;	// We must exponent the amount LEFT rather than the amount bled off
 		dtime = (float)(cg.time-cameraLastFrame) * (1.0/cg_timescale.value) * (1.0/(float)CAMERA_DAMP_INTERVAL);	// Our dampfactor is geared towards a time interval equal to "1".
 
 		// Note that since there are a finite number of "practical" delta millisecond values possible,
@@ -629,7 +813,7 @@ static void CG_UpdateThirdPersonCameraDamp(void)
 			dampfactor += cg.overrides.thirdPersonCameraDamp;
 		}
 	}
-	else if ( cg_thirdPersonCameraDamp.value != 0.0f )
+	else if ( cameraProfile.cameraDamp != 0.0f )
 	{
 		float pitch;
 
@@ -638,9 +822,9 @@ static void CG_UpdateThirdPersonCameraDamp(void)
 
 		// The higher the pitch, the larger the factor, so as you look up, it damps a lot less.
 		pitch /= 115.0f;
-		dampfactor = (1.0-cg_thirdPersonCameraDamp.value)*(pitch*pitch);
+		dampfactor = (1.0-cameraProfile.cameraDamp)*(pitch*pitch);
 
-		dampfactor += cg_thirdPersonCameraDamp.value;
+		dampfactor += cameraProfile.cameraDamp;
 
 		// Now we also multiply in the stiff factor, so that faster yaw changes are stiffer.
 		if (cameraStiffFactor > 0.0f)
@@ -735,19 +919,13 @@ extern qboolean	MatrixMode;
 static void CG_OffsetThirdPersonView( void )
 {
 	vec3_t diff;
+	vec3_t finalCameraLoc;
 	float deltayaw;
 
 	camWaterAdjust = 0;
 	cameraStiffFactor = 0.0;
 
-	qboolean isShooterMode = (qboolean)( cg.snap
-		&& cg.renderingThirdPerson
-		&& cg.snap->ps.weapon != WP_SABER
-		&& cg.snap->ps.weapon != WP_MELEE
-		&& cg.snap->ps.weapon != WP_NONE );
-
-	// Smooth blend 0..1 so the camera glides between saber-orbit and shooter-aim modes.
-	float shooterBlend = isShooterMode ? 1.0f : 0.0f;
+	CG_UpdateThirdPersonCameraProfile();
 
 	// Set camera viewing direction.
 	VectorCopy( cg.refdefViewAngles, cameraFocusAngles );
@@ -797,14 +975,14 @@ static void CG_OffsetThirdPersonView( void )
 		}
 	}
 	else
-	{	// Add in the third Person Angle — fade out as we enter shooter mode.
-		float angleFactor = 1.0f - shooterBlend;
+	{	// Add in third person angle offsets, fading out as shooter aim takes over.
+		float angleFactor = 1.0f - cameraProfile.aimBlend;
 		if ( angleFactor > 0.001f )
 		{
 			float yawAdd   = ( cg.overrides.active & CG_OVERRIDE_3RD_PERSON_ANG )
 				? cg.overrides.thirdPersonAngle   : cg_thirdPersonAngle.value;
 			float pitchAdd = ( cg.overrides.active & CG_OVERRIDE_3RD_PERSON_POF )
-				? cg.overrides.thirdPersonPitchOffset : cg_thirdPersonPitchOffset.value;
+				? cg.overrides.thirdPersonPitchOffset : cameraProfile.pitchOffset;
 			cameraFocusAngles[YAW]   += yawAdd   * angleFactor;
 			cameraFocusAngles[PITCH] += pitchAdd * angleFactor;
 		}
@@ -864,64 +1042,53 @@ static void CG_OffsetThirdPersonView( void )
 		cameraLastYaw = cameraFocusAngles[YAW];
 
 		// Move the target to the new location.
-		// Blend damp factors toward 1.0 (instant) as shooterBlend increases.
-		{
-			float savedTargetDamp = cg_thirdPersonTargetDamp.value;
-			float savedCamDamp    = cg_thirdPersonCameraDamp.value;
-			cg_thirdPersonTargetDamp.value += shooterBlend * (1.0f - savedTargetDamp);
-			cg_thirdPersonCameraDamp.value  += shooterBlend * (1.0f - savedCamDamp);
-			CG_UpdateThirdPersonTargetDamp();
-			CG_UpdateThirdPersonCameraDamp();
-			cg_thirdPersonTargetDamp.value = savedTargetDamp;
-			cg_thirdPersonCameraDamp.value = savedCamDamp;
-		}
+		CG_UpdateThirdPersonTargetDamp();
+		CG_UpdateThirdPersonCameraDamp();
 	}
 
-	// Now interestingly, the Quake method is to calculate a target focus point above the player, and point the camera at it.
-	// We won't do that for now.
+	VectorCopy( cameraCurLoc, finalCameraLoc );
 
-	// We must now take the angle taken from the camera target and location.
-	VectorSubtract(cameraCurTarget, cameraCurLoc, diff);
-	//Com_Printf( "%s\n", vtos(diff) );
-	float dist = VectorNormalize(diff);
-	if ( dist < 1.0f )
-	{//must be hitting something, need some value to calc angles, so use cam forward
-		VectorCopy( camerafwd, diff );
-	}
-	vectoangles(diff, cg.refdefViewAngles);
-
-	// Over-left-shoulder offset in shooter mode; blends smoothly on weapon switch.
-	extern vmCvar_t cg_thirdPersonHorzOffset;
-	float horzOffset = cg_thirdPersonHorzOffset.value + shooterBlend * (-20.0f - cg_thirdPersonHorzOffset.value);
-	float vertAdjust = shooterBlend * -10.0f;
+	// Shoulder offset is applied after the orbit trace, then traced again below.
+	float horzOffset = cameraProfile.horzOffset * CG_ThirdPersonShoulderScale();
+	float vertAdjust = cameraProfile.viewVertOffset;
 	if ( horzOffset != 0.0f || vertAdjust != 0.0f )
 	{
 		vec3_t offsetAxes[3];
 		AnglesToAxis( cameraFocusAngles, offsetAxes );
 		if ( horzOffset != 0.0f )
-			VectorMA( cameraCurLoc, horzOffset, offsetAxes[1], cameraCurLoc );
+			VectorMA( finalCameraLoc, horzOffset, offsetAxes[1], finalCameraLoc );
 		if ( vertAdjust != 0.0f )
-			VectorMA( cameraCurLoc, vertAdjust, offsetAxes[2], cameraCurLoc );
-	}
-	// Blend view direction toward ps.viewangles so screen-centre == crosshair == shot direction.
-	if ( shooterBlend > 0.001f )
-	{
-		cg.refdefViewAngles[YAW]   += shooterBlend * AngleNormalize180( cameraFocusAngles[YAW]   - cg.refdefViewAngles[YAW] );
-		cg.refdefViewAngles[PITCH] += shooterBlend * AngleNormalize180( cameraFocusAngles[PITCH] - cg.refdefViewAngles[PITCH] );
+			VectorMA( finalCameraLoc, vertAdjust, offsetAxes[2], finalCameraLoc );
 	}
 
 	// Re-check after shoulder offsets — they can push the camera into map geometry or
 	// entity models, which makes entities invisible.  Retreat to the last clear point.
 	{
 		trace_t camTrace;
-		CG_Trace( &camTrace, cameraCurTarget, cameramins, cameramaxs, cameraCurLoc,
+		CG_Trace( &camTrace, cameraCurTarget, cameramins, cameramaxs, finalCameraLoc,
 		          cg.predicted_player_state.clientNum, MASK_CAMERACLIP );
 		if ( camTrace.startsolid || camTrace.fraction < 1.0f )
-			VectorCopy( camTrace.endpos, cameraCurLoc );
+			VectorCopy( camTrace.endpos, finalCameraLoc );
+	}
+
+	// Solve final view angles from the post-shoulder camera position.
+	VectorSubtract( cameraCurTarget, finalCameraLoc, diff );
+	float dist = VectorNormalize( diff );
+	if ( dist < 1.0f )
+	{//must be hitting something, need some value to calc angles, so use cam forward
+		VectorCopy( camerafwd, diff );
+	}
+	vectoangles( diff, cg.refdefViewAngles );
+
+	// Blend view direction toward ps.viewangles so screen-centre == crosshair == shot direction.
+	if ( cameraProfile.aimBlend > 0.001f )
+	{
+		cg.refdefViewAngles[YAW]   += cameraProfile.aimBlend * AngleNormalize180( cameraFocusAngles[YAW]   - cg.refdefViewAngles[YAW] );
+		cg.refdefViewAngles[PITCH] += cameraProfile.aimBlend * AngleNormalize180( cameraFocusAngles[PITCH] - cg.refdefViewAngles[PITCH] );
 	}
 
 	// ...and of course we should copy the new view location to the proper spot too.
-	VectorCopy(cameraCurLoc, cg.refdef.vieworg);
+	VectorCopy( finalCameraLoc, cg.refdef.vieworg );
 
 	//if we hit the water, do a last-minute adjustment
 	if ( camWaterAdjust )
