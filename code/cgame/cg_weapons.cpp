@@ -1711,7 +1711,7 @@ void CG_AddViewWeapon( playerState_t *ps )
 	//-----------------------
 	if (( ps->weaponstate == WEAPON_CHARGING_ALT && ps->weapon == WP_BRYAR_PISTOL )
 			|| ( ps->weaponstate == WEAPON_CHARGING_ALT && ps->weapon == WP_BLASTER_PISTOL )
-			|| ( ps->weapon == WP_BOWCASTER && ps->weaponstate == WEAPON_CHARGING )
+			|| ( ps->weapon == WP_BOWCASTER && ps->weaponstate == WEAPON_CHARGING_ALT )
 			|| ( ps->weapon == WP_DEMP2 && ps->weaponstate == WEAPON_CHARGING_ALT ))
 	{
 		int		shader = 0;
