@@ -10011,7 +10011,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 							int reflectChance = 100; // players always reflect
 							if ( self->s.number > 0 )
 							{//NPC: reflect chance based on force push level
-								int pushLevel = self->client->ps.fd.forcePowerLevel[FP_PUSH];
+								int pushLevel = self->client->ps.forcePowerLevel[FP_PUSH];
 								reflectChance = (pushLevel >= FORCE_LEVEL_3) ? 60 :
 								               (pushLevel >= FORCE_LEVEL_2) ? 40 : 25;
 							}

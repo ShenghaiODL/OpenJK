@@ -1429,7 +1429,7 @@ static void ST_CheckMoveState( void )
 			{
 			case SQUAD_RETREAT://was running away
 				//done fleeing, obviously
-				TIMER_Set( NPC, "duck", MIN( (NPC->max_health - NPC->health) * 100, 3000 ) );
+				TIMER_Set( NPC, "duck", (NPC->max_health - NPC->health) * 100 < 3000 ? (NPC->max_health - NPC->health) * 100 : 3000 );
 				TIMER_Set( NPC, "hideTime", Q_irand( 1200, 2800 ) );
 				TIMER_Set( NPC, "flee", -level.time );
 				newSquadState = SQUAD_COVER;
