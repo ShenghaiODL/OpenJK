@@ -4416,18 +4416,42 @@ void			STEER::DeActivate(gentity_t* actor, usercmd_t* ucmd)
 				//------------------------------------------------------------
 				else
 				{
-					// If We Had A Target Entity, Try Jumping There
-					//----------------------------------------------
-					if (NPCInfo->blockedTargetEntity)
+					// Opportunistic obstacle climb: if a short structure is directly ahead, hop to its top
+					bool climbAttempted = false;
+					vec3_t forward;
+					AngleVectors( actor->client->ps.viewangles, forward, NULL, NULL );
+					vec3_t checkFrom, checkTo;
+					VectorMA( actor->currentOrigin, 80, forward, checkFrom );
+					checkFrom[2] = actor->currentOrigin[2] + 80;
+					VectorCopy( checkFrom, checkTo );
+					checkTo[2] = actor->currentOrigin[2] - 10;
+					trace_t climbTrace;
+					gi.trace( &climbTrace, checkFrom, vec3_origin, vec3_origin, checkTo, actor->s.number, actor->clipmask, (EG2_Collision)0, 0 );
+					if ( !climbTrace.startsolid && climbTrace.fraction < 1.0f )
 					{
-						NPC_TryJump(NPCInfo->blockedTargetEntity);
+						float topHeight = climbTrace.endpos[2] - actor->currentOrigin[2];
+						if ( topHeight > 8.0f && topHeight < 80.0f )
+						{
+							NPC_TryJump( climbTrace.endpos, 200.0f, 90.0f );
+							climbAttempted = true;
+						}
 					}
 
-					// Otherwise Try Jumping To The Target Position
-					//----------------------------------------------
-					else
+					if ( !climbAttempted )
 					{
-						NPC_TryJump(NPCInfo->blockedTargetPosition);
+						// If We Had A Target Entity, Try Jumping There
+						//----------------------------------------------
+						if (NPCInfo->blockedTargetEntity)
+						{
+							NPC_TryJump(NPCInfo->blockedTargetEntity);
+						}
+
+						// Otherwise Try Jumping To The Target Position
+						//----------------------------------------------
+						else
+						{
+							NPC_TryJump(NPCInfo->blockedTargetPosition);
+						}
 					}
 				}
 			}

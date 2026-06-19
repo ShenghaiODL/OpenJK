@@ -844,6 +844,14 @@ extern cvar_t *g_saberAutoBlocking;
 					G_MissileImpacted( ent, other->owner, trace->endpos, trace->plane.normal, hitLoc );
 					return;
 				}
+				// In manual block mode, player must be holding the block button to deflect
+				else if ( other->owner && other->owner->client && !other->owner->s.number
+					&& !g_saberAutoBlocking->integer
+					&& other->owner->client->ps.saberBlockingTime <= level.time )
+				{
+					G_MissileImpacted( ent, other->owner, trace->endpos, trace->plane.normal, hitLoc );
+					return;
+				}
 				else
 				{
 					int reflectChance = 0;

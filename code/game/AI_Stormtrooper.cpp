@@ -1429,13 +1429,13 @@ static void ST_CheckMoveState( void )
 			{
 			case SQUAD_RETREAT://was running away
 				//done fleeing, obviously
-				TIMER_Set( NPC, "duck", (NPC->max_health - NPC->health) * 100 );
-				TIMER_Set( NPC, "hideTime", Q_irand( 3000, 7000 ) );
+				TIMER_Set( NPC, "duck", MIN( (NPC->max_health - NPC->health) * 100, 3000 ) );
+				TIMER_Set( NPC, "hideTime", Q_irand( 1200, 2800 ) );
 				TIMER_Set( NPC, "flee", -level.time );
 				newSquadState = SQUAD_COVER;
 				break;
 			case SQUAD_TRANSITION://was heading for a combat point
-				TIMER_Set( NPC, "hideTime", Q_irand( 2000, 4000 ) );
+				TIMER_Set( NPC, "hideTime", Q_irand( 800, 2000 ) );
 				break;
 			case SQUAD_SCOUT://was running after player
 				break;
@@ -1449,16 +1449,16 @@ static void ST_CheckMoveState( void )
 			//don't do something else just yet
 
 			// THIS IS THE ONE TRUE PLACE WHERE ROAM TIME IS SET
-			TIMER_Set( NPC, "roamTime", Q_irand( 8000, 15000 ) );//Q_irand( 1000, 4000 ) );
+			TIMER_Set( NPC, "roamTime", Q_irand( 3000, 5000 ) );
 			if (Q_irand(0, 3)==0)
 			{
-				TIMER_Set( NPC, "duck", Q_irand(5000, 10000) );		// just reached our goal, chance of ducking now
+				TIMER_Set( NPC, "duck", Q_irand(1500, 3500) );		// just reached our goal, chance of ducking now
 			}
 			return;
 		}
 
 		//keep going, hold of roamTimer until we get there
-		TIMER_Set( NPC, "roamTime", Q_irand( 8000, 9000 ) );
+		TIMER_Set( NPC, "roamTime", Q_irand( 4000, 6000 ) );
 	}
 }
 
@@ -2142,6 +2142,14 @@ void ST_Commander( void )
 		//clear the local state
 		NPCInfo->localState = LSTATE_NONE;
 
+		// Periodically force repositioning even when comfortable (clear LOS, safe distance, good health)
+		if ( NPCInfo->squadState != SQUAD_TRANSITION && NPCInfo->squadState != SQUAD_SCOUT
+			&& TIMER_Done( NPC, "combatPointTime" ) )
+		{
+			cpFlags |= (CP_CLEAR|CP_COVER);
+			TIMER_Set( NPC, "combatPointTime", Q_irand( 4000, 8000 ) );
+		}
+
 		cpFlags &= ~CP_NEAREST;
 		//Assign combat points
 		if ( cpFlags )
@@ -2478,10 +2486,10 @@ void NPC_BSST_Attack( void )
 			shoot = qtrue;
 		}
 		else if ( enemyLOS && !hitAlly
-			&& level.time - NPCInfo->enemyLastSeenTime < 2000
+			&& level.time - NPCInfo->enemyLastSeenTime < 3000
 			&& enemyDist < (450*450) )
 		{//have LOS but no clean shot angle (off-axis while chasing) — suppression fire
-			if ( !Q_irand( 0, 2 ) )
+			if ( !Q_irand( 0, 1 ) )
 			{
 				shoot = qtrue;
 			}
@@ -2493,6 +2501,44 @@ void NPC_BSST_Attack( void )
 
 	//See if we should override shooting decision with any special considerations
 	ST_CheckFireState();
+
+	// Manage single-use thermal throw: fire once then switch back to primary
+	if ( NPC->client->ps.weapon == WP_THERMAL && !TIMER_Done( NPC, "threwThermal" ) )
+	{//we threw one already — hold until switch-back delay expires
+		if ( TIMER_Done( NPC, "switchBackWeapon" ) )
+		{//time to switch back to primary weapon
+			if ( NPC->client->ps.weapons[WP_REPEATER] )
+				NPC_ChangeWeapon( WP_REPEATER );
+			else if ( NPC->client->ps.weapons[WP_BLASTER] )
+				NPC_ChangeWeapon( WP_BLASTER );
+			else if ( NPC->client->ps.weapons[WP_DISRUPTOR] )
+				NPC_ChangeWeapon( WP_DISRUPTOR );
+			else if ( NPC->client->ps.weapons[WP_CONCUSSION] )
+				NPC_ChangeWeapon( WP_CONCUSSION );
+			else if ( NPC->client->ps.weapons[WP_ROCKET_LAUNCHER] )
+				NPC_ChangeWeapon( WP_ROCKET_LAUNCHER );
+		}
+		else
+		{//don't fire additional thermals during switch-back window
+			shoot = qfalse;
+		}
+	}
+	else if ( NPC->client->ps.weapon != WP_THERMAL
+		&& NPC->client->ps.weapons[WP_THERMAL]
+		&& TIMER_Done( NPC, "threwThermal" )  // single use: never set means available
+		&& enemyLOS
+		&& !hitAlly )
+	{// Single-use thermal throw when enemy is in the right distance range
+		float tdist = sqrtf( enemyDist );
+		if ( tdist >= 200.0f && tdist <= 600.0f )
+		{
+			NPC_ChangeWeapon( WP_THERMAL );
+			TIMER_Set( NPC, "switchBackWeapon", 3000 );
+			TIMER_Set( NPC, "threwThermal", Q3_INFINITE );
+			shoot = qtrue;
+			faceEnemy = qtrue;
+		}
+	}
 
 	if ( faceEnemy )
 	{//face the enemy
@@ -2604,8 +2650,23 @@ void NPC_BSST_Attack( void )
 		//FIXME: what about leaning?
 	}
 	else
-	{//stop ducking!
-		TIMER_Set( NPC, "duck", -1 );
+	{
+		if (NPC->client->NPC_class != CLASS_ASSASSIN_DROID)
+		{
+			int duckRemaining = TIMER_Get( NPC, "duck" ) - level.time;
+			if ( duckRemaining > 1000 )
+			{//cancel a long duck when repositioning
+				TIMER_Set( NPC, "duck", -1 );
+			}
+			else if ( !TIMER_Done( NPC, "duck" ) )
+			{//allow brief crouch-moves during short transitions
+				ucmd.upmove = -127;
+			}
+		}
+		else
+		{
+			TIMER_Set( NPC, "duck", -1 );
+		}
 	}
 
 	if ( NPC->client->NPC_class == CLASS_REBORN//cultist using a gun

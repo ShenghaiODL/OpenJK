@@ -232,7 +232,7 @@ void CG_RegisterWeapon( int weaponNum ) {
 		weaponData[weaponNum].mAltMuzzleEffectID = theFxScheduler.RegisterEffect( weaponData[weaponNum].mAltMuzzleEffect );
 	}
 
-	//fixme: don't really need to copy these, should just use directly
+	// Copy required: cgame callers read trail functions from weaponInfo (cg_ents.cpp), not weaponData
 	// give ourselves the functions if we can
 	if (weaponData[weaponNum].func)
 	{

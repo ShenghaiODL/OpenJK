@@ -2438,7 +2438,7 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 			}
 		}
 	}
-	//FIXME: first person crouch-uncrouch STILL FUCKS UP THE AREAMASK!!!
+	// Always rebuild areamask from client vieworg; unconditional call is a workaround for PVS drift during crouch transitions
 	//if ( !VectorCompare2( cg.refdef.vieworg, cg.snap->ps.serverViewOrg ) && !gi.inPVS( cg.refdef.vieworg, cg.snap->ps.serverViewOrg ) )
 	{//actual view org and server's view org don't match and aren't same PVS, rebuild the areamask
 		//Com_Printf( S_COLOR_RED"%s != %s\n", vtos(cg.refdef.vieworg), vtos(cg.snap->ps.serverViewOrg) );

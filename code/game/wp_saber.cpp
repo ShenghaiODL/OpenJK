@@ -345,9 +345,9 @@ int saberThrowDistSquared[NUM_FORCE_POWER_LEVELS] =
 
 int parryDebounce[NUM_FORCE_POWER_LEVELS] =
 {
-	500,//if don't even have defense, can't use defense!
-	300,
-	150,
+	100,//if don't even have defense, can't use defense!
+	100,
+	50,
 	50
 };
 
@@ -2172,7 +2172,7 @@ float WP_SabersDistance( gentity_t *ent1, gentity_t *ent2 )
 		return qfalse;
 	}
 
-	//FIXME: UGH, how do we make this work for multiply-bladed sabers?
+	// Single-blade distance pre-check only; full multi-blade intersection is handled by WP_SabersIntersection()
 
 	//if ( ent1->client->ps.saberInFlight )
 	{
@@ -6488,7 +6488,11 @@ void WP_SaberInFlightReflectCheck( gentity_t *self, usercmd_t *ucmd  )
 					reflectAngle[PITCH] = Q_flrand( -90, 90 );
 					AngleVectors( reflectAngle, forward, NULL, NULL );
 
-					G_ReflectMissile( self, missile_list[x], forward );
+					// NPCs only reflect with a 55% chance for non-saber projectiles (e.g. rockets)
+					if ( self->s.number == 0 || Q_irand( 0, 99 ) < 55 )
+					{
+						G_ReflectMissile( self, missile_list[x], forward );
+					}
 					//do an effect
 					VectorNormalize2( missile_list[x]->s.pos.trDelta, fx_dir );
 					G_PlayEffect( "blaster/deflect", missile_list[x]->currentOrigin, fx_dir );
@@ -10004,7 +10008,17 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 						}
 						if ( dot >= 0 )
 						{//it's heading towards me
-							G_ReflectMissile( self, push_list[x], forward );
+							int reflectChance = 100; // players always reflect
+							if ( self->s.number > 0 )
+							{//NPC: reflect chance based on force push level
+								int pushLevel = self->client->ps.fd.forcePowerLevel[FP_PUSH];
+								reflectChance = (pushLevel >= FORCE_LEVEL_3) ? 60 :
+								               (pushLevel >= FORCE_LEVEL_2) ? 40 : 25;
+							}
+							if ( Q_irand( 0, 99 ) < reflectChance )
+							{
+								G_ReflectMissile( self, push_list[x], forward );
+							}
 						}
 						else
 						{

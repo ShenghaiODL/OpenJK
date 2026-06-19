@@ -11484,25 +11484,37 @@ void PM_SaberDroidWeapon( void )
 				pm->ps->weaponTime = pm->ps->legsAnimTimer;
 				break;
 			case BLOCKED_UPPER_RIGHT:
-			case BLOCKED_UPPER_RIGHT_PROJ:
 			case BLOCKED_LOWER_RIGHT:
-			case BLOCKED_LOWER_RIGHT_PROJ:
 				PM_SetAnim( pm, SETANIM_BOTH, BOTH_P1_S1_TR, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 				pm->ps->legsAnimTimer += Q_irand( 200, 1000 );
 				pm->ps->weaponTime = pm->ps->legsAnimTimer;
 				break;
+			case BLOCKED_UPPER_RIGHT_PROJ:
+			case BLOCKED_LOWER_RIGHT_PROJ:
+				PM_SetAnim( pm, SETANIM_BOTH, BOTH_P1_S1_TR, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				pm->ps->legsAnimTimer += Q_irand( 50, 150 );
+				pm->ps->weaponTime = pm->ps->legsAnimTimer;
+				break;
 			case BLOCKED_UPPER_LEFT:
-			case BLOCKED_UPPER_LEFT_PROJ:
 			case BLOCKED_LOWER_LEFT:
-			case BLOCKED_LOWER_LEFT_PROJ:
 				PM_SetAnim( pm, SETANIM_BOTH, BOTH_P1_S1_TL, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 				pm->ps->legsAnimTimer += Q_irand( 200, 1000 );
 				pm->ps->weaponTime = pm->ps->legsAnimTimer;
 				break;
+			case BLOCKED_UPPER_LEFT_PROJ:
+			case BLOCKED_LOWER_LEFT_PROJ:
+				PM_SetAnim( pm, SETANIM_BOTH, BOTH_P1_S1_TL, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				pm->ps->legsAnimTimer += Q_irand( 50, 150 );
+				pm->ps->weaponTime = pm->ps->legsAnimTimer;
+				break;
 			case BLOCKED_TOP:
-			case BLOCKED_TOP_PROJ:
 				PM_SetAnim( pm, SETANIM_BOTH, BOTH_P1_S1_T_, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 				pm->ps->legsAnimTimer += Q_irand( 200, 1000 );
+				pm->ps->weaponTime = pm->ps->legsAnimTimer;
+				break;
+			case BLOCKED_TOP_PROJ:
+				PM_SetAnim( pm, SETANIM_BOTH, BOTH_P1_S1_T_, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				pm->ps->legsAnimTimer += Q_irand( 50, 150 );
 				pm->ps->weaponTime = pm->ps->legsAnimTimer;
 				break;
 			default:

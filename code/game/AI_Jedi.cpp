@@ -6885,6 +6885,28 @@ static void Jedi_Attack( void )
 		}
 		NPC->client->ps.forceJumpCharge = 0;
 		VectorClear( NPC->client->ps.moveDir );
+
+		// Saber Reborn/Sith slowly approach even when not scripted to chase enemies,
+		// as long as they're not actively healing and have a valid enemy in range.
+		if ( NPC->enemy
+			&& NPC->client->NPC_class == CLASS_REBORN
+			&& NPC->s.weapon == WP_SABER
+			&& !(NPC->client->ps.forcePowersActive&(1<<FP_HEAL))
+			&& NPC->client->ps.groundEntityNum != ENTITYNUM_NONE
+			&& TIMER_Done( NPC, "slowApproach" ) )
+		{
+			float distSq = DistanceSquared( NPC->currentOrigin, NPC->enemy->currentOrigin );
+			if ( distSq > 150.0f*150.0f )
+			{
+				NPCInfo->combatMove = qtrue;
+				NPCInfo->goalEntity = NPC->enemy;
+				NPCInfo->goalRadius = 80.0f;
+				NPC->client->ps.speed = NPCInfo->stats.walkSpeed;
+				ucmd.buttons |= BUTTON_WALKING;
+				NPC_MoveToGoal( qtrue );
+				TIMER_Set( NPC, "slowApproach", Q_irand( 600, 1200 ) );
+			}
+		}
 	}
 
 	//NOTE: for now, we clear ucmd.forwardmove & ucmd.rightmove while in air to avoid jumps going awry...

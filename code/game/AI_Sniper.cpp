@@ -673,7 +673,7 @@ NPC_BSSniper_Attack
 
 void Sniper_StartHide( void )
 {
-	int duckTime = Q_irand( 2000, 5000 );
+	int duckTime = Q_irand( 1000, 2500 );
 
 	TIMER_Set( NPC, "duck", duckTime );
 	if ( NPC->client->NPC_class == CLASS_SABOTEUR )
