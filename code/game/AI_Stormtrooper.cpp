@@ -2164,7 +2164,7 @@ void ST_Commander( void )
 			{
 				int transitioning = group->numState[SQUAD_TRANSITION] + group->numState[SQUAD_SCOUT];
 				int suppressing   = group->numState[SQUAD_STAND_AND_SHOOT] + group->numState[SQUAD_COVER];
-				int maxTransit    = MAX( 1, group->numGroup / 2 );
+				int maxTransit    = group->numGroup / 2 > 1 ? group->numGroup / 2 : 1;
 				if ( transitioning >= maxTransit || suppressing == 0 )
 				{
 					AI_GroupUpdateSquadstates( group, NPC, SQUAD_STAND_AND_SHOOT );
@@ -2760,7 +2760,7 @@ void NPC_BSST_Attack( void )
 	}
 
 	// Allow firing during an active backstep if the enemy is visible and in range.
-	qboolean backshoot = ( !TIMER_Done( NPC, "runningBackwards" ) && enemyCS && enemyLOS );
+	qboolean backshoot = (qboolean)( !TIMER_Done( NPC, "runningBackwards" ) && enemyCS && enemyLOS );
 
 	if ( //!TIMER_Done( NPC, "flee" ) ||
 		(doMove&&!TIMER_Done( NPC, "runBackwardsDebounce" ) && !backshoot) )
