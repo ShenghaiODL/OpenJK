@@ -1793,7 +1793,7 @@ int ST_GetCPFlags( void )
 		else
 		{
 			int moraleBoost = NPCInfo->group->morale - NPCInfo->group->numGroup;
-			if ( moraleBoost > 20 )
+			if ( moraleBoost > 10 )
 			{//charge to any one and outflank (no cover needed)
 				cpFlags = (CP_CLEAR|CP_FLANK|CP_APPROACH_ENEMY);
 				//Saboteur_Decloak( NPC );
@@ -2158,8 +2158,23 @@ void ST_Commander( void )
 			cpFlags		|= CP_AVOID_ENEMY|CP_HAS_ROUTE|CP_TRYFAR;
 			avoidDist	 = 200;
 
+			// Suppression coordination: don't let everyone reposition simultaneously.
+			// Keep at least half the group firing while the other half moves.
+			if ( group )
+			{
+				int transitioning = group->numState[SQUAD_TRANSITION] + group->numState[SQUAD_SCOUT];
+				int suppressing   = group->numState[SQUAD_STAND_AND_SHOOT] + group->numState[SQUAD_COVER];
+				int maxTransit    = MAX( 1, group->numGroup / 2 );
+				if ( transitioning >= maxTransit || suppressing == 0 )
+				{
+					AI_GroupUpdateSquadstates( group, NPC, SQUAD_STAND_AND_SHOOT );
+					TIMER_Set( NPC, "attackDelay", Q_irand( 100, 400 ) );
+					cpFlags = 0;
+				}
+			}
+
 			//now get a combat point
-			if ( cp == -1 )
+			if ( cpFlags && cp == -1 )
 			{//may have had sone set above
 				cp = NPC_FindCombatPointRetry( NPC->currentOrigin, NPC->currentOrigin, NPC->currentOrigin, &cpFlags, avoidDist, NPCInfo->lastFailedCombatPoint );
 			}
@@ -2209,6 +2224,73 @@ void ST_Commander( void )
 							NPC_ST_StoreMovementSpeech( SPEECH_ESCAPING, -1 );
 						}
 					}
+				}
+			}
+			else if ( cpFlags && NPC->enemy && TIMER_Done( NPC, "geoSearchCooldown" ) )
+			{// No authored combat point found — scan nearby geometry for ad-hoc cover.
+				TIMER_Set( NPC, "geoSearchCooldown", 2500 );
+
+				vec3_t  coverPos;
+				VectorClear( coverPos );
+				float   bestScore = -1.0f;
+
+				vec3_t waist;
+				VectorCopy( NPC->currentOrigin, waist );
+				waist[2] += 24.0f;
+
+				for ( int d = 0; d < 8; d++ )
+				{
+					vec3_t scanAngles = { 0, d * 45.0f, 0 };
+					vec3_t dir;
+					AngleVectors( scanAngles, dir, NULL, NULL );
+
+					vec3_t end;
+					VectorMA( waist, 300.0f, dir, end );
+
+					trace_t tr;
+					gi.trace( &tr, waist, vec3_origin, vec3_origin, end,
+					          NPC->s.number, NPC->clipmask, (EG2_Collision)0, 0 );
+
+					if ( tr.fraction >= 1.0f || tr.startsolid )
+						continue;
+
+					vec3_t candidate;
+					VectorMA( tr.endpos, -32.0f, dir, candidate );
+					candidate[2] = NPC->currentOrigin[2];
+
+					// Spacing: reject if a friendly is already within 100 units.
+					bool tooClose = false;
+					if ( group )
+					{
+						for ( int m = 0; m < group->numGroup && !tooClose; m++ )
+						{
+							gentity_t *buddy = &g_entities[ group->member[m].number ];
+							if ( buddy == NPC ) continue;
+							if ( DistanceSquared( buddy->currentOrigin, candidate ) < 100.0f*100.0f )
+								tooClose = true;
+						}
+					}
+					if ( tooClose ) continue;
+
+					// Cover: enemy must not have LOS to candidate.
+					trace_t losTrace;
+					gi.trace( &losTrace, NPC->enemy->currentOrigin, vec3_origin, vec3_origin, candidate,
+					          NPC->enemy->s.number, NPC->enemy->clipmask, (EG2_Collision)0, 0 );
+					if ( losTrace.fraction >= 1.0f )
+						continue;
+
+					float score = 300.0f - Distance( NPC->currentOrigin, candidate );
+					if ( score > bestScore )
+					{
+						bestScore = score;
+						VectorCopy( candidate, coverPos );
+					}
+				}
+
+				if ( bestScore > 0.0f )
+				{
+					NPC_SetMoveGoal( NPC, coverPos, 16, qtrue, -1, NULL );
+					AI_GroupUpdateSquadstates( group, NPC, SQUAD_TRANSITION );
 				}
 			}
 		}
@@ -2677,8 +2759,11 @@ void NPC_BSST_Attack( void )
 		NPC_EvasionSaber();
 	}
 
+	// Allow firing during an active backstep if the enemy is visible and in range.
+	qboolean backshoot = ( !TIMER_Done( NPC, "runningBackwards" ) && enemyCS && enemyLOS );
+
 	if ( //!TIMER_Done( NPC, "flee" ) ||
-		(doMove&&!TIMER_Done( NPC, "runBackwardsDebounce" )) )
+		(doMove&&!TIMER_Done( NPC, "runBackwardsDebounce" ) && !backshoot) )
 	{//running away
 		faceEnemy = qfalse;
 	}
@@ -2694,7 +2779,7 @@ void NPC_BSST_Attack( void )
 		NPCInfo->desiredYaw = NPCInfo->lastPathAngles[YAW];
 		NPCInfo->desiredPitch = 0;
 		NPC_UpdateAngles( qtrue, qtrue );
-		if ( doMove )
+		if ( doMove && !backshoot )
 		{//don't run away and shoot
 			shoot = qfalse;
 		}

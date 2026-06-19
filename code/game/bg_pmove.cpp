@@ -8382,7 +8382,8 @@ static void PM_Footsteps( void )
 	}
 	else
 	{//all other NPCs...
-		if ( (PM_InSaberAnim( pm->ps->legsAnim ) && !PM_SpinningSaberAnim( pm->ps->legsAnim ))
+		if ( !pm->ps->legsAnimTimer &&
+			( (PM_InSaberAnim( pm->ps->legsAnim ) && !PM_SpinningSaberAnim( pm->ps->legsAnim ))
 			|| PM_SaberStanceAnim( pm->ps->legsAnim )
 			|| PM_SaberDrawPutawayAnim( pm->ps->legsAnim )
 			|| pm->ps->legsAnim == BOTH_SPINATTACK6//not a full-body spin, just spinning the saber
@@ -8394,8 +8395,8 @@ static void PM_Footsteps( void )
 			|| pm->ps->legsAnim == BOTH_ATTACK10
 			|| PM_LandingAnim( pm->ps->legsAnim )
 			|| PM_PainAnim( pm->ps->legsAnim )
-			|| PM_ForceAnim( pm->ps->legsAnim ))
-		{//legs are in a saber anim, and not spinning, be sure to override it
+			|| PM_ForceAnim( pm->ps->legsAnim )) )
+		{//legs are in a saber anim with no active hold timer, be sure to override it
 			setAnimFlags |= SETANIM_FLAG_OVERRIDE;
 		}
 	}
@@ -11473,6 +11474,12 @@ void PM_SaberDroidWeapon( void )
 	// Now we react to a block action by the player's lightsaber.
 	if ( pm->ps->saberBlocked )
 	{
+		// Select parry anim base for current saber style: P6=dual, P7=staff, P1=single
+		int parryBase = BOTH_P1_S1_T_;
+		if      ( pm->ps->saberAnimLevel == SS_DUAL )  { parryBase = BOTH_P6_S6_T_; }
+		else if ( pm->ps->saberAnimLevel == SS_STAFF ) { parryBase = BOTH_P7_S7_T_; }
+#define PARRY(a) ((animNumber_t)(parryBase + ((a) - BOTH_P1_S1_T_)))
+
 		switch ( pm->ps->saberBlocked )
 		{
 			case BLOCKED_PARRY_BROKEN:
@@ -11484,36 +11491,52 @@ void PM_SaberDroidWeapon( void )
 				pm->ps->weaponTime = pm->ps->legsAnimTimer;
 				break;
 			case BLOCKED_UPPER_RIGHT:
+				PM_SetAnim( pm, SETANIM_BOTH, PARRY(BOTH_P1_S1_TR), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				pm->ps->legsAnimTimer += Q_irand( 200, 1000 );
+				pm->ps->weaponTime = pm->ps->legsAnimTimer;
+				break;
 			case BLOCKED_LOWER_RIGHT:
-				PM_SetAnim( pm, SETANIM_BOTH, BOTH_P1_S1_TR, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				PM_SetAnim( pm, SETANIM_BOTH, PARRY(BOTH_P1_S1_BR), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 				pm->ps->legsAnimTimer += Q_irand( 200, 1000 );
 				pm->ps->weaponTime = pm->ps->legsAnimTimer;
 				break;
 			case BLOCKED_UPPER_RIGHT_PROJ:
+				PM_SetAnim( pm, SETANIM_BOTH, PARRY(BOTH_P1_S1_TR), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				pm->ps->legsAnimTimer += Q_irand( 50, 150 );
+				pm->ps->weaponTime = pm->ps->legsAnimTimer;
+				break;
 			case BLOCKED_LOWER_RIGHT_PROJ:
-				PM_SetAnim( pm, SETANIM_BOTH, BOTH_P1_S1_TR, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				PM_SetAnim( pm, SETANIM_BOTH, PARRY(BOTH_P1_S1_BR), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 				pm->ps->legsAnimTimer += Q_irand( 50, 150 );
 				pm->ps->weaponTime = pm->ps->legsAnimTimer;
 				break;
 			case BLOCKED_UPPER_LEFT:
+				PM_SetAnim( pm, SETANIM_BOTH, PARRY(BOTH_P1_S1_TL), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				pm->ps->legsAnimTimer += Q_irand( 200, 1000 );
+				pm->ps->weaponTime = pm->ps->legsAnimTimer;
+				break;
 			case BLOCKED_LOWER_LEFT:
-				PM_SetAnim( pm, SETANIM_BOTH, BOTH_P1_S1_TL, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				PM_SetAnim( pm, SETANIM_BOTH, PARRY(BOTH_P1_S1_BL), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 				pm->ps->legsAnimTimer += Q_irand( 200, 1000 );
 				pm->ps->weaponTime = pm->ps->legsAnimTimer;
 				break;
 			case BLOCKED_UPPER_LEFT_PROJ:
+				PM_SetAnim( pm, SETANIM_BOTH, PARRY(BOTH_P1_S1_TL), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				pm->ps->legsAnimTimer += Q_irand( 50, 150 );
+				pm->ps->weaponTime = pm->ps->legsAnimTimer;
+				break;
 			case BLOCKED_LOWER_LEFT_PROJ:
-				PM_SetAnim( pm, SETANIM_BOTH, BOTH_P1_S1_TL, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				PM_SetAnim( pm, SETANIM_BOTH, PARRY(BOTH_P1_S1_BL), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 				pm->ps->legsAnimTimer += Q_irand( 50, 150 );
 				pm->ps->weaponTime = pm->ps->legsAnimTimer;
 				break;
 			case BLOCKED_TOP:
-				PM_SetAnim( pm, SETANIM_BOTH, BOTH_P1_S1_T_, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				PM_SetAnim( pm, SETANIM_BOTH, PARRY(BOTH_P1_S1_T_), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 				pm->ps->legsAnimTimer += Q_irand( 200, 1000 );
 				pm->ps->weaponTime = pm->ps->legsAnimTimer;
 				break;
 			case BLOCKED_TOP_PROJ:
-				PM_SetAnim( pm, SETANIM_BOTH, BOTH_P1_S1_T_, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				PM_SetAnim( pm, SETANIM_BOTH, PARRY(BOTH_P1_S1_T_), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 				pm->ps->legsAnimTimer += Q_irand( 50, 150 );
 				pm->ps->weaponTime = pm->ps->legsAnimTimer;
 				break;
@@ -11521,6 +11544,7 @@ void PM_SaberDroidWeapon( void )
 				pm->ps->saberBlocked = BLOCKED_NONE;
 				break;
 		}
+#undef PARRY
 
 		pm->ps->saberBlocked = BLOCKED_NONE;
 		pm->ps->saberBounceMove = LS_NONE;
