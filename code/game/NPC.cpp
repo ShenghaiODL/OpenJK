@@ -2523,8 +2523,8 @@ void NPC_Think ( gentity_t *self)//, int msec )
 			NPCInfo->nextBStateThink = level.time + FRAMETIME/2;
 		}
 		else
-		{//Maybe even 200 ms?
-			NPCInfo->nextBStateThink = level.time + FRAMETIME;
+		{
+			NPCInfo->nextBStateThink = level.time + FRAMETIME/2;
 		}
 
 		//nextthink is set before this so something in here can override it

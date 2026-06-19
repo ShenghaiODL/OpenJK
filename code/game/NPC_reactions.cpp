@@ -359,6 +359,8 @@ void NPC_ChoosePainAnimation( gentity_t *self, gentity_t *other, const vec3_t po
 				}
 				self->NPC->aiFlags &= ~NPCAI_KNEEL;
 				NPC_SetAnim( self, parts, pain_anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+				// Halve the hold timer so NPCs recover and can move to cover sooner.
+				self->client->ps.legsAnimTimer /= 2;
 			}
 			if ( voiceEvent != -1 )
 			{
@@ -375,7 +377,7 @@ void NPC_ChoosePainAnimation( gentity_t *self, gentity_t *other, const vec3_t po
 		{
 			self->painDebounceTime = level.time + 4000;
 		}
-		self->painDebounceTime = level.time + PM_AnimLength( self->client->clientInfo.animFileIndex, (animNumber_t) pain_anim );
+		self->painDebounceTime = level.time + PM_AnimLength( self->client->clientInfo.animFileIndex, (animNumber_t) pain_anim ) / 2;
 		self->client->fireDelay = 0;
 	}
 }

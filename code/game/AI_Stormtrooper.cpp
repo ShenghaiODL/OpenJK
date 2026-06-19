@@ -342,6 +342,7 @@ NPC_ST_Pain
 void NPC_ST_Pain( gentity_t *self, gentity_t *inflictor, gentity_t *other, const vec3_t point, int damage, int mod,int hitLoc )
 {
 	self->NPC->localState = LSTATE_UNDERFIRE;
+	TIMER_Set( self, "underFire", 5000 );
 
 	TIMER_Set( self, "duck", -1 );
 	TIMER_Set( self, "hideTime", -1 );
@@ -1792,31 +1793,42 @@ int ST_GetCPFlags( void )
 		}*/
 		else
 		{
-			int moraleBoost = NPCInfo->group->morale - NPCInfo->group->numGroup;
-			if ( moraleBoost > 10 )
-			{//charge to any one and outflank (no cover needed)
-				cpFlags = (CP_CLEAR|CP_FLANK|CP_APPROACH_ENEMY);
-				//Saboteur_Decloak( NPC );
+			bool enemySaber = NPC->enemy && NPC->enemy->client
+			                  && NPC->enemy->client->ps.weapon == WP_SABER
+			                  && NPC->enemy->client->ps.SaberActive();
+			bool underFire  = !TIMER_Done( NPC, "underFire" );
+			if ( enemySaber || underFire )
+			{//saber threat or took recent fire: prioritize cover
+				cpFlags = (CP_COVER|CP_AVOID|CP_SAFE|CP_DUCK);
 			}
-			else if ( moraleBoost > 15 )
-			{//charge to closest one (no cover needed)
-				cpFlags = (CP_CLEAR|CP_CLOSEST|CP_APPROACH_ENEMY);
-				/*
-				if ( NPC->client->NPC_class == CLASS_SABOTEUR && !Q_irand( 0, 3 ) )
-				{
-					Saboteur_Decloak( NPC );
+			else
+			{
+				int moraleBoost = NPCInfo->group->morale - NPCInfo->group->numGroup;
+				if ( moraleBoost > 10 )
+				{//charge to any one and outflank (no cover needed)
+					cpFlags = (CP_CLEAR|CP_FLANK|CP_APPROACH_ENEMY);
+					//Saboteur_Decloak( NPC );
 				}
-				*/
-			}
-			else if ( moraleBoost > 10 )
-			{//charge closer (no cover needed)
-				cpFlags = (CP_CLEAR|CP_APPROACH_ENEMY);
-				/*
-				if ( NPC->client->NPC_class == CLASS_SABOTEUR && !Q_irand( 0, 6 ) )
-				{
-					Saboteur_Decloak( NPC );
+				else if ( moraleBoost > 15 )
+				{//charge to closest one (no cover needed)
+					cpFlags = (CP_CLEAR|CP_CLOSEST|CP_APPROACH_ENEMY);
+					/*
+					if ( NPC->client->NPC_class == CLASS_SABOTEUR && !Q_irand( 0, 3 ) )
+					{
+						Saboteur_Decloak( NPC );
+					}
+					*/
 				}
-				*/
+				else if ( moraleBoost > 10 )
+				{//charge closer (no cover needed)
+					cpFlags = (CP_CLEAR|CP_APPROACH_ENEMY);
+					/*
+					if ( NPC->client->NPC_class == CLASS_SABOTEUR && !Q_irand( 0, 6 ) )
+					{
+						Saboteur_Decloak( NPC );
+					}
+					*/
+				}
 			}
 		}
 	}
@@ -1845,6 +1857,73 @@ int ST_GetCPFlags( void )
 		cpFlags |= CP_NEAREST;
 	}
 	return cpFlags;
+}
+
+// Scan 8 directions at waist height for a geometry position the enemy cannot see.
+// Checks squad spacing (100 units) and enemy LOS. Writes best position to outPos.
+// Returns qtrue if a usable position was found. Requires NPC/NPC->enemy globals.
+static qboolean ST_FindGeoCover( vec3_t outPos )
+{
+	if ( !NPC || !NPC->enemy )
+		return qfalse;
+
+	vec3_t waist;
+	VectorCopy( NPC->currentOrigin, waist );
+	waist[2] += 24.0f;
+
+	float   bestScore = -1.0f;
+	VectorClear( outPos );
+
+	for ( int d = 0; d < 8; d++ )
+	{
+		vec3_t scanAngles = { 0, d * 45.0f, 0 };
+		vec3_t dir;
+		AngleVectors( scanAngles, dir, NULL, NULL );
+
+		vec3_t end;
+		VectorMA( waist, 300.0f, dir, end );
+
+		trace_t tr;
+		gi.trace( &tr, waist, vec3_origin, vec3_origin, end,
+		          NPC->s.number, NPC->clipmask, (EG2_Collision)0, 0 );
+
+		if ( tr.fraction >= 1.0f || tr.startsolid )
+			continue;
+
+		vec3_t candidate;
+		VectorMA( tr.endpos, -32.0f, dir, candidate );
+		candidate[2] = NPC->currentOrigin[2];
+
+		// Spacing: skip if a squad member is already within 100 units.
+		bool tooClose = false;
+		if ( NPCInfo->group )
+		{
+			for ( int m = 0; m < NPCInfo->group->numGroup && !tooClose; m++ )
+			{
+				gentity_t *buddy = &g_entities[ NPCInfo->group->member[m].number ];
+				if ( buddy == NPC ) continue;
+				if ( DistanceSquared( buddy->currentOrigin, candidate ) < 100.0f*100.0f )
+					tooClose = true;
+			}
+		}
+		if ( tooClose ) continue;
+
+		// Cover: enemy must not have LOS to candidate.
+		trace_t losTrace;
+		gi.trace( &losTrace, NPC->enemy->currentOrigin, vec3_origin, vec3_origin, candidate,
+		          NPC->enemy->s.number, NPC->enemy->clipmask, (EG2_Collision)0, 0 );
+		if ( losTrace.fraction >= 1.0f )
+			continue;
+
+		float score = 300.0f - Distance( NPC->currentOrigin, candidate );
+		if ( score > bestScore )
+		{
+			bestScore = score;
+			VectorCopy( candidate, outPos );
+		}
+	}
+
+	return (bestScore > 0.0f) ? qtrue : qfalse;
 }
 
 /*
@@ -1973,6 +2052,7 @@ void ST_Commander( void )
 			continue;
 		}
 		SetNPCGlobals( member );
+		cpFlags = ST_GetCPFlags();
 
 		if ( !TIMER_Done( NPC, "flee" ) )
 		{//running away
@@ -2229,65 +2309,8 @@ void ST_Commander( void )
 			else if ( cpFlags && NPC->enemy && TIMER_Done( NPC, "geoSearchCooldown" ) )
 			{// No authored combat point found — scan nearby geometry for ad-hoc cover.
 				TIMER_Set( NPC, "geoSearchCooldown", 2500 );
-
-				vec3_t  coverPos;
-				VectorClear( coverPos );
-				float   bestScore = -1.0f;
-
-				vec3_t waist;
-				VectorCopy( NPC->currentOrigin, waist );
-				waist[2] += 24.0f;
-
-				for ( int d = 0; d < 8; d++ )
-				{
-					vec3_t scanAngles = { 0, d * 45.0f, 0 };
-					vec3_t dir;
-					AngleVectors( scanAngles, dir, NULL, NULL );
-
-					vec3_t end;
-					VectorMA( waist, 300.0f, dir, end );
-
-					trace_t tr;
-					gi.trace( &tr, waist, vec3_origin, vec3_origin, end,
-					          NPC->s.number, NPC->clipmask, (EG2_Collision)0, 0 );
-
-					if ( tr.fraction >= 1.0f || tr.startsolid )
-						continue;
-
-					vec3_t candidate;
-					VectorMA( tr.endpos, -32.0f, dir, candidate );
-					candidate[2] = NPC->currentOrigin[2];
-
-					// Spacing: reject if a friendly is already within 100 units.
-					bool tooClose = false;
-					if ( group )
-					{
-						for ( int m = 0; m < group->numGroup && !tooClose; m++ )
-						{
-							gentity_t *buddy = &g_entities[ group->member[m].number ];
-							if ( buddy == NPC ) continue;
-							if ( DistanceSquared( buddy->currentOrigin, candidate ) < 100.0f*100.0f )
-								tooClose = true;
-						}
-					}
-					if ( tooClose ) continue;
-
-					// Cover: enemy must not have LOS to candidate.
-					trace_t losTrace;
-					gi.trace( &losTrace, NPC->enemy->currentOrigin, vec3_origin, vec3_origin, candidate,
-					          NPC->enemy->s.number, NPC->enemy->clipmask, (EG2_Collision)0, 0 );
-					if ( losTrace.fraction >= 1.0f )
-						continue;
-
-					float score = 300.0f - Distance( NPC->currentOrigin, candidate );
-					if ( score > bestScore )
-					{
-						bestScore = score;
-						VectorCopy( candidate, coverPos );
-					}
-				}
-
-				if ( bestScore > 0.0f )
+				vec3_t coverPos;
+				if ( ST_FindGeoCover( coverPos ) )
 				{
 					NPC_SetMoveGoal( NPC, coverPos, 16, qtrue, -1, NULL );
 					AI_GroupUpdateSquadstates( group, NPC, SQUAD_TRANSITION );
@@ -2431,6 +2454,24 @@ void NPC_BSST_Attack( void )
 		ST_Speech( NPC, SPEECH_COVER, 0 );
 		NPC_UpdateAngles( qtrue, qtrue );
 		return;
+	}
+
+	// Lone-NPC proactive cover: no ST_Commander runs for groupless troopers,
+	// so run a geo-cover search when enemy has a saber or we've taken recent fire.
+	if ( !NPCInfo->group && NPC->enemy && NPC->enemy->client )
+	{
+		bool enemySaber = NPC->enemy->client->ps.weapon == WP_SABER
+		                  && NPC->enemy->client->ps.SaberActive();
+		bool underFire  = !TIMER_Done( NPC, "underFire" );
+		if ( (enemySaber || underFire) && TIMER_Done( NPC, "loneGeoSearchCooldown" ) )
+		{
+			TIMER_Set( NPC, "loneGeoSearchCooldown", 3000 );
+			vec3_t coverPos;
+			if ( ST_FindGeoCover( coverPos ) )
+			{
+				NPC_SetMoveGoal( NPC, coverPos, 16, qtrue, -1, NULL );
+			}
+		}
 	}
 
 	if ( !NPC->enemy )
@@ -2759,12 +2800,8 @@ void NPC_BSST_Attack( void )
 		NPC_EvasionSaber();
 	}
 
-	// Allow firing during an active backstep if the enemy is visible and in range.
-	qboolean backshoot = (qboolean)( !TIMER_Done( NPC, "runningBackwards" ) && enemyCS && enemyLOS );
-
-	if ( //!TIMER_Done( NPC, "flee" ) ||
-		(doMove&&!TIMER_Done( NPC, "runBackwardsDebounce" ) && !backshoot) )
-	{//running away
+	if ( doMove && !TIMER_Done( NPC, "flee" ) )
+	{//suppress facing/shooting only during explicit flee, not normal repositioning
 		faceEnemy = qfalse;
 	}
 
@@ -2779,7 +2816,7 @@ void NPC_BSST_Attack( void )
 		NPCInfo->desiredYaw = NPCInfo->lastPathAngles[YAW];
 		NPCInfo->desiredPitch = 0;
 		NPC_UpdateAngles( qtrue, qtrue );
-		if ( doMove && !backshoot )
+		if ( doMove && !TIMER_Done( NPC, "flee" ) )
 		{//don't run away and shoot
 			shoot = qfalse;
 		}
