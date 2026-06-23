@@ -1501,7 +1501,29 @@ void ST_ResolveBlockedShot( int hit )
 		}
 	}
 	//Hmm, can't resolve this by telling them to duck or telling me to stand
-	//We need to doMove!
+	//We need to doMove — or at least try stepping sideways to find a clear angle.
+	if ( NPC->enemy && TIMER_Done( NPC, "angleSearchDebounce" ) )
+	{
+		TIMER_Set( NPC, "angleSearchDebounce", Q_irand( 800, 1500 ) );
+		vec3_t right;
+		AngleVectors( NPC->client->ps.viewangles, NULL, right, NULL );
+		for ( int side = -1; side <= 1; side += 2 )
+		{
+			vec3_t muzzle, targ;
+			CalcEntitySpot( NPC, SPOT_WEAPON, muzzle );
+			VectorMA( muzzle, side * 64.0f, right, muzzle );
+			CalcEntitySpot( NPC->enemy, SPOT_CHEST, targ );
+			trace_t tr;
+			gi.trace( &tr, muzzle, vec3_origin, vec3_origin, targ,
+			          NPC->s.number, MASK_SHOT, (EG2_Collision)0, 0 );
+			if ( tr.entityNum == NPC->enemy->s.number )
+			{
+				int strafeTime = Q_irand( 300, 700 );
+				TIMER_Set( NPC, side < 0 ? "strafeLeft" : "strafeRight", strafeTime );
+				return;
+			}
+		}
+	}
 	TIMER_Set( NPC, "roamTime", -1 );
 	TIMER_Set( NPC, "stick", -1 );
 	TIMER_Set( NPC, "duck", -1 );
@@ -1871,6 +1893,17 @@ static qboolean ST_FindGeoCover( vec3_t outPos )
 	VectorCopy( NPC->currentOrigin, waist );
 	waist[2] += 24.0f;
 
+	// Use eye height for LOS — more accurate than feet origin.
+	vec3_t playerEye;
+	VectorCopy( NPC->enemy->currentOrigin, playerEye );
+	if ( NPC->enemy->client )
+		playerEye[2] += NPC->enemy->client->ps.viewheight;
+
+	// Pre-compute direction toward enemy so we can reject cover that requires moving toward them.
+	vec3_t toEnemy;
+	VectorSubtract( NPC->enemy->currentOrigin, NPC->currentOrigin, toEnemy );
+	VectorNormalize( toEnemy );
+
 	float   bestScore = -1.0f;
 	VectorClear( outPos );
 
@@ -1894,6 +1927,14 @@ static qboolean ST_FindGeoCover( vec3_t outPos )
 		VectorMA( tr.endpos, -32.0f, dir, candidate );
 		candidate[2] = NPC->currentOrigin[2];
 
+		// Reject if this position is roughly in the direction of the enemy — would cause the NPC
+		// to path through or toward the player to reach it.
+		vec3_t toCandidate;
+		VectorSubtract( candidate, NPC->currentOrigin, toCandidate );
+		VectorNormalize( toCandidate );
+		if ( DotProduct( toCandidate, toEnemy ) > 0.5f )
+			continue;
+
 		// Spacing: skip if a squad member is already within 100 units.
 		bool tooClose = false;
 		if ( NPCInfo->group )
@@ -1908,14 +1949,17 @@ static qboolean ST_FindGeoCover( vec3_t outPos )
 		}
 		if ( tooClose ) continue;
 
-		// Cover: enemy must not have LOS to candidate.
+		// Cover: check solid world geometry only (not entity bodies) from the player's eye.
 		trace_t losTrace;
-		gi.trace( &losTrace, NPC->enemy->currentOrigin, vec3_origin, vec3_origin, candidate,
-		          NPC->enemy->s.number, NPC->enemy->clipmask, (EG2_Collision)0, 0 );
+		gi.trace( &losTrace, playerEye, vec3_origin, vec3_origin, candidate,
+		          NPC->enemy->s.number, CONTENTS_SOLID, (EG2_Collision)0, 0 );
 		if ( losTrace.fraction >= 1.0f )
 			continue;
 
-		float score = 300.0f - Distance( NPC->currentOrigin, candidate );
+		// Score: prefer positions far from the enemy and reasonably close to us.
+		float distFromEnemy = Distance( candidate, NPC->enemy->currentOrigin );
+		float distToUs      = Distance( NPC->currentOrigin, candidate );
+		float score         = distFromEnemy - distToUs * 0.5f;
 		if ( score > bestScore )
 		{
 			bestScore = score;
@@ -2314,6 +2358,19 @@ void ST_Commander( void )
 				{
 					NPC_SetMoveGoal( NPC, coverPos, 16, qtrue, -1, NULL );
 					AI_GroupUpdateSquadstates( group, NPC, SQUAD_TRANSITION );
+					// Buddy-pair: push closest squadmate into suppressive fire while we move.
+					if ( NPCInfo->group->member[0].closestBuddy >= 0 )
+					{
+						int buddyIdx = NPCInfo->group->member[0].closestBuddy;
+						gentity_t *buddy = &g_entities[ group->member[buddyIdx].number ];
+						if ( buddy != NPC && buddy->NPC
+						     && buddy->NPC->squadState != SQUAD_STAND_AND_SHOOT
+						     && buddy->NPC->squadState != SQUAD_TRANSITION )
+						{
+							AI_GroupUpdateSquadstates( group, buddy, SQUAD_STAND_AND_SHOOT );
+							TIMER_Set( buddy, "attackDelay", Q_irand( 0, 200 ) );
+						}
+					}
 				}
 			}
 		}
@@ -2469,7 +2526,35 @@ void NPC_BSST_Attack( void )
 			vec3_t coverPos;
 			if ( ST_FindGeoCover( coverPos ) )
 			{
+				TIMER_Set( NPC, "cornered", -1 );
 				NPC_SetMoveGoal( NPC, coverPos, 16, qtrue, -1, NULL );
+			}
+			else
+			{
+				// No cover available — fight from current position rather than pathing blindly.
+				TIMER_Set( NPC, "cornered", 3000 );
+				TIMER_Set( NPC, "attackDelay", 0 );
+
+				// Strafe erratically as a last resort — moving target is harder to hit.
+				if ( TIMER_Done( NPC, "strafeDebounce" ) )
+				{
+					int strafeTime = Q_irand( 400, 900 );
+					TIMER_Set( NPC, "strafeDebounce", strafeTime + Q_irand( 600, 1200 ) );
+					qboolean goLeft = (qboolean)Q_irand( 0, 1 );
+					if ( NPCInfo->group )
+					{
+						int buddyIdx = NPCInfo->group->member[0].closestBuddy;
+						gentity_t *buddy = &g_entities[ NPCInfo->group->member[buddyIdx].number ];
+						if ( buddy != NPC )
+						{
+							vec3_t tobuddy, right;
+							VectorSubtract( buddy->currentOrigin, NPC->currentOrigin, tobuddy );
+							AngleVectors( NPC->client->ps.viewangles, NULL, right, NULL );
+							goLeft = (qboolean)( DotProduct( tobuddy, right ) > 0.0f );
+						}
+					}
+					TIMER_Set( NPC, goLeft ? "strafeLeft" : "strafeRight", strafeTime );
+				}
 			}
 		}
 	}
@@ -2617,6 +2702,13 @@ void NPC_BSST_Attack( void )
 				shoot = qtrue;
 			}
 		}
+	}
+
+	// Cornered: no cover available — hold position and fight aggressively.
+	if ( !NPCInfo->group && !TIMER_Done( NPC, "cornered" ) )
+	{
+		faceEnemy = qtrue;
+		doMove = qfalse;
 	}
 
 	//Check for movement to take care of

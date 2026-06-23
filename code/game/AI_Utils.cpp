@@ -797,6 +797,9 @@ qboolean AI_RefreshGroup( AIGroupInfo_t *group )
 		//Must be alive
 		if ( member->health <= 0 )
 		{
+			// Apply morale penalty for this casualty — shock fades at 1/sec via moraleAdjust decay.
+			group->moraleAdjust -= 5;
+			if ( group->moraleAdjust < -20 ) group->moraleAdjust = -20;
 			AI_DeleteGroupMember( group, i );
 			//keep marker at same place since we deleted this guy and shifted everyone up one
 			i--;

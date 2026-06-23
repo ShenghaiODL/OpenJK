@@ -2524,7 +2524,12 @@ void NPC_Think ( gentity_t *self)//, int msec )
 		}
 		else
 		{
-			NPCInfo->nextBStateThink = level.time + FRAMETIME/2;
+			// Scale think rate by reactions stat (1-5): higher reactions = faster decisions.
+			// reactions 1 → ~190ms, reactions 3 → ~130ms, reactions 5 → ~70ms
+			int reactionMs = NPCInfo->stats.reactions > 0
+				? ( 220 - NPCInfo->stats.reactions * 30 )
+				: FRAMETIME;
+			NPCInfo->nextBStateThink = level.time + reactionMs;
 		}
 
 		//nextthink is set before this so something in here can override it
