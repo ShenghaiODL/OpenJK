@@ -2797,6 +2797,77 @@ void SP_NPC_StormtrooperOfficer( gentity_t *self)
 	self->spawnflags |= 1;
 	SP_NPC_Stormtrooper( self );
 }
+
+// ---------------------------------------------------------------------------
+// NPC_StormtrooperRandom — weighted random selection from stormtrooper_random.cfg
+// ---------------------------------------------------------------------------
+#define ST_RANDOM_MAX_VARIANTS 16
+
+static struct { char name[64]; int weight; } s_stVariants[ST_RANDOM_MAX_VARIANTS];
+static int s_stNumVariants = 0;
+static int s_stTotalWeight = 0;
+
+static void ST_LoadRandomVariants( void )
+{
+	s_stNumVariants = 0;
+	s_stTotalWeight = 0;
+
+	char *buffer = NULL;
+	int len = gi.FS_ReadFile( "ext_data/npcs/stormtrooper_random.cfg", (void **)&buffer );
+
+	if ( len > 0 && buffer )
+	{
+		const char *p = buffer;
+		const char *token;
+		while ( s_stNumVariants < ST_RANDOM_MAX_VARIANTS )
+		{
+			if ( COM_ParseString( &p, &token ) ) break;
+			if ( !token[0] || token[0] == '/' ) { SkipRestOfLine( &p ); continue; } // skip comments
+			Q_strncpyz( s_stVariants[s_stNumVariants].name, token, 64 );
+
+			int w = 1;
+			COM_ParseInt( &p, &w );
+			if ( w < 1 ) w = 1;
+			s_stVariants[s_stNumVariants].weight = w;
+			s_stTotalWeight += w;
+			s_stNumVariants++;
+		}
+		gi.FS_FreeFile( buffer );
+	}
+
+	// Fallback if file is missing or empty
+	if ( !s_stNumVariants )
+	{
+		Q_strncpyz( s_stVariants[0].name, "stormtrooper_rifle",     64 ); s_stVariants[0].weight = 5;
+		Q_strncpyz( s_stVariants[1].name, "stormtrooper_heavy",     64 ); s_stVariants[1].weight = 2;
+		Q_strncpyz( s_stVariants[2].name, "stormtrooper_officer",   64 ); s_stVariants[2].weight = 2;
+		Q_strncpyz( s_stVariants[3].name, "stormtrooper_grenadier", 64 ); s_stVariants[3].weight = 1;
+		s_stNumVariants = 4;
+		s_stTotalWeight = 10;
+	}
+}
+
+void SP_NPC_StormtrooperRandom( gentity_t *self )
+{
+	if ( !s_stNumVariants )
+		ST_LoadRandomVariants();
+
+	int roll = Q_irand( 0, s_stTotalWeight - 1 );
+	int cumulative = 0;
+	self->NPC_type = s_stVariants[0].name; // safe default
+	for ( int i = 0; i < s_stNumVariants; i++ )
+	{
+		cumulative += s_stVariants[i].weight;
+		if ( roll < cumulative )
+		{
+			self->NPC_type = s_stVariants[i].name;
+			break;
+		}
+	}
+
+	SP_NPC_spawner( self );
+}
+
 /*QUAKED NPC_Snowtrooper(1 0 0) (-16 -16 -24) (16 16 40) x x x x DROPTOFLOOR CINEMATIC NOTSOLID STARTINSOLID SHY
 30 health, blaster
 

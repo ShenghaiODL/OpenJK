@@ -542,6 +542,7 @@ void SP_NPC_Rebel( gentity_t *self );
 void SP_NPC_Human_Merc( gentity_t *self );
 void SP_NPC_Stormtrooper( gentity_t *self );
 void SP_NPC_StormtrooperOfficer( gentity_t *self );
+void SP_NPC_StormtrooperRandom( gentity_t *self );
 void SP_NPC_Tie_Pilot( gentity_t *self );
 void SP_NPC_Snowtrooper( gentity_t *self );
 void SP_NPC_RocketTrooper( gentity_t *self);
@@ -782,6 +783,7 @@ spawn_t	spawns[] = {
 	{"NPC_Human_Merc", SP_NPC_Human_Merc },
 	{"NPC_Stormtrooper", SP_NPC_Stormtrooper },
 	{"NPC_StormtrooperOfficer", SP_NPC_StormtrooperOfficer },
+	{"NPC_StormtrooperRandom", SP_NPC_StormtrooperRandom },
 	{"NPC_Tie_Pilot", SP_NPC_Tie_Pilot },
 	{"NPC_Snowtrooper", SP_NPC_Snowtrooper },
 	{"NPC_RocketTrooper", SP_NPC_RocketTrooper },
