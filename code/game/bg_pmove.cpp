@@ -9264,6 +9264,7 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 	int	anim;
 	int parts = SETANIM_TORSO;
 	qboolean manualBlocking = qfalse;
+	bool movingBlock = false;
 
 	if ( newMove < LS_NONE || newMove >= LS_MOVE_MAX )
 	{
@@ -9327,6 +9328,7 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 				else if ( pm->ps->dualSabers && pm->ps->saber[1].Active() )
 				{
 					setflags |= SETANIM_FLAG_OVERRIDE;
+					movingBlock = true;
 					if ( rm > 40 )
 						anim = (fm < -40) ? BOTH_P6_S6_BR : BOTH_P6_S6_TR;
 					else if ( rm < -40 )
@@ -9337,6 +9339,7 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 				else if ( pm->ps->SaberStaff() )
 				{
 					setflags |= SETANIM_FLAG_OVERRIDE;
+					movingBlock = true;
 					if ( rm > 40 )
 						anim = (fm < -40) ? BOTH_P7_S7_BR : BOTH_P7_S7_TR;
 					else if ( rm < -40 )
@@ -9347,6 +9350,7 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 				else
 				{
 					setflags |= SETANIM_FLAG_OVERRIDE;
+					movingBlock = true;
 					if ( rm > 40 )
 						anim = (fm < -40) ? BOTH_P1_S1_BR : BOTH_P1_S1_TR;
 					else if ( rm < -40 )
@@ -9705,6 +9709,11 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 			parts = SETANIM_BOTH;
 			setflags &= ~SETANIM_FLAG_RESTART;
 		}
+	}
+	// Moving-block: apply stance to torso only so legs can keep running and saber stays in defensive posture.
+	if ( movingBlock )
+	{
+		parts = SETANIM_TORSO;
 	}
 	if (anim!=-1)
 	{
