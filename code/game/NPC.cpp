@@ -2103,7 +2103,7 @@ void NPC_RunBehavior( int team, int bState )
 				NPC_BehaviorSet_Sniper( bState );
 				return;
 			}
-			if ( NPC->client->ps.weapon == WP_THERMAL
+			if ( ( NPC->client->ps.weapon == WP_THERMAL && NPC->client->NPC_class != CLASS_STORMTROOPER )
 				|| NPC->client->ps.weapon == WP_MELEE )//FIXME: separate AI for melee fighters
 			{//a grenadier
 				NPC_BehaviorSet_Grenadier( bState );
