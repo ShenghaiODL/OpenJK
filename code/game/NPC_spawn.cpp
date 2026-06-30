@@ -2817,12 +2817,17 @@ static void ST_LoadRandomVariants( void )
 
 	if ( len > 0 && buffer )
 	{
+		COM_BeginParseSession( "stormtrooper_random.cfg" );
 		const char *p = buffer;
 		const char *token;
 		while ( s_stNumVariants < ST_RANDOM_MAX_VARIANTS )
 		{
-			if ( COM_ParseString( &p, &token ) ) break;
-			if ( !token[0] || token[0] == '/' ) { SkipRestOfLine( &p ); continue; } // skip comments
+			// allowLineBreaks must be qtrue here - COM_ParseString/COM_ParseExt(...,qfalse)
+			// returns an empty token every time it has to cross a newline (e.g. past a
+			// "//" comment line), which previously made this loop bail out immediately
+			// after the file's leading comment block, before reading any real data.
+			token = COM_ParseExt( &p, qtrue );
+			if ( !token[0] ) break;
 			Q_strncpyz( s_stVariants[s_stNumVariants].name, token, 64 );
 
 			int w = 1;
@@ -2832,7 +2837,12 @@ static void ST_LoadRandomVariants( void )
 			s_stTotalWeight += w;
 			s_stNumVariants++;
 		}
+		COM_EndParseSession();
 		gi.FS_FreeFile( buffer );
+	}
+	else
+	{
+		Com_Printf( S_COLOR_RED"ST_LoadRandomVariants: failed to read ext_data/npcs/stormtrooper_random.cfg (len=%d)\n", len );
 	}
 
 	// Fallback if file is missing or empty
@@ -2844,13 +2854,19 @@ static void ST_LoadRandomVariants( void )
 		Q_strncpyz( s_stVariants[3].name, "stormtrooper_grenadier", 64 ); s_stVariants[3].weight = 1;
 		s_stNumVariants = 4;
 		s_stTotalWeight = 10;
+		Com_Printf( S_COLOR_YELLOW"ST_LoadRandomVariants: using hardcoded fallback variant list\n" );
+	}
+
+	Com_Printf( "ST_LoadRandomVariants: loaded %d variant(s), totalWeight=%d\n", s_stNumVariants, s_stTotalWeight );
+	for ( int i = 0; i < s_stNumVariants; i++ )
+	{
+		Com_Printf( "  [%d] %s (weight %d)\n", i, s_stVariants[i].name, s_stVariants[i].weight );
 	}
 }
 
 void SP_NPC_StormtrooperRandom( gentity_t *self )
 {
-	if ( !s_stNumVariants )
-		ST_LoadRandomVariants();
+	ST_LoadRandomVariants();
 
 	int roll = Q_irand( 0, s_stTotalWeight - 1 );
 	int cumulative = 0;
@@ -2864,6 +2880,7 @@ void SP_NPC_StormtrooperRandom( gentity_t *self )
 			break;
 		}
 	}
+	Com_Printf( "SP_NPC_StormtrooperRandom: roll=%d/%d -> %s\n", roll, s_stTotalWeight, self->NPC_type );
 
 	SP_NPC_spawner( self );
 }
