@@ -9014,7 +9014,7 @@ static void PM_FinishWeaponChange( void ) {
 	{
 		trueSwitch = qfalse;
 	}
-	
+
 	if ( trueSwitch && pm->ps->weapon == WP_EMPLACED_GUN && !(pm->ps->eFlags & EF_LOCKED_TO_WEAPON) )
 	{
 		gitem_t *item;
@@ -9298,7 +9298,7 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 
 	if ( newMove == LS_READY )
 	{
-		if ( pm->ps->saberBlockingTime > cg.time )
+		if ( pm->ps->saberBlockingTime > cg.time && !in_camera )
 		{
 			manualBlocking = qtrue;
 			if ( !pm->ps->SaberActive() )
@@ -12459,7 +12459,8 @@ void PM_WeaponLightsaber(void)
 	// check for weapon change
 	// can't change if weapon is firing, but can change again if lowering or raising
 	if ( (pm->ps->weaponTime <= 0 || pm->ps->weaponstate != WEAPON_FIRING) && pm->ps->weaponstate != WEAPON_CHARGING_ALT && pm->ps->weaponstate != WEAPON_CHARGING) {
-		if ( pm->ps->weapon != pm->cmd.weapon ) {
+		if ( pm->ps->weapon != pm->cmd.weapon
+			&& (!pm->ps->viewEntity || pm->ps->viewEntity >= ENTITYNUM_WORLD) ) {
 			PM_BeginWeaponChange( pm->cmd.weapon );
 		}
 	}
@@ -14824,6 +14825,7 @@ void PM_AdjustAttackStates( pmove_t *pm )
 
 	if ( !g_saberAutoBlocking->integer
 		&& !g_saberNewControlScheme->integer
+		&& !in_camera
 		&& (pm->cmd.buttons&BUTTON_SABERBLOCK)
 		&& pm->ps->weapon == WP_SABER )
 	{

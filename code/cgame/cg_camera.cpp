@@ -29,6 +29,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../game/g_roff.h"
 
 bool		in_camera = false;
+static bool	s_saberWasActive = false;
 camera_t	client_camera={};
 extern qboolean	player_locked;
 
@@ -103,6 +104,8 @@ void CGCam_Enable( void )
 
 	if ( g_entities[0].inuse && g_entities[0].client )
 	{
+		s_saberWasActive = g_entities[0].client->ps.SaberActive();
+
 		//Player zero not allowed to do anything
 		VectorClear( g_entities[0].client->ps.velocity );
 		g_entities[0].contents = 0;
@@ -163,6 +166,10 @@ void CGCam_Disable( void )
 	if ( g_entities[0].inuse && g_entities[0].client )
 	{
 		g_entities[0].contents = CONTENTS_BODY;//MASK_PLAYERSOLID;
+		if ( !s_saberWasActive )
+		{
+			g_entities[0].client->ps.SaberDeactivate();
+		}
 	}
 
 	gi.SendServerCommand( 0, "cts");
