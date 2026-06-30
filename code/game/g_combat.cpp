@@ -6762,6 +6762,17 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 			g_lastClientDamaged = targ;
 		}
 
+		if ( targ->s.number == 0 && attacker && attacker->NPC && attacker->NPC->group )
+		{
+			AIGroupInfo_t *grp = attacker->NPC->group;
+			int boost = ( asave > 0 && take == 0 ) ? 1 : ( take > 0 ? 3 : 0 );
+			if ( boost > 0 )
+			{
+				grp->moraleAdjust += boost;
+				if ( grp->moraleAdjust > 30 ) grp->moraleAdjust = 30;
+			}
+		}
+
 		//TEMP HACK FOR PLAYER LOOK AT ENEMY CODE
 		//FIXME: move this to a player pain func?
 		if ( targ->s.number == 0 )

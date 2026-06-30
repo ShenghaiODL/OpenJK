@@ -385,16 +385,12 @@ void NPC_ST_SayMovementSpeech( void )
 	{
 		return;
 	}
-	if ( NPCInfo->group &&
-		NPCInfo->group->commander &&
-		NPCInfo->group->commander->client &&
-		NPCInfo->group->commander->client->NPC_class == CLASS_IMPERIAL &&
-		!Q_irand( 0, 3 ) )
-	{//imperial (commander) gives the order
+	if ( NPCInfo->group && NPCInfo->group->commander && !Q_irand( 0, 3 ) )
+	{//commander gives the order on a 25% chance
 		ST_Speech( NPCInfo->group->commander, NPCInfo->movementSpeech, NPCInfo->movementSpeechChance );
 	}
 	else
-	{//really don't want to say this unless we can actually get there...
+	{
 		ST_Speech( NPC, NPCInfo->movementSpeech, NPCInfo->movementSpeechChance );
 	}
 
@@ -1372,29 +1368,6 @@ void NPC_BSST_Patrol( void )
 
 /*
 -------------------------
-NPC_BSST_Idle
--------------------------
-*/
-/*
-void NPC_BSST_Idle( void )
-{
-	int alertEvent = NPC_CheckAlertEvents( qtrue, qtrue );
-
-	//There is an event to look at
-	if ( alertEvent >= 0 )
-	{
-		NPC_ST_InvestigateEvent( alertEvent, qfalse );
-		NPC_UpdateAngles( qtrue, qtrue );
-		return;
-	}
-
-	TIMER_Set( NPC, "roamTime", 2000 + Q_irand( 1000, 2000 ) );
-
-	NPC_UpdateAngles( qtrue, qtrue );
-}
-*/
-/*
--------------------------
 ST_CheckMoveState
 -------------------------
 */
@@ -1520,6 +1493,9 @@ void ST_ResolveBlockedShot( int hit )
 			{
 				int strafeTime = Q_irand( 300, 700 );
 				TIMER_Set( NPC, side < 0 ? "strafeLeft" : "strafeRight", strafeTime );
+				// Extend the search debounce to cover the strafe plus a 1–2s hold,
+				// so NPCs don't immediately re-strafe as soon as they stop moving.
+				TIMER_Set( NPC, "angleSearchDebounce", strafeTime + Q_irand( 1000, 2000 ) );
 				return;
 			}
 		}
@@ -1527,7 +1503,7 @@ void ST_ResolveBlockedShot( int hit )
 	TIMER_Set( NPC, "roamTime", -1 );
 	TIMER_Set( NPC, "stick", -1 );
 	TIMER_Set( NPC, "duck", -1 );
-	TIMER_Set( NPC, "attakDelay", Q_irand( 1000, 3000 ) );
+	TIMER_Set( NPC, "attackDelay", Q_irand( 1000, 3000 ) );
 }
 
 /*
@@ -1772,47 +1748,21 @@ int ST_GetCPFlags( void )
 	int cpFlags = 0;
 	if ( NPC && NPCInfo->group )
 	{
-		if ( NPC == NPCInfo->group->commander && NPC->client->NPC_class == CLASS_IMPERIAL )
-		{//imperials hang back and give orders
+		// Commander (any rank) hangs back and directs the squad.
+		if ( NPC == NPCInfo->group->commander )
+		{
 			if ( NPCInfo->group->numGroup > 1 && Q_irand( -3, NPCInfo->group->numGroup ) > 1 )
-			{//FIXME: make sure he;s giving orders with these lines
-				if ( Q_irand( 0, 1 ) )
-				{
-					ST_Speech( NPC, SPEECH_CHASE, 0.5 );
-				}
-				else
-				{
-					ST_Speech( NPC, SPEECH_YELL, 0.5 );
-				}
-			}
-			cpFlags = (CP_CLEAR|CP_COVER|CP_AVOID|CP_SAFE|CP_RETREAT);
-		}
-		else if ( NPCInfo->group->morale < 0 )
-		{//hide
-			cpFlags = (CP_COVER|CP_AVOID|CP_SAFE|CP_RETREAT);
-			/*
-			if ( NPC->client->NPC_class == CLASS_SABOTEUR && !Q_irand( 0, 3 ) )
 			{
-				Saboteur_Cloak( NPC );
+				ST_Speech( NPC, Q_irand( 0, 1 ) ? SPEECH_CHASE : SPEECH_YELL, 0.5f );
 			}
-			*/
+			return (CP_CLEAR|CP_COVER|CP_AVOID|CP_SAFE|CP_RETREAT);
 		}
-/*		else if ( NPCInfo->group->morale < NPCInfo->group->numGroup )
-		{//morale is low for our size
-			int moraleDrop = NPCInfo->group->numGroup - NPCInfo->group->morale;
-			if ( moraleDrop < -6 )
-			{//flee (no clear shot needed)
-				cpFlags = (CP_FLEE|CP_RETREAT|CP_COVER|CP_AVOID|CP_SAFE);
-			}
-			else if ( moraleDrop < -3 )
-			{//retreat (no clear shot needed)
-				cpFlags = (CP_RETREAT|CP_COVER|CP_AVOID|CP_SAFE);
-			}
-			else if ( moraleDrop < 0 )
-			{//cover (no clear shot needed)
-				cpFlags = (CP_COVER|CP_AVOID|CP_SAFE);
-			}
-		}*/
+
+		if ( NPCInfo->group->morale < 0 )
+		{
+			ST_Speech( NPC, SPEECH_COVER, 0.9f );
+			cpFlags = (CP_COVER|CP_AVOID|CP_SAFE|CP_RETREAT);
+		}
 		else
 		{
 			bool enemySaber = NPC->enemy && NPC->enemy->client
@@ -1820,57 +1770,26 @@ int ST_GetCPFlags( void )
 			                  && NPC->enemy->client->ps.SaberActive();
 			bool underFire  = !TIMER_Done( NPC, "underFire" );
 			if ( enemySaber || underFire )
-			{//saber threat or took recent fire: prioritize cover
+			{
 				cpFlags = (CP_COVER|CP_AVOID|CP_SAFE|CP_DUCK);
 			}
 			else
 			{
 				int moraleBoost = NPCInfo->group->morale - NPCInfo->group->numGroup;
-				if ( moraleBoost > 10 )
-				{//charge to any one and outflank (no cover needed)
-					cpFlags = (CP_CLEAR|CP_FLANK|CP_APPROACH_ENEMY);
-					//Saboteur_Decloak( NPC );
-				}
-				else if ( moraleBoost > 15 )
-				{//charge to closest one (no cover needed)
-					cpFlags = (CP_CLEAR|CP_CLOSEST|CP_APPROACH_ENEMY);
-					/*
-					if ( NPC->client->NPC_class == CLASS_SABOTEUR && !Q_irand( 0, 3 ) )
-					{
-						Saboteur_Decloak( NPC );
-					}
-					*/
-				}
-				else if ( moraleBoost > 10 )
-				{//charge closer (no cover needed)
-					cpFlags = (CP_CLEAR|CP_APPROACH_ENEMY);
-					/*
-					if ( NPC->client->NPC_class == CLASS_SABOTEUR && !Q_irand( 0, 6 ) )
-					{
-						Saboteur_Decloak( NPC );
-					}
-					*/
-				}
+				if      ( moraleBoost > 35 ) cpFlags = (CP_CLEAR|CP_COVER|CP_CLOSEST|CP_APPROACH_ENEMY);
+				else if ( moraleBoost > 20 ) cpFlags = (CP_CLEAR|CP_COVER|CP_FLANK|CP_APPROACH_ENEMY);
+				else if ( moraleBoost > 10 ) cpFlags = (CP_CLEAR|CP_COVER|CP_APPROACH_ENEMY);
 			}
 		}
 	}
 	if ( !cpFlags )
 	{
-		//at some medium level of morale
-		switch( Q_irand( 0, 3 ) )
+		switch ( Q_irand( 0, 3 ) )
 		{
-		case 0://just take the nearest one
-			cpFlags = (CP_CLEAR|CP_COVER|CP_NEAREST);
-			break;
-		case 1://take one closer to the enemy
-			cpFlags = (CP_CLEAR|CP_COVER|CP_APPROACH_ENEMY);
-			break;
-		case 2://take the one closest to the enemy
-			cpFlags = (CP_CLEAR|CP_COVER|CP_CLOSEST|CP_APPROACH_ENEMY);
-			break;
-		case 3://take the one on the other side of the enemy
-			cpFlags = (CP_CLEAR|CP_COVER|CP_FLANK|CP_APPROACH_ENEMY);
-			break;
+		case 0: cpFlags = (CP_CLEAR|CP_COVER|CP_NEAREST);                   break;
+		case 1: cpFlags = (CP_CLEAR|CP_COVER|CP_APPROACH_ENEMY);            break;
+		case 2: cpFlags = (CP_CLEAR|CP_COVER|CP_CLOSEST|CP_APPROACH_ENEMY); break;
+		case 3: cpFlags = (CP_CLEAR|CP_COVER|CP_FLANK|CP_APPROACH_ENEMY);   break;
 		}
 	}
 	if ( NPC && (NPCInfo->scriptFlags&SCF_USE_CP_NEAREST) )
@@ -2061,6 +1980,35 @@ void ST_Commander( void )
 	if ( group->lastSeenEnemyTime < level.time - 7000 )
 	{//no-one has seen the enemy for at least 10 seconds!  Should send a scout
 		enemyLost = qtrue;
+	}
+
+	// Morale tier transition — commander announces shift in aggression
+	{
+		int newTier;
+		if ( group->morale < 0 )
+			newTier = 0;
+		else
+		{
+			int moraleBoost = group->morale - group->numGroup;
+			if      ( moraleBoost > 35 ) newTier = 4;
+			else if ( moraleBoost > 20 ) newTier = 3;
+			else if ( moraleBoost > 10 ) newTier = 2;
+			else                         newTier = 1;
+		}
+		if ( newTier != group->moraleTier && group->commander && group->commander->NPC )
+		{
+			if ( newTier > group->moraleTier )
+			{
+				static const int riseSpeech[] = { SPEECH_CHASE, SPEECH_OUTFLANK, SPEECH_OUTFLANK, SPEECH_YELL };
+				ST_Speech( group->commander, riseSpeech[newTier - 1], 0.3f );
+			}
+			else
+			{
+				static const int fallSpeech[] = { SPEECH_ESCAPING, SPEECH_COVER, SPEECH_COVER, SPEECH_COVER };
+				ST_Speech( group->commander, fallSpeech[newTier], 0.3f );
+			}
+			group->moraleTier = newTier;
+		}
 	}
 
 	//Go through the list:
@@ -2271,7 +2219,7 @@ void ST_Commander( void )
 			&& TIMER_Done( NPC, "combatPointTime" ) )
 		{
 			cpFlags |= (CP_CLEAR|CP_COVER);
-			TIMER_Set( NPC, "combatPointTime", Q_irand( 4000, 8000 ) );
+			TIMER_Set( NPC, "combatPointTime", Q_irand( 8000, 14000 ) );
 		}
 
 		cpFlags &= ~CP_NEAREST;
@@ -2359,9 +2307,9 @@ void ST_Commander( void )
 					NPC_SetMoveGoal( NPC, coverPos, 16, qtrue, -1, NULL );
 					AI_GroupUpdateSquadstates( group, NPC, SQUAD_TRANSITION );
 					// Buddy-pair: push closest squadmate into suppressive fire while we move.
-					if ( NPCInfo->group->member[0].closestBuddy >= 0 )
+					if ( group->member[i].closestBuddy >= 0 )
 					{
-						int buddyIdx = NPCInfo->group->member[0].closestBuddy;
+						int buddyIdx = group->member[i].closestBuddy;
 						gentity_t *buddy = &g_entities[ group->member[buddyIdx].number ];
 						if ( buddy != NPC && buddy->NPC
 						     && buddy->NPC->squadState != SQUAD_STAND_AND_SHOOT
@@ -2371,6 +2319,11 @@ void ST_Commander( void )
 							TIMER_Set( buddy, "attackDelay", Q_irand( 0, 200 ) );
 						}
 					}
+				}
+				else
+				{
+					group->moraleAdjust -= 2;
+				if ( group->moraleAdjust < -20 ) group->moraleAdjust = -20;
 				}
 			}
 		}
@@ -2539,20 +2492,9 @@ void NPC_BSST_Attack( void )
 				if ( TIMER_Done( NPC, "strafeDebounce" ) )
 				{
 					int strafeTime = Q_irand( 400, 900 );
-					TIMER_Set( NPC, "strafeDebounce", strafeTime + Q_irand( 600, 1200 ) );
+					// Pause 1–2s after the strafe ends before strafing again.
+					TIMER_Set( NPC, "strafeDebounce", strafeTime + Q_irand( 1000, 2000 ) );
 					qboolean goLeft = (qboolean)Q_irand( 0, 1 );
-					if ( NPCInfo->group )
-					{
-						int buddyIdx = NPCInfo->group->member[0].closestBuddy;
-						gentity_t *buddy = &g_entities[ NPCInfo->group->member[buddyIdx].number ];
-						if ( buddy != NPC )
-						{
-							vec3_t tobuddy, right;
-							VectorSubtract( buddy->currentOrigin, NPC->currentOrigin, tobuddy );
-							AngleVectors( NPC->client->ps.viewangles, NULL, right, NULL );
-							goLeft = (qboolean)( DotProduct( tobuddy, right ) > 0.0f );
-						}
-					}
 					TIMER_Set( NPC, goLeft ? "strafeLeft" : "strafeRight", strafeTime );
 				}
 			}
@@ -2767,7 +2709,7 @@ void NPC_BSST_Attack( void )
 			doMove = qfalse;
 		}
 	}
-	else if (NPC->NPC->scriptFlags&SCF_NO_GROUPS)
+	else if (NPCInfo->scriptFlags&SCF_NO_GROUPS)
 	{
 			//	NPCInfo->goalEntity = UpdateGoal();
 

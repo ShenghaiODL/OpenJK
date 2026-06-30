@@ -160,6 +160,7 @@ public:
 	int			morale;
 	int			moraleAdjust;
 	int			moraleDebounce;
+	int			moraleTier;
 	int			memberValidateTime;
 	int			activeMemberNum;
 	gentity_t	*commander;
@@ -182,6 +183,7 @@ public:
 		saved_game.write<int32_t>(morale);
 		saved_game.write<int32_t>(moraleAdjust);
 		saved_game.write<int32_t>(moraleDebounce);
+		saved_game.write<int32_t>(moraleTier);
 		saved_game.write<int32_t>(memberValidateTime);
 		saved_game.write<int32_t>(activeMemberNum);
 		saved_game.write<int32_t>(commander);
@@ -204,6 +206,7 @@ public:
 		saved_game.read<int32_t>(morale);
 		saved_game.read<int32_t>(moraleAdjust);
 		saved_game.read<int32_t>(moraleDebounce);
+		saved_game.read<int32_t>(moraleTier);
 		saved_game.read<int32_t>(memberValidateTime);
 		saved_game.read<int32_t>(activeMemberNum);
 		saved_game.read<int32_t>(commander);

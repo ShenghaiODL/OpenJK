@@ -545,8 +545,16 @@ void AI_SetNewGroupCommander( AIGroupInfo_t *group )
 	{
 		member = &g_entities[group->member[i].number];
 
-		if ( !group->commander || (member && member->NPC && group->commander->NPC && member->NPC->rank > group->commander->NPC->rank) )
-		{//keep track of highest rank
+		if ( !group->commander || !group->commander->NPC )
+		{
+			group->commander = member;
+		}
+		else if ( member && member->NPC && member->NPC->rank > group->commander->NPC->rank )
+		{//strictly higher rank always wins
+			group->commander = member;
+		}
+		else if ( member && member->NPC && member->NPC->rank == group->commander->NPC->rank && Q_irand( 0, 1 ) )
+		{//equal rank: random tiebreaker so all-crewman squads get a random acting commander
 			group->commander = member;
 		}
 	}
@@ -925,6 +933,11 @@ qboolean AI_RefreshGroup( AIGroupInfo_t *group )
 			break;
 		}
 	}
+	// Clamp moraleAdjust and total morale.
+	if ( group->moraleAdjust > 30 ) group->moraleAdjust = 30;
+	if ( group->moraleAdjust < -20 ) group->moraleAdjust = -20;
+	if ( group->morale > 50 ) group->morale = 50;
+
 	if ( group->moraleDebounce < level.time )
 	{//slowly degrade whatever moraleAdjusters we may have
 		if ( group->moraleAdjust > 0 )
@@ -935,7 +948,7 @@ qboolean AI_RefreshGroup( AIGroupInfo_t *group )
 		{
 			group->moraleAdjust++;
 		}
-		group->moraleDebounce = level.time + 1000;//FIXME: define?
+		group->moraleDebounce = level.time + 1000;
 	}
 	//mark this group as not having been run this frame
 	group->processed = qfalse;
