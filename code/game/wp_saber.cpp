@@ -9067,8 +9067,8 @@ qboolean WP_ForceThrowable( gentity_t *ent, gentity_t *forwardEnt, gentity_t *se
 				return qfalse;
 			}
 		}
-		if ( cone >= 1.0f )
-		{//must be pointing right at them
+		if ( cone >= 1.0f && Q_stricmp( "limb", ent->classname ) != 0 )
+		{//must be pointing right at them (gibs are exempt - too small/flat to reliably land a pixel-precise crosshair trace on)
 			if ( ent != forwardEnt )
 			{//must be the person I'm looking right at
 				if ( ent->client && !pull
@@ -10263,6 +10263,10 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 						{
 							knockback = 100;
 						}
+					}
+					if ( Q_stricmp( "limb", push_list[x]->classname ) == 0 )
+					{//gibs are small and light - don't let them go flying as hard as a full ragdoll/prop
+						knockback *= 0.4f;
 					}
 					//FIXME: if pull a FL_FORCE_PULLABLE_ONLY, clear the flag, assuming it's no longer in solid?  or check?
 					VectorCopy( push_list[x]->currentOrigin, push_list[x]->s.pos.trBase );

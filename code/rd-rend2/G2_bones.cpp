@@ -1359,7 +1359,7 @@ static int G2_Set_Bone_Angles_Rag(
 		bone.boneBlendStart = bone.ragStartTime;
 		bone.boneBlendTime = blendTime;
 		bone.radius=radius;
-		bone.weight=1.0f;
+		bone.weight=pow(radius,1.7f);
 
 		//init the others to valid values
 		bone.epGravFactor = 0;

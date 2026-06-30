@@ -51,6 +51,7 @@ extern gentity_t *player;
 extern cvar_t	*debug_subdivision;
 extern cvar_t	*g_dismemberProbabilities;
 extern cvar_t   *g_broadsword;
+extern cvar_t	*g_corpseRemovalTime;
 
 gentity_t *g_lastClientDamaged;
 
@@ -1650,17 +1651,22 @@ void LimbThink( gentity_t *ent )
 	{//stopped
 		if ( level.time > ent->s.apos.trTime + ent->s.apos.trDuration )
 		{
-			if (ent->owner && ent->owner->m_pVehicle)
+			if ( g_corpseRemovalTime->integer > 0 )
 			{
-				ent->nextthink = level.time + Q_irand( 10000, 15000 );
+				int removalDelay = g_corpseRemovalTime->integer * 1000;
+				if (ent->owner && ent->owner->m_pVehicle)
+				{
+					removalDelay += Q_irand( 5000, 10000 );
+				}
+				else
+				{
+					removalDelay += Q_irand( 0, 5000 );
+				}
+				ent->nextthink = level.time + removalDelay;
+				ent->e_ThinkFunc = thinkF_G_FreeEntity;
+				//FIXME: these keep drawing for a frame or so after being freed?!  See them lerp to origin of world...
 			}
-			else
-			{
-				ent->nextthink = level.time + Q_irand( 5000, 15000 );
-			}
-
-			ent->e_ThinkFunc = thinkF_G_FreeEntity;
-			//FIXME: these keep drawing for a frame or so after being freed?!  See them lerp to origin of world...
+			// else: g_corpseRemovalTime <= 0 means never remove
 		}
 		else
 		{
