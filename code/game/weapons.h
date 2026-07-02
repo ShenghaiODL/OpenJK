@@ -87,6 +87,24 @@ typedef enum //# weapon_e
 	WP_Z6_ROTARY,
 	WP_CYCLER_RIFLE,
 
+	// Reserved, unassigned slots for new data-defined weapons (weapons.dat/.wpn blocks
+	// reusing an existing missileFuncName behavior) with no engine recompile required.
+	WP_CUSTOM_1,
+	WP_CUSTOM_2,
+	WP_CUSTOM_3,
+	WP_CUSTOM_4,
+	WP_CUSTOM_5,
+	WP_CUSTOM_6,
+	WP_CUSTOM_7,
+	WP_CUSTOM_8,
+	WP_CUSTOM_9,
+	WP_CUSTOM_10,
+	WP_CUSTOM_11,
+	WP_CUSTOM_12,
+	WP_CUSTOM_13,
+	WP_CUSTOM_14,
+	WP_CUSTOM_15,
+	WP_CUSTOM_16,
 
 	//# #eol
 	WP_NUM_WEAPONS
@@ -112,6 +130,18 @@ typedef enum //# ammo_e
 	AMMO_MAX
 } ammo_t;
 
+
+// Player loadout classes. WPCLASS_NONE means "not restricted by the loadout system"
+// (melee/vehicle/turret/emplaced weapons, and the saber, which is wired through its own
+// dedicated pickup path and never tagged here).
+typedef enum
+{
+	WPCLASS_NONE = 0,
+	WPCLASS_PISTOL,
+	WPCLASS_MEDIUM,
+	WPCLASS_HEAVY,
+	WPCLASS_THROWABLE
+} weaponClass_t;
 
 typedef struct weaponData_s
 {
@@ -170,6 +200,8 @@ typedef struct weaponData_s
 	
 	bool	bNoHandModel;
 	char	skinPath[MAX_QPATH];
+
+	weaponClass_t	loadoutClass;	// loadout slot this weapon occupies (WPCLASS_NONE = unrestricted)
 
 } weaponData_t;
 

@@ -2868,13 +2868,20 @@ void NPC_BSST_Attack( void )
 			shoot = qfalse;
 		}
 	}
+	// Saboteurs can fire while cloaked (see NPC_combat.cpp's cloaked-fire exemption for
+	// CLASS_SABOTEUR), but still need to actually decloak once their "decloakwait" timer
+	// (set in NPC_combat.cpp when they engaged) expires. Nothing else polls this once
+	// combat is ongoing, so try every think tick - Saboteur_Decloak() itself no-ops until
+	// the timer's ready, so this is safe/cheap to call unconditionally.
+	if ( NPC->client->NPC_class == CLASS_SABOTEUR )
+	{
+		Saboteur_Decloak( NPC );
+	}
+
 	//FIXME: don't shoot right away!
 	if ( NPC->client->fireDelay )
 	{
-		if ( NPC->client->NPC_class == CLASS_SABOTEUR )
-		{
-			Saboteur_Decloak( NPC );
-		}
+		// Saboteurs can now fire while cloaked - no forced decloak on fire attempts.
 		if ( NPC->s.weapon == WP_ROCKET_LAUNCHER
 			|| (NPC->s.weapon==WP_CONCUSSION&&!(NPCInfo->scriptFlags&SCF_ALT_FIRE)) )
 		{
@@ -2890,10 +2897,7 @@ void NPC_BSST_Attack( void )
 	}
 	else if ( shoot )
 	{//try to shoot if it's time
-		if ( NPC->client->NPC_class == CLASS_SABOTEUR )
-		{
-			Saboteur_Decloak( NPC );
-		}
+		// Saboteurs can now fire while cloaked - no forced decloak before firing.
 		if ( TIMER_Done( NPC, "attackDelay" ) )
 		{
 			if( !(NPCInfo->scriptFlags & SCF_FIRE_WEAPON) ) // we've already fired, no need to do it again here

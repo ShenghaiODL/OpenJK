@@ -4921,9 +4921,12 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 				ent->customShader = 0;
 			}
 			else
-			{ //stencil buffer's in use, sorry
-				ent->renderfx = 0;//&= ~(RF_RGB_TINT|RF_ALPHA_FADE);
-				ent->shaderRGBA[0] = ent->shaderRGBA[1] = ent->shaderRGBA[2] = ent->shaderRGBA[3] = 255;
+			{ //stencil buffer's in use, sorry - dim the chrome-shimmer shader instead of
+				//full 255 so it's a faint hint rather than a bright, easy-to-spot reflection
+				ent->renderfx = 0;
+				ent->renderfx |= RF_RGB_TINT;
+				ent->shaderRGBA[0] = ent->shaderRGBA[1] = ent->shaderRGBA[2] = 90;
+				ent->shaderRGBA[3] = 255;
 				ent->customShader = cgs.media.cloakedShader;
 				cgi_R_AddRefEntityToScene( ent );
 			}

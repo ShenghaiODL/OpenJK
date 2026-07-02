@@ -393,6 +393,7 @@ void Cmd_Score_f (gentity_t *ent);
 void G_RunItem( gentity_t *ent );
 void RespawnItem( gentity_t *ent );
 gentity_t *Drop_Item( gentity_t *ent, gitem_t *item, float angle, qboolean copytarget );
+void G_DropClassWeapon( gentity_t *self, int weaponTag );
 void G_SpawnItem (gentity_t *ent, gitem_t *item);
 void FinishSpawningItem( gentity_t *ent );
 void	Add_Ammo (gentity_t *ent, int weapon, int count);
@@ -524,6 +525,7 @@ void TeleportPlayer( gentity_t *player, vec3_t origin, vec3_t angles );
 void WP_LoadWeaponParms (void);
 
 void IT_LoadItemParms( void );
+void G_SynthesizeCustomWeaponItems( void );
 
 //
 // g_client.c

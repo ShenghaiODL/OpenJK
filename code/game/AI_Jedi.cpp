@@ -98,6 +98,7 @@ extern cvar_t	*g_saberRealisticCombat;
 extern cvar_t	*d_slowmodeath;
 extern cvar_t	*g_saberNewControlScheme;
 extern int parryDebounce[];
+extern int missileParryDebounce[];
 
 //Locals
 static void Jedi_Aggression( gentity_t *self, int change );
@@ -2656,6 +2657,10 @@ int Jedi_ReCalcParryTime( gentity_t *self, evasionType_t evasionType )
 	}
 	if ( !self->s.number )
 	{//player
+		if ( evasionType == EVASION_MISSILE_PARRY )
+		{
+			return missileParryDebounce[self->client->ps.forcePowerLevel[FP_SABER_DEFENSE]];
+		}
 		return parryDebounce[self->client->ps.forcePowerLevel[FP_SABER_DEFENSE]];
 	}
 	else if ( self->NPC )

@@ -7008,6 +7008,38 @@ static void	UI_LoadMissionSelectMenu( const char *cvarName )
 }
 
 // Update the player weapons with the chosen weapon
+// weaponData[] (populated from weapons.dat's "weaponslot" field) is only defined in
+// code/ui/gameinfo.cpp, which isn't compiled into this executable target - referencing it
+// directly here fails to link. This menu only ever deals with a fixed, known set of
+// weapons, so a small local table avoids the cross-module dependency entirely. Keep this
+// in sync with the "weaponslot" tags in Mod Files/ext_data/weapons.dat.
+static weaponClass_t UI_GetWeaponLoadoutClass( int weaponIndex )
+{
+	switch ( weaponIndex )
+	{
+	case WP_BLASTER_PISTOL:
+	case WP_BRYAR_PISTOL:
+		return WPCLASS_PISTOL;
+	case WP_BLASTER:
+	case WP_CYCLER_RIFLE:
+	case WP_BOWCASTER:
+	case WP_REPEATER:
+	case WP_DEMP2:
+		return WPCLASS_MEDIUM;
+	case WP_FLECHETTE:
+	case WP_CONCUSSION:
+	case WP_ROCKET_LAUNCHER:
+	case WP_Z6_ROTARY:
+		return WPCLASS_HEAVY;
+	case WP_THERMAL:
+	case WP_TRIP_MINE:
+	case WP_DET_PACK:
+		return WPCLASS_THROWABLE;
+	default:
+		return WPCLASS_NONE;
+	}
+}
+
 static void	UI_AddWeaponSelection ( const int weaponIndex, const int ammoIndex, const int ammoAmount, const char *iconItemName,const char *litIconItemName, const char *hexBackground, const char *soundfile )
 {
 	itemDef_s  *item, *iconItem,*litIconItem;
@@ -7035,6 +7067,22 @@ static void	UI_AddWeaponSelection ( const int weaponIndex, const int ammoIndex, 
 	{
 		UI_RemoveWeaponSelection ( 2 );
 		return;
+	}
+
+	// Class-based loadout: only one weapon per loadout class. If this pick shares a
+	// class with a weapon already sitting in one of the two bonus slots, bump that one
+	// out first so the new pick takes its place, same as an in-mission swap would.
+	weaponClass_t newWeaponClass = UI_GetWeaponLoadoutClass( weaponIndex );
+	if ( newWeaponClass != WPCLASS_NONE )
+	{
+		if ( (uiInfo.selectedWeapon1 > WP_NONE) && (UI_GetWeaponLoadoutClass( uiInfo.selectedWeapon1 ) == newWeaponClass) )
+		{
+			UI_RemoveWeaponSelection ( 1 );
+		}
+		else if ( (uiInfo.selectedWeapon2 > WP_NONE) && (UI_GetWeaponLoadoutClass( uiInfo.selectedWeapon2 ) == newWeaponClass) )
+		{
+			UI_RemoveWeaponSelection ( 2 );
+		}
 	}
 
 	// See if either slot is empty

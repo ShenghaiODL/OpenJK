@@ -257,6 +257,38 @@ static void IT_Name(const char **holdBuf)
 		itemNum = ITM_GOODIE_KEY_PICKUP;
 	else if (!Q_stricmp(tokenStr,"ITM_SECURITY_KEY_PICKUP"))
 		itemNum = ITM_SECURITY_KEY_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_1_PICKUP"))
+		itemNum = ITM_CUSTOM_1_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_2_PICKUP"))
+		itemNum = ITM_CUSTOM_2_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_3_PICKUP"))
+		itemNum = ITM_CUSTOM_3_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_4_PICKUP"))
+		itemNum = ITM_CUSTOM_4_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_5_PICKUP"))
+		itemNum = ITM_CUSTOM_5_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_6_PICKUP"))
+		itemNum = ITM_CUSTOM_6_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_7_PICKUP"))
+		itemNum = ITM_CUSTOM_7_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_8_PICKUP"))
+		itemNum = ITM_CUSTOM_8_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_9_PICKUP"))
+		itemNum = ITM_CUSTOM_9_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_10_PICKUP"))
+		itemNum = ITM_CUSTOM_10_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_11_PICKUP"))
+		itemNum = ITM_CUSTOM_11_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_12_PICKUP"))
+		itemNum = ITM_CUSTOM_12_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_13_PICKUP"))
+		itemNum = ITM_CUSTOM_13_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_14_PICKUP"))
+		itemNum = ITM_CUSTOM_14_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_15_PICKUP"))
+		itemNum = ITM_CUSTOM_15_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_CUSTOM_16_PICKUP"))
+		itemNum = ITM_CUSTOM_16_PICKUP;
 	else
 	{
 		itemNum = 0;
@@ -399,6 +431,38 @@ static void IT_Tag(const char **holdBuf)
 		tag = WP_Z6_ROTARY;
 	else if (!Q_stricmp(tokenStr,"WP_CYCLER_RIFLE"))
 		tag = WP_CYCLER_RIFLE;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_1"))
+		tag = WP_CUSTOM_1;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_2"))
+		tag = WP_CUSTOM_2;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_3"))
+		tag = WP_CUSTOM_3;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_4"))
+		tag = WP_CUSTOM_4;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_5"))
+		tag = WP_CUSTOM_5;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_6"))
+		tag = WP_CUSTOM_6;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_7"))
+		tag = WP_CUSTOM_7;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_8"))
+		tag = WP_CUSTOM_8;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_9"))
+		tag = WP_CUSTOM_9;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_10"))
+		tag = WP_CUSTOM_10;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_11"))
+		tag = WP_CUSTOM_11;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_12"))
+		tag = WP_CUSTOM_12;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_13"))
+		tag = WP_CUSTOM_13;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_14"))
+		tag = WP_CUSTOM_14;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_15"))
+		tag = WP_CUSTOM_15;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_16"))
+		tag = WP_CUSTOM_16;
 	else if (!Q_stricmp(tokenStr,"AMMO_FORCE"))
 		tag = AMMO_FORCE;
 	else if (!Q_stricmp(tokenStr,"AMMO_BLASTER"))
@@ -724,5 +788,50 @@ void IT_LoadItemParms (void)
 	IT_ParseParms(buffer);
 
 	gi.FS_FreeFile( buffer );	//let go of the buffer
+}
+
+// Synthesizes a minimal bg_itemlist entry for any weapon_t slot with no matching item from
+// items.dat - unconditionally, regardless of whether a real weapons.dat/.wpn block exists
+// for it yet. This must cover *reserved-but-still-empty* slots too (currently every
+// WP_CUSTOM_1..16 slot, since none has a weapons.dat block defined), otherwise anything
+// that references an as-yet-unassigned reserved slot (e.g. save/load's per-weapon-flag
+// round-trip) still hits FindItemForWeapon()'s fatal "couldn't find item" error. Must run
+// after IT_LoadItemParms() (see call site in G_InitGame) so real items.dat entries are
+// already in bg_itemlist and don't get a duplicate synthesized on top. Once a real
+// weapons.dat/.wpn block AND a real items.dat entry exist for a slot, this is a no-op for it.
+void G_SynthesizeCustomWeaponItems( void )
+{
+	int nextFreeItem = ITM_CUSTOM_1_PICKUP;
+
+	for ( int wp = WP_SABER; wp < WP_NUM_WEAPONS; wp++ )
+	{
+		qboolean hasItem = qfalse;
+		for ( int i = 1; i < ITM_NUM_ITEMS; i++ )
+		{
+			if ( bg_itemlist[i].giType == IT_WEAPON && bg_itemlist[i].giTag == wp )
+			{
+				hasItem = qtrue;
+				break;
+			}
+		}
+		if ( hasItem )
+		{//already has a real item from items.dat
+			continue;
+		}
+
+		if ( nextFreeItem > ITM_CUSTOM_16_PICKUP )
+		{//out of reserved placeholder slots
+			gi.Printf( S_COLOR_YELLOW"WARNING: no reserved item slot left to synthesize for weapon %i - add an items.dat entry for it\n", wp );
+			continue;
+		}
+
+		gitem_t *item = &bg_itemlist[nextFreeItem++];
+		item->classname = G_NewString( va( "weapon_custom%i", wp ) );
+		item->giType = IT_WEAPON;
+		item->giTag = wp;
+		item->mins[0] = -16; item->mins[1] = -16; item->mins[2] = -2;
+		item->maxs[0] = 16; item->maxs[1] = 16; item->maxs[2] = 16;
+		item->pickup_sound = PICKUPSOUND;
+	}
 }
 

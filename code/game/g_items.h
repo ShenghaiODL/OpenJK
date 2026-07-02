@@ -103,6 +103,26 @@ ITM_SHIELD_LRG_PICKUP,
 ITM_GOODIE_KEY_PICKUP,
 ITM_SECURITY_KEY_PICKUP,
 
+// Reserved placeholder pickups for the WP_CUSTOM_1..16 weapon slots (weapons.h) - keeps
+// FindItemForWeapon()/CG_RegisterWeapon() from fatally erroring before a real weapons.dat
+// block and item are ever assigned to one of these slots.
+ITM_CUSTOM_1_PICKUP,
+ITM_CUSTOM_2_PICKUP,
+ITM_CUSTOM_3_PICKUP,
+ITM_CUSTOM_4_PICKUP,
+ITM_CUSTOM_5_PICKUP,
+ITM_CUSTOM_6_PICKUP,
+ITM_CUSTOM_7_PICKUP,
+ITM_CUSTOM_8_PICKUP,
+ITM_CUSTOM_9_PICKUP,
+ITM_CUSTOM_10_PICKUP,
+ITM_CUSTOM_11_PICKUP,
+ITM_CUSTOM_12_PICKUP,
+ITM_CUSTOM_13_PICKUP,
+ITM_CUSTOM_14_PICKUP,
+ITM_CUSTOM_15_PICKUP,
+ITM_CUSTOM_16_PICKUP,
+
 ITM_NUM_ITEMS
 };
 

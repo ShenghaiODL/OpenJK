@@ -3018,6 +3018,19 @@ void CG_Weapon_f( void )
 		return;
 	}
 
+	CG_SelectWeaponNum( num );
+}
+
+/*
+===============
+CG_SelectWeaponNum
+
+Shared by CG_Weapon_f (literal weapon_t) and CG_WeaponSlot_f (resolved from a loadout
+slot) - handles saber toggle/fallback and the existing throwable/pistol cycle groups.
+===============
+*/
+void CG_SelectWeaponNum( int num )
+{
 	if ( num == WP_SABER )
 	{//lightsaber
 		if ( ! ( cg.snap->ps.weapons[num] ) )
@@ -3148,6 +3161,107 @@ void CG_Weapon_f( void )
 	SetWeaponSelectTime();
 //	cg.weaponSelectTime = cg.time;
 	cg.weaponSelect = num;
+}
+
+/*
+===============
+CG_ResolveWeaponSlot
+
+Class-based loadout: given a slot number (1=saber, 2=pistol, 3=medium, 4=heavy,
+5=throwable), returns the currently-owned weapon_t that occupies that slot, preferring
+the weapon already active if it's in the requested class (so the existing per-weapon
+cycle groups above, e.g. thermal/tripmine/detpack and blaster_pistol/bryar_pistol, keep
+working when the slot key is pressed repeatedly). Returns -1 if nothing owned in that class.
+===============
+*/
+static int CG_ResolveWeaponSlot( int slot )
+{
+	if ( slot == 1 )
+	{
+		return WP_SABER;
+	}
+
+	weaponClass_t wantClass;
+	switch ( slot )
+	{
+	case 2: wantClass = WPCLASS_PISTOL; break;
+	case 3: wantClass = WPCLASS_MEDIUM; break;
+	case 4: wantClass = WPCLASS_HEAVY; break;
+	case 5: wantClass = WPCLASS_THROWABLE; break;
+	default: return -1;
+	}
+
+	int current = cg.snap->ps.weapon;
+	if ( current > WP_NONE && current < WP_NUM_WEAPONS && weaponData[current].loadoutClass == wantClass )
+	{
+		return current;
+	}
+
+	for ( int i = 0; i < WP_NUM_WEAPONS; i++ )
+	{
+		if ( cg.snap->ps.weapons[i] && weaponData[i].loadoutClass == wantClass )
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+/*
+===============
+CG_WeaponSlot_f
+
+Per-slot number-key binding: "weaponslot <1-5>" resolves to whichever owned weapon
+currently occupies that loadout class, then reuses CG_SelectWeaponNum for the actual
+switch/toggle logic. Guard checks mirror CG_Weapon_f.
+===============
+*/
+void CG_WeaponSlot_f( void )
+{
+	if ( cg.weaponSelectTime + 200 > cg.time )
+	{
+		return;
+	}
+
+	if ( !cg.snap ) {
+		return;
+	}
+
+	if( g_entities[0].flags & FL_LOCK_PLAYER_WEAPONS )
+	{
+		CG_PlayerLockedWeaponSpeech( qfalse );
+		return;
+	}
+
+	if( g_entities[0].client && g_entities[0].client->NPC_class == CLASS_ATST )
+	{
+		CG_ToggleATSTWeapon();
+		return;
+	}
+
+	if ( cg.snap->ps.eFlags & EF_LOCKED_TO_WEAPON )
+	{
+		return;
+	}
+
+	if ( cg.snap->ps.viewEntity )
+	{
+		if ( g_entities[cg.snap->ps.viewEntity].client && ( g_entities[cg.snap->ps.viewEntity].client->NPC_class == CLASS_R5D2
+				|| g_entities[cg.snap->ps.viewEntity].client->NPC_class == CLASS_R2D2
+				|| g_entities[cg.snap->ps.viewEntity].client->NPC_class == CLASS_MOUSE ))
+		{
+			return;
+		}
+	}
+
+	int slot = atoi( CG_Argv( 1 ) );
+	int num = CG_ResolveWeaponSlot( slot );
+	if ( num < WP_NONE )
+	{//nothing owned in that class
+		return;
+	}
+
+	CG_SelectWeaponNum( num );
 }
 
 /*

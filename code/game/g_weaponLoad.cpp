@@ -169,6 +169,25 @@ qboolean playerUsableWeapons[WP_NUM_WEAPONS] =
 	qtrue,//WP_Z6_ROTARY,
 	qtrue,//WP_CYCLER_RIFLE,
 
+	// Reserved custom slots - usable once a weapons.dat/.wpn block assigns them; no
+	// weapons.dat block means they stay unowned/unreachable, so qtrue here is harmless.
+	qtrue,//WP_CUSTOM_1,
+	qtrue,//WP_CUSTOM_2,
+	qtrue,//WP_CUSTOM_3,
+	qtrue,//WP_CUSTOM_4,
+	qtrue,//WP_CUSTOM_5,
+	qtrue,//WP_CUSTOM_6,
+	qtrue,//WP_CUSTOM_7,
+	qtrue,//WP_CUSTOM_8,
+	qtrue,//WP_CUSTOM_9,
+	qtrue,//WP_CUSTOM_10,
+	qtrue,//WP_CUSTOM_11,
+	qtrue,//WP_CUSTOM_12,
+	qtrue,//WP_CUSTOM_13,
+	qtrue,//WP_CUSTOM_14,
+	qtrue,//WP_CUSTOM_15,
+	qtrue,//WP_CUSTOM_16,
+
 	//# #eol
 	//WP_NUM_WEAPONS
 };
@@ -232,6 +251,7 @@ void WPN_AltSplashRadius(const char **holdBuf);
 void WPN_WorldModel(const char **holdBuf);
 void WPN_NoHandModel(const char **holdBuf);
 void WPN_SkinFile(const char **holdBuf);
+void WPN_WeaponSlot(const char **holdBuf);
 
 // Legacy weapons.dat force fields
 void WPN_FuncSkip(const char **holdBuf);
@@ -285,6 +305,8 @@ const int defaultDamage[] = {
 	BRYAR_PISTOL_DAMAGE,		// WP_DC15A_RIFLE,
 	REPEATER_DAMAGE,			// WP_Z6_ROTARY,
 	TUSKEN_RIFLE_DAMAGE_HARD,	// WP_CYCLER_RIFLE,
+
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	// WP_CUSTOM_1..16
 };
 
 const int defaultAltDamage[] = {
@@ -329,6 +351,8 @@ const int defaultAltDamage[] = {
 	0,						// WP_DC15A_RIFLE,
 	0,						// WP_Z6_ROTARY,
 	0,						// WP_CYCLER_RIFLE,
+
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	// WP_CUSTOM_1..16
 };
 
 const int defaultSplashDamage[] = {
@@ -373,6 +397,8 @@ const int defaultSplashDamage[] = {
 	0,								// WP_DC15A_RIFLE,
 	0,								// WP_Z6_ROTARY,
 	0,								// WP_CYCLER_RIFLE,
+
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	// WP_CUSTOM_1..16
 };
 
 const float defaultSplashRadius[] = {
@@ -417,6 +443,9 @@ const float defaultSplashRadius[] = {
 	0.0f,							// WP_DC15A_RIFLE,
 	0.0f,							// WP_Z6_ROTARY,
 	0.0f,							// WP_CYCLER_RIFLE,
+
+	0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+	0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,	// WP_CUSTOM_1..16
 };
 
 const int defaultAltSplashDamage[] = {
@@ -461,6 +490,8 @@ const int defaultAltSplashDamage[] = {
 	0,								// WP_DC15A_RIFLE,
 	0,								// WP_Z6_ROTARY,
 	0,								// WP_CYCLER_RIFLE,
+
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	// WP_CUSTOM_1..16
 };
 
 const float defaultAltSplashRadius[] = {
@@ -505,6 +536,9 @@ const float defaultAltSplashRadius[] = {
 	0.0f,							// WP_DC15A_RIFLE,
 	0.0f,							// WP_Z6_ROTARY,
 	0.0f,							// WP_CYCLER_RIFLE,
+
+	0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+	0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,	// WP_CUSTOM_1..16
 };
 
 wpnParms_t WpnParms[] =
@@ -558,6 +592,7 @@ wpnParms_t WpnParms[] =
 	{ "noHandModel",		WPN_NoHandModel },
 	{ "skinFile",			WPN_SkinFile },
 	{ "worldModel",			WPN_WorldModel },
+	{ "weaponslot",			WPN_WeaponSlot },
 
 	// Old legacy files contain these, so we skip them to shut up warnings
 	{ "firingforce",		WPN_FuncSkip },
@@ -654,6 +689,38 @@ void WPN_WeaponType( const char **holdBuf)
 		weaponNum = WP_Z6_ROTARY;
 	else if (!Q_stricmp(tokenStr,"WP_CYCLER_RIFLE"))
 		weaponNum = WP_CYCLER_RIFLE;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_1"))
+		weaponNum = WP_CUSTOM_1;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_2"))
+		weaponNum = WP_CUSTOM_2;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_3"))
+		weaponNum = WP_CUSTOM_3;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_4"))
+		weaponNum = WP_CUSTOM_4;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_5"))
+		weaponNum = WP_CUSTOM_5;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_6"))
+		weaponNum = WP_CUSTOM_6;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_7"))
+		weaponNum = WP_CUSTOM_7;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_8"))
+		weaponNum = WP_CUSTOM_8;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_9"))
+		weaponNum = WP_CUSTOM_9;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_10"))
+		weaponNum = WP_CUSTOM_10;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_11"))
+		weaponNum = WP_CUSTOM_11;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_12"))
+		weaponNum = WP_CUSTOM_12;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_13"))
+		weaponNum = WP_CUSTOM_13;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_14"))
+		weaponNum = WP_CUSTOM_14;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_15"))
+		weaponNum = WP_CUSTOM_15;
+	else if (!Q_stricmp(tokenStr,"WP_CUSTOM_16"))
+		weaponNum = WP_CUSTOM_16;
 	else
 	{
 		weaponNum = 0;
@@ -661,6 +728,33 @@ void WPN_WeaponType( const char **holdBuf)
 	}
 
 	wpnParms.weaponNum = weaponNum;
+}
+
+//--------------------------------------------
+void WPN_WeaponSlot( const char **holdBuf)
+{
+	const char	*tokenStr;
+
+	if (COM_ParseString(holdBuf,&tokenStr))
+	{
+		return;
+	}
+
+	if (!Q_stricmp(tokenStr,"NONE"))
+		weaponData[wpnParms.weaponNum].loadoutClass = WPCLASS_NONE;
+	else if (!Q_stricmp(tokenStr,"PISTOL"))
+		weaponData[wpnParms.weaponNum].loadoutClass = WPCLASS_PISTOL;
+	else if (!Q_stricmp(tokenStr,"MEDIUM"))
+		weaponData[wpnParms.weaponNum].loadoutClass = WPCLASS_MEDIUM;
+	else if (!Q_stricmp(tokenStr,"HEAVY"))
+		weaponData[wpnParms.weaponNum].loadoutClass = WPCLASS_HEAVY;
+	else if (!Q_stricmp(tokenStr,"THROWABLE"))
+		weaponData[wpnParms.weaponNum].loadoutClass = WPCLASS_THROWABLE;
+	else
+	{
+		weaponData[wpnParms.weaponNum].loadoutClass = WPCLASS_NONE;
+		gi.Printf(S_COLOR_YELLOW"WARNING: bad weaponslot in external weapon data '%s'\n", tokenStr);
+	}
 }
 
 //--------------------------------------------
@@ -1624,6 +1718,8 @@ void WPN_SkinFile(const char **holdBuf)
 
 
 //--------------------------------------------
+void WP_LoadWeaponParmsFromDir( void );
+
 static void WP_ParseParms(const char *buffer)
 {
 	const char	*holdBuf;
@@ -1677,4 +1773,39 @@ void WP_LoadWeaponParms (void)
 	WP_ParseParms(buffer);
 
 	gi.FS_FreeFile( buffer );	//let go of the buffer
+
+	WP_LoadWeaponParmsFromDir();
+}
+
+//--------------------------------------------
+// Mirrors the .sab pattern: one weapon per file under ext_data/weapons/*.wpn, using the
+// exact same block grammar as weapons.dat. Runs after weapons.dat so a .wpn file can
+// override a weapons.dat block for the same weapontype if both exist. Optional - if the
+// directory doesn't exist or is empty, weapons.dat remains the sole source.
+void WP_LoadWeaponParmsFromDir( void )
+{
+	char fileList[4096];
+	int fileCnt = gi.FS_GetFileList( "ext_data/weapons", ".wpn", fileList, sizeof(fileList) );
+	if ( fileCnt <= 0 )
+	{
+		return;
+	}
+
+	char *holdChar = fileList;
+	for ( int i = 0; i < fileCnt; i++ )
+	{
+		int fnLen = strlen( holdChar );
+		char *buffer;
+		int len = gi.FS_ReadFile( va( "ext_data/weapons/%s", holdChar ), (void **) &buffer );
+		if ( len == -1 )
+		{
+			gi.Printf( S_COLOR_YELLOW"WARNING: error reading ext_data/weapons/%s\n", holdChar );
+		}
+		else
+		{
+			WP_ParseParms( buffer );
+			gi.FS_FreeFile( buffer );
+		}
+		holdChar += fnLen + 1;
+	}
 }

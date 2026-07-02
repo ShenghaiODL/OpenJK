@@ -1380,7 +1380,10 @@ void NPC_PrecacheWeapons( team_t playerTeam, int spawnflags, char *NPCtype )
 {
 	int weapons = NPC_WeaponsForTeam( playerTeam, spawnflags, NPCtype );
 	gitem_t	*item;
-	for ( int curWeap = WP_SABER; curWeap < WP_NUM_WEAPONS; curWeap++ )
+	// "weapons" is a 32-bit int bitmask (see NPC_WeaponsForTeam) - shifting by >=32 is UB and
+	// aliases back to a low bit on x86 (e.g. 1<<35 behaves as 1<<3/WP_BLASTER), so the loop
+	// must never reach weapon_t values at or above 32.
+	for ( int curWeap = WP_SABER; curWeap < WP_NUM_WEAPONS && curWeap < 32; curWeap++ )
 	{
 		if ( (weapons & ( 1 << curWeap )) )
 		{

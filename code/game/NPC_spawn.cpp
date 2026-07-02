@@ -942,7 +942,10 @@ void NPC_SetWeapons( gentity_t *ent )
 	{
 		ent->client->ps.weapons[i] = 0;
 	}
-	for ( int curWeap = WP_SABER; curWeap < WP_NUM_WEAPONS; curWeap++ )
+	// "weapons" is a 32-bit int bitmask (see NPC_WeaponsForTeam) - shifting by >=32 is UB and
+	// aliases back to a low bit on x86 (e.g. 1<<35 behaves as 1<<3/WP_BLASTER), so the loop
+	// must never reach weapon_t values at or above 32.
+	for ( int curWeap = WP_SABER; curWeap < WP_NUM_WEAPONS && curWeap < 32; curWeap++ )
 	{
 		if ( (weapons & ( 1 << curWeap )) )
 		{
@@ -2857,11 +2860,6 @@ static void ST_LoadRandomVariants( void )
 		Com_Printf( S_COLOR_YELLOW"ST_LoadRandomVariants: using hardcoded fallback variant list\n" );
 	}
 
-	Com_Printf( "ST_LoadRandomVariants: loaded %d variant(s), totalWeight=%d\n", s_stNumVariants, s_stTotalWeight );
-	for ( int i = 0; i < s_stNumVariants; i++ )
-	{
-		Com_Printf( "  [%d] %s (weight %d)\n", i, s_stVariants[i].name, s_stVariants[i].weight );
-	}
 }
 
 void SP_NPC_StormtrooperRandom( gentity_t *self )

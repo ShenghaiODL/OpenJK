@@ -845,6 +845,7 @@ void InitGame(  const char *mapname, const char *spawntarget, int checkSum, cons
 	Pilot_Reset();
 
 	IT_LoadItemParms ();
+	G_SynthesizeCustomWeaponItems();
 
 	ClearRegisteredItems();
 

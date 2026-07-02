@@ -1286,8 +1286,9 @@ void WeaponThink( qboolean inCombat )
 		return;
 	}
 
-	// Can't Fire While Cloaked
-	if (NPC->client &&
+	// Can't Fire While Cloaked - except Saboteurs, who are specifically meant to be able to
+	// fire from cloak (see Saboteur_Cloak/Saboteur_Decloak in AI_Stormtrooper.cpp)
+	if (NPC->client && NPC->client->NPC_class != CLASS_SABOTEUR &&
 		(NPC->client->ps.powerups[PW_CLOAKED] || (level.time<NPC->client->ps.powerups[PW_UNCLOAKING])))
 	{
 		return;

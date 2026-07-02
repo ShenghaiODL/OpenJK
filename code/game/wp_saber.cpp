@@ -351,6 +351,16 @@ int parryDebounce[NUM_FORCE_POWER_LEVELS] =
 	50
 };
 
+// Separate, much shorter recovery window for blocking blaster bolts vs. saber-on-saber
+// parries - repeater firetime is 50ms, so this must stay under that even at low Defense.
+int missileParryDebounce[NUM_FORCE_POWER_LEVELS] =
+{
+	100,
+	50,
+	25,
+	15
+};
+
 float saberAnimSpeedMod[NUM_FORCE_POWER_LEVELS] =
 {
 	0.0f,//if don't even have offense, can't use offense!
@@ -7748,7 +7758,7 @@ void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlo
 			// Longer regen pause for saber attacks since they drain significantly more FP
 			self->client->ps.forcePowerRegenDebounceTime = level.time + ( missileBlock ? 1500 : 2000 );
 		}
-		int parryReCalcTime = Jedi_ReCalcParryTime( self, EVASION_PARRY );
+		int parryReCalcTime = Jedi_ReCalcParryTime( self, missileBlock ? EVASION_MISSILE_PARRY : EVASION_PARRY );
 		if ( self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time + parryReCalcTime )
 		{
 			self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] = level.time + parryReCalcTime;

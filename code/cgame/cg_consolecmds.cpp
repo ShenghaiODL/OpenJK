@@ -247,6 +247,7 @@ static consoleCommand_t	commands[] = {
 	{ "viewpos",			CG_Viewpos_f },
 	{ "weapnext",			CG_NextWeapon_f },
 	{ "weapon",				CG_Weapon_f },
+	{ "weaponslot",			CG_WeaponSlot_f },
 	{ "weapprev",			CG_PrevWeapon_f },
 	{ "writecam",			CG_WriteCam_f },
 	{ "zoom",				CG_ToggleBinoculars },

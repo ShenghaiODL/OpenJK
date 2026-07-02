@@ -5686,6 +5686,7 @@ static const char *g_bindCommands[] = {
 	"centerview",
 	"cg_thirdperson !",
 	"datapad",
+	"dropweapon",
 	"exitview",
 #ifndef JK2_MODE
 	"force_absorb",
@@ -5750,6 +5751,11 @@ static const char *g_bindCommands[] = {
 	"weapon 7",
 	"weapon 8",
 	"weapon 9",
+	"weaponslot 1",
+	"weaponslot 2",
+	"weaponslot 3",
+	"weaponslot 4",
+	"weaponslot 5",
 	"weapprev",
 	"zoom"
 };

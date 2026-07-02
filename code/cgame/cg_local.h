@@ -847,6 +847,8 @@ Ghoul2 Insert End
 void CG_NextWeapon_f( void );
 void CG_PrevWeapon_f( void );
 void CG_Weapon_f( void );
+void CG_SelectWeaponNum( int num );
+void CG_WeaponSlot_f( void );
 void CG_DPNextWeapon_f( void );
 void CG_DPPrevWeapon_f( void );
 void CG_DPNextInventory_f( void );

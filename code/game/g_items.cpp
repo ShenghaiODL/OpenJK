@@ -455,6 +455,36 @@ qboolean Pickup_Saber( gentity_t *self, qboolean hadSaber, gentity_t *pickUpSabe
 }
 
 extern void CG_ChangeWeapon( int num );
+
+// Drops whichever weapon occupies loadoutClassWeapon's slot for self, spawning a pickup
+// entity carrying its current ammo, and clears ownership. Used by the class-loadout swap
+// (Pickup_Weapon) and by the voluntary drop-current-weapon command (Cmd_WeaponDrop_f).
+void G_DropClassWeapon( gentity_t *self, int weaponTag )
+{
+	if ( !self || !self->client || weaponTag <= WP_NONE || weaponTag >= WP_NUM_WEAPONS )
+	{
+		return;
+	}
+
+	gitem_t *item = FindItemForWeapon( (weapon_t)weaponTag );
+	if ( item )
+	{
+		gentity_t *dropped = Drop_Item( self, item, 0, qfalse );
+		if ( dropped )
+		{
+			dropped->count = self->client->ps.ammo[ weaponData[weaponTag].ammoIndex ];
+			dropped->delay = level.time + 500;	// don't let the dropper instantly re-pick this up
+		}
+	}
+
+	self->client->ps.weapons[weaponTag] = 0;
+	if ( self->client->ps.weapon == weaponTag )
+	{
+		self->client->ps.weapon = WP_NONE;
+		self->client->ps.weaponstate = WEAPON_DROPPING;
+	}
+}
+
 int Pickup_Weapon (gentity_t *ent, gentity_t *other)
 {
 	int		quantity;
@@ -486,7 +516,58 @@ int Pickup_Weapon (gentity_t *ent, gentity_t *other)
 	{
 		hadWeapon = qtrue;
 	}
+
+	// Class-based loadout: the player only carries one weapon per loadout class at a
+	// time. Walking over a *different* weapon of a class already held does nothing
+	// (stays in the world) unless the player is explicitly holding +use, in which case
+	// it's a deliberate swap: drop the currently-held weapon of that class first.
+	qboolean didClassSwap = qfalse;
+	if ( !other->s.number && !hadWeapon && ent->item->giTag != WP_SABER )
+	{
+		weaponClass_t pickupClass = weaponData[ent->item->giTag].loadoutClass;
+		if ( pickupClass != WPCLASS_NONE )
+		{
+			int conflictWeapon = WP_NONE;
+			for ( int i = 0; i < WP_NUM_WEAPONS; i++ )
+			{
+				if ( i != ent->item->giTag
+					&& other->client->ps.weapons[i]
+					&& weaponData[i].loadoutClass == pickupClass )
+				{
+					conflictWeapon = i;
+					break;
+				}
+			}
+			if ( conflictWeapon != WP_NONE )
+			{
+				if ( !(other->client->usercmd.buttons&BUTTON_USE) || other->useDebounceTime > level.time )
+				{//not pressing use, or still debounced from a very recent swap - leave it in the world.
+					//useDebounceTime makes this a press, not a hold: holding +use down across
+					//multiple touch frames should only swap once, not oscillate every frame.
+					return 0;
+				}
+				G_DropClassWeapon( other, conflictWeapon );
+				other->useDebounceTime = level.time + 300;
+				didClassSwap = qtrue;
+			}
+		}
+	}
+
 	other->client->ps.weapons[ent->item->giTag] = 1;
+
+	if ( didClassSwap )
+	{//make the newly-swapped-in weapon active right away
+		other->client->ps.weapon = (weapon_t)ent->item->giTag;
+		other->client->ps.weaponstate = WEAPON_RAISING;
+		if ( other->s.number < MAX_CLIENTS )
+		{
+			CG_ChangeWeapon( ent->item->giTag );
+		}
+		else
+		{
+			ChangeWeapon( other, ent->item->giTag );
+		}
+	}
 
 	if ( ent->item->giTag == WP_SABER && (!hadWeapon || ent->NPC_type != NULL) )
 	{//didn't have a saber or it is specifying a certain kind of saber to use
@@ -825,20 +906,11 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 		return;
 	}
 
-	if ( ent->item->giType == IT_WEAPON
-		&& ent->item->giTag == WP_SABER )
-	{//a saber
+	if ( ent->item->giType == IT_WEAPON )
+	{//any weapon (was previously only WP_SABER/WP_EMPLACED_GUN - generalized so dropped
+		//weapons of any type can't be instantly re-picked-up by whoever just dropped them)
 		if ( ent->delay > level.time )
-		{//just picked it up, don't pick up again right away
-			return;
-		}
-	}
-	
-	if ( ent->item->giType == IT_WEAPON
-		&& ent->item->giTag == WP_EMPLACED_GUN )
-	{//portable eweb
-		if ( ent->delay > level.time )
-		{//just picked it up, don't pick up again right away
+		{//just picked it up/dropped, don't pick up again right away
 			return;
 		}
 	}

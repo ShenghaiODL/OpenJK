@@ -1424,6 +1424,41 @@ void Cmd_SaberDrop_f( gentity_t *ent, int saberNum )
 	}
 }
 
+void Cmd_WeaponDrop_f( gentity_t *ent )
+{
+	if ( !ent || !ent->client )
+	{
+		return;
+	}
+
+	int weap = ent->client->ps.weapon;
+	if ( weap <= WP_NONE || weap >= WP_NUM_WEAPONS || weap == WP_SABER )
+	{//nothing droppable active
+		return;
+	}
+
+	if ( weaponData[weap].loadoutClass == WPCLASS_NONE )
+	{//not a loadout-restricted weapon (melee/vehicle/etc) - not droppable this way
+		return;
+	}
+
+	if ( !ent->client->ps.weapons[weap] )
+	{//don't actually own it (e.g. borrowed emplaced gun)
+		return;
+	}
+
+	G_DropClassWeapon( ent, weap );
+
+	if ( ent->s.number < MAX_CLIENTS )
+	{
+		CG_ChangeWeapon( WP_NONE );
+	}
+	else
+	{
+		ChangeWeapon( ent, WP_NONE );
+	}
+}
+
 /*
 =================
 ClientCommand
@@ -1685,6 +1720,10 @@ void ClientCommand( int clientNum ) {
 		{//drop either left or right
 			Cmd_SaberDrop_f( ent, saberNum );
 		}
+	}
+	else if ( Q_stricmp( cmd, "dropweapon" ) == 0 )
+	{
+		Cmd_WeaponDrop_f( ent );
 	}
     else if (TryWorkshopCommand(ent)) {}
 	else
