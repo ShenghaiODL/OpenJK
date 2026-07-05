@@ -1068,7 +1068,7 @@ static void Item_ApplyHacks( itemDef_t *item ) {
 			item->disabled = qtrue;
 			// Just in case it had focus
 			item->window.flags &= ~WINDOW_MOUSEOVER;
-			Com_Printf( "Disabling eax field because current platform does not support EAX.\n");
+			Com_DPrintf( "Disabling eax field because current platform does not support EAX.\n");
 		}
 	}
 
@@ -1080,7 +1080,7 @@ static void Item_ApplyHacks( itemDef_t *item ) {
 			item->disabled = item->disabledHidden = qtrue;
 			// Just in case it had focus
 			item->window.flags &= ~WINDOW_MOUSEOVER;
-			Com_Printf( "Hiding eax_icon object because current platform does not support EAX.\n");
+			Com_DPrintf( "Hiding eax_icon object because current platform does not support EAX.\n");
 		}
 	}
 #endif
@@ -1106,7 +1106,7 @@ static void Item_ApplyHacks( itemDef_t *item ) {
 #endif
 			multiPtr->cvarValue[multiPtr->count] = 44;
 			multiPtr->count++;
-			Com_Printf( "Extended sound quality field to contain very high option.\n");
+			Com_DPrintf( "Extended sound quality field to contain very high option.\n");
 		}
 	}
 

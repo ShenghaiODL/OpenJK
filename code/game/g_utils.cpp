@@ -35,6 +35,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define ACT_INACTIVE	qfalse
 extern void NPC_UseResponse ( gentity_t *self, gentity_t *user, qboolean useWhenDone );
 extern qboolean PM_CrouchAnim( int anim );
+
+// Camera aim info set each frame by CG_UseIcon; used by CanUseInfrontOf and TryUse
+// so both the icon check and activation trace along the crosshair direction.
+vec3_t g_playerUseOrigin  = {0.0f, 0.0f, 0.0f};
+vec3_t g_playerUseForward = {1.0f, 0.0f, 0.0f};
 /*
 =========================================================================
 
@@ -1673,19 +1678,25 @@ qboolean CanUseInfrontOf(gentity_t *ent)
 	}
 
 
-	VectorCopy( ent->currentOrigin, src );
-	src[2] += ent->client->ps.viewheight;
+	// Trace from camera in crosshair direction (full range); require hit to be within arm's reach of player.
+	// This works with orbital/offset cameras where camera direction != player body forward.
+	VectorCopy( g_playerUseForward, vf );
+	VectorMA( g_playerUseOrigin, 4096.0f, vf, dest );
 
-	AngleVectors( ent->client->ps.viewangles, vf, NULL, NULL );
-	//extend to find end of use trace
-	VectorMA( src, USE_DISTANCE, vf, dest );
-
-	//Trace ahead to find a valid target
-	gi.trace( &trace, src, vec3_origin, vec3_origin, dest, ent->s.number, MASK_OPAQUE|CONTENTS_SOLID|CONTENTS_TERRAIN|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE , G2_NOCOLLIDE, 10);
+	gi.trace( &trace, g_playerUseOrigin, vec3_origin, vec3_origin, dest, ent->s.number, MASK_OPAQUE|CONTENTS_SOLID|CONTENTS_TERRAIN|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE , G2_NOCOLLIDE, 10);
 
 	if ( trace.fraction == 1.0f || trace.entityNum >= ENTITYNUM_WORLD )
 	{
 		return (CanUseInfrontOfPartOfLevel(ent));
+	}
+
+	// Use player body eye position (not renderInfo.eyePoint, which equals camera pos in gun cam).
+	vec3_t playerEye;
+	VectorCopy( ent->currentOrigin, playerEye );
+	playerEye[2] += ent->client->ps.viewheight;
+	if ( Distance( playerEye, trace.endpos ) > USE_DISTANCE )
+	{
+		return qfalse;
 	}
 
 	target = &g_entities[trace.entityNum];
@@ -1782,17 +1793,22 @@ void TryUse( gentity_t *ent )
 		return;
 	}*/
 
-	VectorCopy( ent->currentOrigin, src );
-	src[2] += ent->client->ps.viewheight;
+	if ( ent->useDebounceTime > level.time )
+	{// shared lockout with weapon class swap — prevents alternation when both are in range
+		return;
+	}
 
-	AngleVectors( ent->client->ps.viewangles, vf, NULL, NULL );
-	//extend to find end of use trace
-	VectorMA( src, USE_DISTANCE, vf, dest );
+	// Trace from camera in crosshair direction (full range); then verify hit is within reach of player.
+	VectorCopy( g_playerUseForward, vf );
+	VectorMA( g_playerUseOrigin, 4096.0f, vf, dest );
 
-	//Trace ahead to find a valid target
-	gi.trace( &trace, src, vec3_origin, vec3_origin, dest, ent->s.number, MASK_OPAQUE|CONTENTS_SOLID|CONTENTS_TERRAIN|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE , G2_NOCOLLIDE, 10);
+	gi.trace( &trace, g_playerUseOrigin, vec3_origin, vec3_origin, dest, ent->s.number, MASK_OPAQUE|CONTENTS_SOLID|CONTENTS_TERRAIN|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE , G2_NOCOLLIDE, 10);
 
-	if ( trace.fraction == 1.0f || trace.entityNum  >= ENTITYNUM_WORLD )
+	vec3_t playerEyeTU;
+	VectorCopy( ent->currentOrigin, playerEyeTU );
+	playerEyeTU[2] += ent->client->ps.viewheight;
+	if ( trace.fraction == 1.0f || trace.entityNum  >= ENTITYNUM_WORLD
+		|| Distance( playerEyeTU, trace.endpos ) > USE_DISTANCE )
 	{
 		//TODO: Play a failure sound
 		/*
@@ -1826,6 +1842,10 @@ void TryUse( gentity_t *ent )
 		*/
 		//ent->client->ps.weaponTime = ent->client->ps.torsoAnimTimer;
 		GEntity_UseFunc( target, ent, ent );
+		// 50ms is enough to block the weapon-class-swap pickup code (which runs in the same
+		// ClientThink frame, after G_TouchTriggersLerped). Keeping it below USE_DELAY (250ms)
+		// lets holdable entities like shield stations restore on every pm.useEvent cycle.
+		ent->useDebounceTime = level.time + 50;
 		return;
 	}
 	else if ( target->client
@@ -1836,6 +1856,7 @@ void TryUse( gentity_t *ent )
 		&& !(target->NPC->scriptFlags&SCF_NO_RESPONSE) )
 	{
 		NPC_UseResponse ( target, ent, qfalse );
+		ent->useDebounceTime = level.time + 500;
 		return;
 	}
 	/*

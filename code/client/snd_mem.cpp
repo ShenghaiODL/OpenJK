@@ -902,7 +902,7 @@ static qboolean S_LoadSound_Actual( sfx_t *sfx )
 
 		info = GetWavinfo( sLoadName, data, size );
 		if ( info.channels != 1 ) {
-			Com_Printf ("%s is a stereo wav file\n", sLoadName);
+			Com_DPrintf ("%s is a stereo wav file\n", sLoadName);
 			FS_FreeFile (data);
 			return qfalse;
 		}

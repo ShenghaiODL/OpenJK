@@ -3848,8 +3848,12 @@ static qboolean CG_RenderingFromMiscCamera()
 
 qboolean cg_usingInFrontOf = qfalse;
 qboolean CanUseInfrontOf(gentity_t*);
+extern vec3_t g_playerUseOrigin;
+extern vec3_t g_playerUseForward;
 static void CG_UseIcon()
 {
+	VectorCopy( cg.refdef.vieworg, g_playerUseOrigin );
+	VectorCopy( cg.refdef.viewaxis[0], g_playerUseForward );
 	cg_usingInFrontOf = CanUseInfrontOf(cg_entities[cg.snap->ps.clientNum].gent);
 	if (cg_usingInFrontOf)
 	{

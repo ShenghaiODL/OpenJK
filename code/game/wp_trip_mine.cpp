@@ -165,11 +165,8 @@ void laserTrapThink( gentity_t *ent )
 	}
 	else
 	{
-		/*
-		// FIXME: they need to avoid the beam!
 		AddSoundEvent( ent->owner, ent->currentOrigin, ent->splashRadius*2, AEL_DANGER );
 		AddSightEvent( ent->owner, ent->currentOrigin, ent->splashRadius*2, AEL_DANGER, 50 );
-		*/
 	}
 }
 

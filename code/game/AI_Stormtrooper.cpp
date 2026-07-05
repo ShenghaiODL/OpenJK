@@ -2875,6 +2875,36 @@ void NPC_BSST_Attack( void )
 	// the timer's ready, so this is safe/cheap to call unconditionally.
 	if ( NPC->client->NPC_class == CLASS_SABOTEUR )
 	{
+		if ( TIMER_Done( NPC, "nocloak" ) && !TIMER_Done( NPC, "decloakwait" ) )
+		{
+			Saboteur_Cloak( NPC );
+
+			// While cloaked, periodically move to a flanking position
+			if ( NPC->client->ps.powerups[PW_CLOAKED]
+				&& NPC->enemy
+				&& TIMER_Done( NPC, "cloakReposition" ) )
+			{
+				TIMER_Set( NPC, "cloakReposition", Q_irand( 2000, 4000 ) );
+				int cpFlags = CP_FLANK | CP_APPROACH_ENEMY | CP_HAS_ROUTE | CP_AVOID_ENEMY;
+				vec3_t dummy;
+				int cp = NPC_FindCombatPointRetry(
+					NPC->currentOrigin,
+					NPC->currentOrigin,
+					dummy,
+					&cpFlags,
+					128,
+					NPCInfo->lastFailedCombatPoint );
+				if ( cp != -1 )
+				{
+					NPC_SetCombatPoint( cp );
+					NPC_SetMoveGoal( NPC, level.combatPoints[cp].origin, 8, qtrue, cp );
+				}
+				else
+				{
+					NPC_SetMoveGoal( NPC, NPCInfo->enemyLastSeenLocation, 64, qfalse, -1 );
+				}
+			}
+		}
 		Saboteur_Decloak( NPC );
 	}
 

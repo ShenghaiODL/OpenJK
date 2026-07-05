@@ -2878,8 +2878,6 @@ void SP_NPC_StormtrooperRandom( gentity_t *self )
 			break;
 		}
 	}
-	Com_Printf( "SP_NPC_StormtrooperRandom: roll=%d/%d -> %s\n", roll, s_stTotalWeight, self->NPC_type );
-
 	SP_NPC_spawner( self );
 }
 

@@ -356,7 +356,7 @@ int parryDebounce[NUM_FORCE_POWER_LEVELS] =
 int missileParryDebounce[NUM_FORCE_POWER_LEVELS] =
 {
 	100,
-	50,
+	35,
 	25,
 	15
 };
@@ -8206,7 +8206,20 @@ void WP_SaberStartMissileBlockCheck( gentity_t *self, usercmd_t *ucmd  )
 		{
 			if ( !(ucmd->buttons & BUTTON_USE) )//self->s.weapon == WP_SABER && self->client->ps.SaberActive() )
 			{
-				WP_SaberBlockNonRandom( self, incoming->currentOrigin, qtrue );
+				// Predict where the bolt will be when it reaches the player rather than using
+				// its current position — prevents quadrant mismatch at oblique angles.
+				vec3_t predictedHitLoc;
+				float boltSpeed = VectorLength( incoming->s.pos.trDelta );
+				if ( boltSpeed > 1.0f )
+				{
+					float boltDist = Distance( incoming->currentOrigin, self->client->renderInfo.eyePoint );
+					VectorMA( incoming->currentOrigin, boltDist / boltSpeed, incoming->s.pos.trDelta, predictedHitLoc );
+				}
+				else
+				{
+					VectorCopy( incoming->currentOrigin, predictedHitLoc );
+				}
+				WP_SaberBlockNonRandom( self, predictedHitLoc, qtrue );
 			}
 			else
 			{

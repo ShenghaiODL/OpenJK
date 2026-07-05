@@ -4887,19 +4887,21 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 
 			if ( perc >= 0.0f && perc <= 1.0f )
 			{
-				ent->renderfx &= ~RF_ALPHA_FADE;
-				ent->renderfx |= RF_RGB_TINT;
-				ent->shaderRGBA[0] = ent->shaderRGBA[1] = ent->shaderRGBA[2] = 255.0f * perc;
-				ent->shaderRGBA[3] = 0;
-				ent->customShader = cgs.media.cloakedShader;
-				cgi_R_AddRefEntityToScene( ent );
-
-				ent->shaderRGBA[0] = ent->shaderRGBA[1] = ent->shaderRGBA[2] = 255;
-				ent->shaderRGBA[3] = 255 * (1.0f - perc); // let model alpha in
-				ent->customShader = 0; // use regular skin
-				ent->renderfx &= ~RF_RGB_TINT;
-				ent->renderfx |= RF_ALPHA_FADE;
-				cgi_R_AddRefEntityToScene( ent );
+				if (cg_renderToTextureFX.integer)
+				{
+					ent->renderfx |= RF_DISTORTION;
+					cgi_R_AddRefEntityToScene( ent );
+					ent->renderfx &= ~RF_DISTORTION;
+				}
+				else
+				{
+					ent->renderfx &= ~RF_RGB_TINT;
+					ent->renderfx |= RF_ALPHA_FADE;
+					ent->shaderRGBA[0] = ent->shaderRGBA[1] = ent->shaderRGBA[2] = 255;
+					ent->shaderRGBA[3] = (byte)(255.0f * (1.0f - perc));
+					ent->customShader = cgs.media.cloakedShader;
+					cgi_R_AddRefEntityToScene( ent );
+				}
 			}
 		}
 	}
@@ -4913,23 +4915,12 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 		}
 		else
 		{
-			if (cg_renderToTextureFX.integer && cg_shadows.integer != 2 && cgs.glconfig.stencilBits >= 4)
-			{
-				cgi_R_SetRefractProp(1.0f, 0.0f, qfalse, qfalse); //don't need to do this every frame.. but..
-				ent->customShader = 2; //crazy "refractive" shader
-				cgi_R_AddRefEntityToScene( ent );
-				ent->customShader = 0;
-			}
-			else
-			{ //stencil buffer's in use, sorry - dim the chrome-shimmer shader instead of
-				//full 255 so it's a faint hint rather than a bright, easy-to-spot reflection
-				ent->renderfx = 0;
-				ent->renderfx |= RF_RGB_TINT;
-				ent->shaderRGBA[0] = ent->shaderRGBA[1] = ent->shaderRGBA[2] = 90;
-				ent->shaderRGBA[3] = 255;
-				ent->customShader = cgs.media.cloakedShader;
-				cgi_R_AddRefEntityToScene( ent );
-			}
+			ent->renderfx &= ~RF_RGB_TINT;
+			ent->renderfx |= RF_ALPHA_FADE;
+			ent->shaderRGBA[0] = ent->shaderRGBA[1] = ent->shaderRGBA[2] = 255;
+			ent->shaderRGBA[3] = 40;
+			ent->customShader = cgs.media.cloakedShader;
+			cgi_R_AddRefEntityToScene( ent );
 		}
 	}
 

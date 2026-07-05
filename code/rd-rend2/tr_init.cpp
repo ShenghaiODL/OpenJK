@@ -1045,7 +1045,10 @@ void R_ScreenShotTGA_f (void) {
 	R_TakeScreenshot( 0, 0, glConfig.vidWidth, glConfig.vidHeight, checkname, SSF_TGA );
 
 	if ( !silent )
-		ri.Printf (PRINT_ALL, "Wrote %s\n", checkname);
+		ri.Printf( PRINT_ALL, "Wrote %s/%s/%s\n",
+			ri.Cvar_VariableString("fs_homepath"),
+			ri.Cvar_VariableString("fs_game"),
+			checkname );
 }
 
 void R_ScreenShotPNG_f (void) {
@@ -1077,7 +1080,10 @@ void R_ScreenShotPNG_f (void) {
 	R_TakeScreenshot( 0, 0, glConfig.vidWidth, glConfig.vidHeight, checkname, SSF_PNG );
 
 	if ( !silent )
-		ri.Printf (PRINT_ALL, "Wrote %s\n", checkname);
+		ri.Printf( PRINT_ALL, "Wrote %s/%s/%s\n",
+			ri.Cvar_VariableString("fs_homepath"),
+			ri.Cvar_VariableString("fs_game"),
+			checkname );
 }
 
 void R_ScreenShotJPEG_f (void) {
@@ -1109,7 +1115,10 @@ void R_ScreenShotJPEG_f (void) {
 	R_TakeScreenshot( 0, 0, glConfig.vidWidth, glConfig.vidHeight, checkname, SSF_JPEG );
 
 	if ( !silent )
-		ri.Printf (PRINT_ALL, "Wrote %s\n", checkname);
+		ri.Printf( PRINT_ALL, "Wrote %s/%s/%s\n",
+			ri.Cvar_VariableString("fs_homepath"),
+			ri.Cvar_VariableString("fs_game"),
+			checkname );
 }
 
 //============================================================================

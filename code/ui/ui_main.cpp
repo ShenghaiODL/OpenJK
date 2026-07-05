@@ -4683,10 +4683,7 @@ qboolean Asset_Parse(char **buffer)
 				{
 					soundFile = COM_ParseExt(&tempStr, qfalse);
 					if (soundFile[0] != 0 && soundFile[0] != ';') {
-						if (!trap_S_RegisterSound( soundFile, qfalse ))
-						{
-							PC_ParseWarning("Can't locate precache sound");
-						}
+						trap_S_RegisterSound( soundFile, qfalse );
 					}
 				} while (soundFile[0]);
 			}

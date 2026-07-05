@@ -402,7 +402,7 @@ static void *Sys_LoadDllFromPaths( const char *filename, const char *gamedir, co
 			if ( libHandle )
 				return libHandle;
 
-			Com_Printf( "%s(%s) failed: \"%s\"\n", callerName, fn, Sys_LibraryError() );
+			Com_DPrintf( "%s(%s) failed: \"%s\"\n", callerName, fn, Sys_LibraryError() );
 		}
 	}
 
@@ -419,7 +419,7 @@ static void *Sys_LoadDllFromPaths( const char *filename, const char *gamedir, co
 			if ( libHandle )
 				return libHandle;
 
-			Com_Printf( "%s(%s) failed: \"%s\"\n", callerName, fn, Sys_LibraryError() );
+			Com_DPrintf( "%s(%s) failed: \"%s\"\n", callerName, fn, Sys_LibraryError() );
 		}
 	}
 
@@ -436,7 +436,7 @@ static void *Sys_LoadDllFromPaths( const char *filename, const char *gamedir, co
 			if ( libHandle )
 				return libHandle;
 
-			Com_Printf( "%s(%s) failed: \"%s\"\n", callerName, fn, Sys_LibraryError() );
+			Com_DPrintf( "%s(%s) failed: \"%s\"\n", callerName, fn, Sys_LibraryError() );
 		}
 	}
 
@@ -453,7 +453,7 @@ static void *Sys_LoadDllFromPaths( const char *filename, const char *gamedir, co
 			if ( libHandle )
 				return libHandle;
 
-			Com_Printf( "%s(%s) failed: \"%s\"\n", callerName, fn, Sys_LibraryError() );
+			Com_DPrintf( "%s(%s) failed: \"%s\"\n", callerName, fn, Sys_LibraryError() );
 		}
 	}
 

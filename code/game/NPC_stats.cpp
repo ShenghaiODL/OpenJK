@@ -469,7 +469,6 @@ static void ParseAnimationEvtBlock(int glaIndex, unsigned short modelIndex, cons
 		animNum = GetIDForString(animTable, token);
 		if(animNum == -1)
 		{//Unrecognized ANIM ENUM name,
-			Com_Printf(S_COLOR_YELLOW"WARNING: Unknown ANIM %s in file %s\n", token, aeb_filename );
 			//skip this entry
 			SkipRestOfLine( text_p );
 			continue;

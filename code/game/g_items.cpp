@@ -474,6 +474,14 @@ void G_DropClassWeapon( gentity_t *self, int weaponTag )
 		{
 			dropped->count = self->client->ps.ammo[ weaponData[weaponTag].ammoIndex ];
 			dropped->delay = level.time + 500;	// don't let the dropper instantly re-pick this up
+			if ( item->world_model && item->world_model[0] )
+			{
+				gi.G2API_InitGhoul2Model( dropped->ghoul2, item->world_model,
+					G_ModelIndex( item->world_model ), NULL_HANDLE, NULL_HANDLE, 0, 0 );
+			}
+			dropped->e_UseFunc = useF_Use_Item;
+			dropped->svFlags |= SVF_PLAYER_USABLE;
+			gi.linkentity( dropped );
 		}
 	}
 
@@ -556,15 +564,15 @@ int Pickup_Weapon (gentity_t *ent, gentity_t *other)
 	other->client->ps.weapons[ent->item->giTag] = 1;
 
 	if ( didClassSwap )
-	{//make the newly-swapped-in weapon active right away
-		other->client->ps.weapon = (weapon_t)ent->item->giTag;
-		other->client->ps.weaponstate = WEAPON_RAISING;
+	{//trigger a full weapon-change cycle so PM_FinishWeaponChange runs and updates the G2 weapon model
+		other->client->ps.weaponstate = WEAPON_DROPPING;
 		if ( other->s.number < MAX_CLIENTS )
 		{
-			CG_ChangeWeapon( ent->item->giTag );
+			CG_ChangeWeapon( ent->item->giTag );	// sets cg.weaponSelect → cmd.weapon for next Pmove
 		}
 		else
 		{
+			other->client->ps.weapon = (weapon_t)ent->item->giTag;
 			ChangeWeapon( other, ent->item->giTag );
 		}
 	}

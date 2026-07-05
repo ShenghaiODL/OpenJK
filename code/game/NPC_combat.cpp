@@ -498,7 +498,7 @@ void G_SetEnemy( gentity_t *self, gentity_t *enemy )
 		if (self->client && self->client->NPC_class == CLASS_SABOTEUR)
 		{
 			Saboteur_Cloak(NPC);					// Cloak
-			TIMER_Set(self, "decloakwait", 3000);	// Wait 3 sec before decloak and attack
+			TIMER_Set(self, "decloakwait", 12000);	// Stay cloaked for ~12s before attacking
 		}
 
 
