@@ -104,6 +104,10 @@ void AI_SetClosestBuddy( AIGroupInfo_t *group )
 		bestDist = Q3_INFINITE;
 		for ( j = 0; j < group->numGroup; j++ )
 		{
+			if ( j == i )
+			{//you are not your own buddy
+				continue;
+			}
 			dist = DistanceSquared( g_entities[group->member[i].number].currentOrigin, g_entities[group->member[j].number].currentOrigin );
 			if ( dist < bestDist )
 			{
@@ -857,12 +861,13 @@ qboolean AI_RefreshGroup( AIGroupInfo_t *group )
 	{
 		member = &g_entities[group->member[i].number];
 		if ( member->NPC->rank < RANK_ENSIGN )
-		{//grunts
-			group->morale++;
+		{//grunts — worth 2 so each nets +1 boost after the numGroup subtraction in
+		//AI_GetGroupMoraleTier; squad size itself now builds confidence
+			group->morale += 2;
 		}
 		else
-		{
-			group->morale += member->NPC->rank;
+		{//officers stay strictly above grunts (ENSIGN=3 ... CAPTAIN=8)
+			group->morale += member->NPC->rank + 1;
 		}
 		if ( group->commander && debugNPCAI->integer )
 		{
@@ -948,12 +953,29 @@ qboolean AI_RefreshGroup( AIGroupInfo_t *group )
 		{
 			group->moraleAdjust++;
 		}
-		group->moraleDebounce = level.time + 1000;
+		group->moraleDebounce = level.time + 2000;
 	}
 	//mark this group as not having been run this frame
 	group->processed = qfalse;
 
 	return (qboolean)(group->numGroup>0);
+}
+
+// Morale tier from group state. Single source of truth — used by ST_GetCPFlags
+// (combat point aggression), ST_Commander (transition announcements), and the
+// d_moraleDebug overlay in cg_draw.cpp.
+// 0 ROUTED, 1 HOLDING, 2 ADVANCE, 3 FLANK, 4 RUSH
+int AI_GetGroupMoraleTier( const AIGroupInfo_t *group )
+{
+	if ( group->morale < 0 )
+	{
+		return 0;
+	}
+	const int boost = group->morale - group->numGroup;
+	if ( boost > 24 ) return 4;
+	if ( boost > 14 ) return 3;
+	if ( boost > 6 )  return 2;
+	return 1;
 }
 
 void AI_UpdateGroups( void )

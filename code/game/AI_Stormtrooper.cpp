@@ -333,6 +333,26 @@ void ST_StartFlee( gentity_t *self, gentity_t *enemy, vec3_t dangerPoint, int da
 		ST_Speech( self, SPEECH_COVER, 0 );//FIXME: flee sound?
 	}
 }
+// qtrue if the NPC's crouched profile at its current spot is hidden (by solid geometry)
+// from its enemy's eyes. Decides whether a reached goal is worth holding as cover, and
+// re-checked while holding so troopers don't keep squatting once the enemy finds an angle.
+static qboolean ST_SpotHiddenFromEnemy( void )
+{
+	trace_t	tr;
+	vec3_t	enemyEye, crouchEye;
+
+	if ( !NPC || !NPC->enemy )
+	{
+		return qfalse;
+	}
+	CalcEntitySpot( NPC->enemy, SPOT_HEAD, enemyEye );
+	VectorCopy( NPC->currentOrigin, crouchEye );
+	crouchEye[2] += 24;	// roughly crouched eye height
+
+	gi.trace( &tr, enemyEye, vec3_origin, vec3_origin, crouchEye, NPC->enemy->s.number, MASK_OPAQUE, (EG2_Collision)0, 0 );
+	return (qboolean)( tr.fraction < 1.0f );
+}
+
 /*
 -------------------------
 NPC_ST_Pain
@@ -345,6 +365,7 @@ void NPC_ST_Pain( gentity_t *self, gentity_t *inflictor, gentity_t *other, const
 	TIMER_Set( self, "underFire", 5000 );
 
 	TIMER_Set( self, "duck", -1 );
+	TIMER_Set( self, "coverHold", -1 );	// getting hit means this cover failed — break the hold
 	TIMER_Set( self, "hideTime", -1 );
 	TIMER_Set( self, "stand", 2000 );
 
@@ -1424,7 +1445,22 @@ static void ST_CheckMoveState( void )
 
 			// THIS IS THE ONE TRUE PLACE WHERE ROAM TIME IS SET
 			TIMER_Set( NPC, "roamTime", Q_irand( 3000, 5000 ) );
-			if (Q_irand(0, 3)==0)
+
+			// Held cover: if this spot actually hides us from the enemy and morale hasn't
+			// surged, stay and fight from it (duck/pop cycle in NPC_BSST_Attack) instead of
+			// rejoining the reposition churn.
+			const int tier = NPCInfo->group ? AI_GetGroupMoraleTier( NPCInfo->group ) : 1;
+			if ( NPC->enemy && tier < 3 && ST_SpotHiddenFromEnemy() )
+			{
+				static const int holdMin[3] = { 8000, 6000, 4000 };
+				static const int holdMax[3] = { 12000, 10000, 7000 };
+				AI_GroupUpdateSquadstates( NPCInfo->group, NPC, SQUAD_COVER );
+				TIMER_Set( NPC, "coverHold", Q_irand( holdMin[tier], holdMax[tier] ) );
+				const int duckTime = Q_irand( 1200, 2500 );
+				TIMER_Set( NPC, "duck", duckTime );
+				TIMER_Set( NPC, "coverPop", duckTime + Q_irand( 800, 1800 ) );
+			}
+			else if (Q_irand(0, 3)==0)
 			{
 				TIMER_Set( NPC, "duck", Q_irand(1500, 3500) );		// just reached our goal, chance of ducking now
 			}
@@ -1775,10 +1811,13 @@ int ST_GetCPFlags( void )
 			}
 			else
 			{
-				int moraleBoost = NPCInfo->group->morale - NPCInfo->group->numGroup;
-				if      ( moraleBoost > 35 ) cpFlags = (CP_CLEAR|CP_COVER|CP_CLOSEST|CP_APPROACH_ENEMY);
-				else if ( moraleBoost > 20 ) cpFlags = (CP_CLEAR|CP_COVER|CP_FLANK|CP_APPROACH_ENEMY);
-				else if ( moraleBoost > 10 ) cpFlags = (CP_CLEAR|CP_COVER|CP_APPROACH_ENEMY);
+				switch ( AI_GetGroupMoraleTier( NPCInfo->group ) )
+				{
+				case 4: cpFlags = (CP_CLEAR|CP_COVER|CP_CLOSEST|CP_APPROACH_ENEMY); break;
+				case 3: cpFlags = (CP_CLEAR|CP_COVER|CP_FLANK|CP_APPROACH_ENEMY);   break;
+				case 2: cpFlags = (CP_CLEAR|CP_COVER|CP_APPROACH_ENEMY);            break;
+				default: break;	// tier 1 falls through to the random default below
+				}
 			}
 		}
 	}
@@ -1984,19 +2023,15 @@ void ST_Commander( void )
 
 	// Morale tier transition — commander announces shift in aggression
 	{
-		int newTier;
-		if ( group->morale < 0 )
-			newTier = 0;
-		else
-		{
-			int moraleBoost = group->morale - group->numGroup;
-			if      ( moraleBoost > 35 ) newTier = 4;
-			else if ( moraleBoost > 20 ) newTier = 3;
-			else if ( moraleBoost > 10 ) newTier = 2;
-			else                         newTier = 1;
-		}
+		const int newTier = AI_GetGroupMoraleTier( group );
 		if ( newTier != group->moraleTier && group->commander && group->commander->NPC )
 		{
+			if ( d_moraleDebug->integer )
+			{
+				gi.Printf( "MORALE: group %i tier %i -> %i (morale %i, adjust %i, members %i)\n",
+					(int)(group - level.groups), group->moraleTier, newTier,
+					group->morale, group->moraleAdjust, group->numGroup );
+			}
 			if ( newTier > group->moraleTier )
 			{
 				static const int riseSpeech[] = { SPEECH_CHASE, SPEECH_OUTFLANK, SPEECH_OUTFLANK, SPEECH_YELL };
@@ -2053,6 +2088,11 @@ void ST_Commander( void )
 
 		if ( Q3_TaskIDPending( NPC, TID_MOVE_NAV ) )
 		{//running somewhere that a script requires us to go
+			continue;
+		}
+
+		if ( !TIMER_Done( NPC, "coverHold" ) )
+		{//holding a good cover spot — don't churn to a new combat point
 			continue;
 		}
 
@@ -2214,9 +2254,11 @@ void ST_Commander( void )
 		//clear the local state
 		NPCInfo->localState = LSTATE_NONE;
 
-		// Periodically force repositioning even when comfortable (clear LOS, safe distance, good health)
+		// Periodically force repositioning even when comfortable (clear LOS, safe distance, good health).
+		// Never yank someone out of held cover — the hold breaks on its own terms (pain/morale/expiry).
 		if ( NPCInfo->squadState != SQUAD_TRANSITION && NPCInfo->squadState != SQUAD_SCOUT
-			&& TIMER_Done( NPC, "combatPointTime" ) )
+			&& TIMER_Done( NPC, "combatPointTime" )
+			&& TIMER_Done( NPC, "coverHold" ) )
 		{
 			cpFlags |= (CP_CLEAR|CP_COVER);
 			TIMER_Set( NPC, "combatPointTime", Q_irand( 8000, 14000 ) );
@@ -2307,11 +2349,11 @@ void ST_Commander( void )
 					NPC_SetMoveGoal( NPC, coverPos, 16, qtrue, -1, NULL );
 					AI_GroupUpdateSquadstates( group, NPC, SQUAD_TRANSITION );
 					// Buddy-pair: push closest squadmate into suppressive fire while we move.
-					if ( group->member[i].closestBuddy >= 0 )
+					// closestBuddy holds an entity number (AI_SetClosestBuddy), not a member index.
+					if ( group->member[i].closestBuddy != ENTITYNUM_NONE )
 					{
-						int buddyIdx = group->member[i].closestBuddy;
-						gentity_t *buddy = &g_entities[ group->member[buddyIdx].number ];
-						if ( buddy != NPC && buddy->NPC
+						gentity_t *buddy = &g_entities[ group->member[i].closestBuddy ];
+						if ( buddy != NPC && buddy->NPC && buddy->NPC->group == group
 						     && buddy->NPC->squadState != SQUAD_STAND_AND_SHOOT
 						     && buddy->NPC->squadState != SQUAD_TRANSITION )
 						{
@@ -2752,6 +2794,47 @@ void NPC_BSST_Attack( void )
 				ucmd.rightmove = 127;
 				VectorClear( NPC->client->ps.moveDir );
 				doMove = qfalse;
+			}
+		}
+	}
+
+	// Held-cover cycle: alternate ducking behind cover with popping out to shoot.
+	// Entered in ST_CheckMoveState when a reached goal genuinely hides us; broken by
+	// pain (NPC_ST_Pain), a morale surge, losing the cover angle, or timer expiry.
+	if ( NPC->client->NPC_class != CLASS_ASSASSIN_DROID )
+	{
+		if ( TIMER_Done2( NPC, "coverHold", qtrue ) )
+		{//hold ended (expired or broken) — rejoin the reposition flow shortly
+			if ( NPCInfo->squadState == SQUAD_COVER )
+			{//don't touch timers if we weren't actually holding (e.g. pain clears coverHold unconditionally)
+				AI_GroupUpdateSquadstates( NPCInfo->group, NPC, SQUAD_STAND_AND_SHOOT );
+				TIMER_Set( NPC, "duck", -1 );
+				TIMER_Set( NPC, "combatPointTime", Q_irand( 0, 2000 ) );
+			}
+		}
+		else if ( !TIMER_Done( NPC, "coverHold" ) )
+		{
+			if ( NPCInfo->group && AI_GetGroupMoraleTier( NPCInfo->group ) >= 3 )
+			{//morale surged — break cover and push (cleanup happens above next frame)
+				TIMER_Set( NPC, "coverHold", -1 );
+			}
+			else
+			{
+				if ( TIMER_Done( NPC, "duck" ) && TIMER_Done( NPC, "coverPop" ) )
+				{//pop-out phase over — drop back behind cover and schedule the next peek
+					const int duckTime = Q_irand( 1200, 2500 );
+					TIMER_Set( NPC, "duck", duckTime );
+					TIMER_Set( NPC, "coverPop", duckTime + Q_irand( 800, 1800 ) );
+				}
+				if ( !TIMER_Done( NPC, "duck" ) && TIMER_Done( NPC, "coverCheck" ) )
+				{//while ducked, make sure this is still actually cover
+					TIMER_Set( NPC, "coverCheck", 1000 );
+					if ( !ST_SpotHiddenFromEnemy() )
+					{//enemy found an angle on us — abandon the hold
+						TIMER_Set( NPC, "coverHold", -1 );
+					}
+				}
+				doMove = qfalse;	// hold this spot
 			}
 		}
 	}

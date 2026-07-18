@@ -72,6 +72,7 @@ cvar_t		*d_saberCombat;
 cvar_t		*d_JediAI;
 cvar_t		*d_noGroupAI;
 cvar_t		*d_asynchronousGroupAI;
+cvar_t		*d_moraleDebug;			// draw group morale/squad-state info over NPC heads
 cvar_t		*d_slowmodeath;
 
 extern qboolean	stop_icarus;
@@ -2584,6 +2585,7 @@ void NPC_InitAI ( void )
 	d_JediAI = gi.cvar ( "d_JediAI", "0", CVAR_CHEAT );
 	d_noGroupAI = gi.cvar ( "d_noGroupAI", "0", CVAR_CHEAT );
 	d_asynchronousGroupAI = gi.cvar ( "d_asynchronousGroupAI", "1", CVAR_CHEAT );
+	d_moraleDebug = gi.cvar ( "d_moraleDebug", "0", CVAR_CHEAT );
 
 	//0 = never (BORING)
 	//1 = kyle only

@@ -596,6 +596,16 @@ public:
 					//---------------------------------------------------------------
 					if (Closed)
 					{
+						// d_npcai 1: report why an NPC refuses to path through a door (throttled to 1/sec)
+						static int doorDebugTime = 0;
+						#define DOOR_NAV_DEBUG( reason )										\
+							if ( debugNPCAI->integer && doorDebugTime < level.time ) {			\
+								doorDebugTime = level.time + 1000;								\
+								gi.Printf( "DOOR: NPC %s can't path through door ent %d (targetname '%s'): %s\n",	\
+									(mActor!=0 && mActor->NPC_type) ? mActor->NPC_type : "?", ent->s.number,	\
+									ent->targetname ? ent->targetname : "<none>", reason );		\
+							}
+
 						gentity_t*	owner	= &g_entities[Edge.mOwnerNum];
 						if (owner)
 						{
@@ -605,6 +615,19 @@ public:
 								(owner==ent && (owner->spawnflags & (MOVER_PLAYER_USE|MOVER_FORCE_ACTIVATE|MOVER_LOCKED))) ||
 								(owner!=ent && (owner->spawnflags & (1 /*PLAYERONLY*/|4 /*USE_BOTTON*/))))
 							{
+								if (owner->svFlags & SVF_INACTIVE)
+								{
+									DOOR_NAV_DEBUG( "trigger/door INACTIVE" );
+								}
+								else if (owner==ent)
+								{
+									DOOR_NAV_DEBUG( (owner->spawnflags&MOVER_LOCKED) ? "door LOCKED" :
+										(owner->spawnflags&MOVER_PLAYER_USE) ? "door PLAYER_USE" : "door FORCE_ACTIVATE" );
+								}
+								else
+								{
+									DOOR_NAV_DEBUG( (owner->spawnflags&1) ? "trigger PLAYERONLY" : "trigger USE_BUTTON" );
+								}
 								return false;
 							}
 
@@ -616,6 +639,7 @@ public:
 								int key = INV_GoodieKeyCheck(mActor);
 								if (!key)
 								{
+									DOOR_NAV_DEBUG( "GOODIE door, NPC has no key" );
 									return false;
 								}
 							}
@@ -625,8 +649,10 @@ public:
 						//--------------------------------------------------------------
 						else
 						{
+							DOOR_NAV_DEBUG( "scripted door (no owning trigger)" );
 							return false;
 						}
+						#undef DOOR_NAV_DEBUG
 					}
 					return true;
 				}

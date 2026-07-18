@@ -2538,6 +2538,93 @@ void CG_ClearHealthBarEnts( void )
 		memset( &cg_healthBarEnts, 0, sizeof(cg_healthBarEnts) );
 	}
 }
+
+/*
+================================================================================
+
+MORALE DEBUG (d_moraleDebug 1)
+
+Floats group morale/tier info over each squad commander and the current squad
+state over every other living member. Reads level.groups directly (game and
+cgame share the SP module).
+
+================================================================================
+*/
+#define MORALE_DEBUG_RANGE 4096.0f
+
+static const char *moraleTierNames[5] = { "ROUTED", "HOLDING", "ADVANCE", "FLANK", "RUSH" };
+static const vec4_t moraleTierColors[5] =
+{
+	{ 1.0f, 0.2f, 0.2f, 1.0f },	// 0 ROUTED  — red
+	{ 1.0f, 0.6f, 0.2f, 1.0f },	// 1 HOLDING — orange
+	{ 1.0f, 1.0f, 0.3f, 1.0f },	// 2 ADVANCE — yellow
+	{ 0.3f, 1.0f, 0.3f, 1.0f },	// 3 FLANK   — green
+	{ 0.3f, 0.9f, 1.0f, 1.0f },	// 4 RUSH    — cyan
+};
+static const char *squadStateNames[NUM_SQUAD_STATES] =
+{
+	"IDLE", "SHOOT", "RETREAT", "COVER", "MOVE", "POINT", "SCOUT"
+};
+
+static void CG_DrawMoraleLabel( const gentity_t *ent, const char *text, const vec4_t color )
+{
+	vec3_t pos;
+	float x, y;
+
+	VectorCopy( ent->currentOrigin, pos );
+	pos[2] += ent->maxs[2] + 20;
+
+	if ( DistanceSquared( pos, cg.refdef.vieworg ) > MORALE_DEBUG_RANGE*MORALE_DEBUG_RANGE )
+	{
+		return;
+	}
+	if ( !CG_WorldCoordToScreenCoordFloat( pos, &x, &y ) )
+	{
+		return;
+	}
+
+	const float scale = 0.7f;
+	const float w = cgi_R_Font_StrLenPixels( text, cgs.media.qhFontSmall, scale, cgs.widthRatioCoef );
+	cgi_R_Font_DrawString( x - w*0.5f, y, text, color, cgs.media.qhFontSmall, -1, scale, cgs.widthRatioCoef );
+}
+
+void CG_DrawMoraleDebug( void )
+{
+	for ( int g = 0; g < MAX_FRAME_GROUPS; g++ )
+	{
+		const AIGroupInfo_t *group = &level.groups[g];
+		if ( !group->numGroup )
+		{
+			continue;
+		}
+
+		// Live tier via the game's shared formula, so the display always matches behavior
+		// even when ST_Commander hasn't run a transition yet.
+		const int tier = AI_GetGroupMoraleTier( group );
+		const float *color = moraleTierColors[tier];
+
+		for ( int i = 0; i < group->numGroup; i++ )
+		{
+			const gentity_t *member = &g_entities[group->member[i].number];
+			if ( !member->inuse || !member->NPC || member->health <= 0 )
+			{
+				continue;
+			}
+
+			const char *state = squadStateNames[ member->NPC->squadState ];
+			const char *text;
+			if ( member == group->commander )
+			{
+				text = va( "G%i M:%i(%+i) %s | CMDR %s", g, group->morale, group->moraleAdjust, moraleTierNames[tier], state );
+			}
+			else
+			{
+				text = va( "%s", state );
+			}
+			CG_DrawMoraleLabel( member, text, color );
+		}
+	}
+}
 /*
 ================================================================================
 
@@ -4284,6 +4371,11 @@ static void CG_Draw2D( void )
 	else if ( cg_debugHealthBars.integer )
 	{
 		CG_DrawHealthBars();
+	}
+
+	if ( d_moraleDebug && d_moraleDebug->integer )
+	{
+		CG_DrawMoraleDebug();
 	}
 
 
