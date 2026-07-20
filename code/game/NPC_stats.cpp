@@ -3125,6 +3125,46 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				continue;
 			}
 
+			// maxGuard — saber guard/composure pool (0 = auto from saber defense level)
+			if ( !Q_stricmp( token, "maxGuard" ) )
+			{
+				if ( COM_ParseInt( &p, &n ) )
+				{
+					SkipRestOfLine( &p );
+					continue;
+				}
+				if ( n < 0 )
+				{
+					gi.Printf( S_COLOR_YELLOW"WARNING: bad %s in NPC '%s'\n", token, NPCName );
+					continue;
+				}
+				if ( NPC->NPC )
+				{
+					NPC->NPC->guardMax = n;
+				}
+				continue;
+			}
+
+			// guardRegen — guard points recovered per second (0 = auto)
+			if ( !Q_stricmp( token, "guardRegen" ) )
+			{
+				if ( COM_ParseInt( &p, &n ) )
+				{
+					SkipRestOfLine( &p );
+					continue;
+				}
+				if ( n < 0 )
+				{
+					gi.Printf( S_COLOR_YELLOW"WARNING: bad %s in NPC '%s'\n", token, NPCName );
+					continue;
+				}
+				if ( NPC->NPC )
+				{
+					NPC->NPC->guardRegen = n;
+				}
+				continue;
+			}
+
 			// fullName
 			if ( !Q_stricmp( token, "fullName" ) )
 			{
@@ -4233,6 +4273,37 @@ Ghoul2 Insert End
 		CG_RegisterClientModels( NPC->s.number );
 		CG_RegisterNPCCustomSounds( ci );
 		//CG_RegisterNPCEffects( NPC->client->playerTeam );
+	}
+
+	// Saber guard/composure defaults — any saber-capable NPC gets a guard pool unless
+	// the .npc file supplied maxGuard/guardRegen explicitly.
+	if ( NPC->NPC && !parsingPlayer && NPC->client )
+	{
+		const qboolean guardBoss = (qboolean)( (NPC->NPC->aiFlags&NPCAI_BOSS_CHARACTER)
+			|| NPC->client->NPC_class == CLASS_DESANN
+			|| NPC->client->NPC_class == CLASS_TAVION
+			|| NPC->client->NPC_class == CLASS_ALORA
+			|| NPC->client->NPC_class == CLASS_KYLE
+			|| NPC->client->NPC_class == CLASS_SHADOWTROOPER );
+		if ( NPC->NPC->guardMax <= 0
+			&& NPC->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_0 )
+		{
+			switch ( NPC->client->ps.forcePowerLevel[FP_SABER_DEFENSE] )
+			{
+			case FORCE_LEVEL_3:	NPC->NPC->guardMax = 130;	break;
+			case FORCE_LEVEL_2:	NPC->NPC->guardMax = 100;	break;
+			default:			NPC->NPC->guardMax = 70;	break;
+			}
+			if ( guardBoss )
+			{
+				NPC->NPC->guardMax = NPC->NPC->guardMax * 3 / 2;
+			}
+		}
+		if ( NPC->NPC->guardMax > 0 && NPC->NPC->guardRegen <= 0 )
+		{
+			NPC->NPC->guardRegen = guardBoss ? 14 : 8;
+		}
+		NPC->NPC->guard = NPC->NPC->guardMax;
 	}
 
 	return qtrue;

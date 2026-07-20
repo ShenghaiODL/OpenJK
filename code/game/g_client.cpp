@@ -2496,6 +2496,8 @@ static void G_SaberLoadClearTransientSaberState( gentity_t *ent )
 	playerState_t *ps = &ent->client->ps;
 
 	ps->saberBlockingTime = 0;
+	ps->saberBlockStartTime = 0;
+	ps->perfectParryDebounce = 0;
 	ps->saberBlocking = BLK_NO;
 	ps->saberBlocked = BLOCKED_NONE;
 	ps->saberMoveNext = LS_NONE;

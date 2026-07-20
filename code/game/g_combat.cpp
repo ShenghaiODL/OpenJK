@@ -5582,6 +5582,13 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 		targ = targ->owner;
 	}
 
+	// Guard-broken saberists take heavily amplified saber damage — the guard-break payoff window
+	if ( mod == MOD_SABER && damage > 0
+		&& targ->NPC && targ->NPC->guardBreakTime > level.time )
+	{
+		damage = damage * 5 / 2;
+	}
+
 	if ( (targ->flags&FL_SHIELDED) && mod != MOD_SABER  && !targ->client)
 	{//magnetically protected, this thing can only be damaged by lightsabers
 		return;

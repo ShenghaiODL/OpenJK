@@ -64,6 +64,7 @@ extern cvar_t		*d_JediAI;
 extern cvar_t		*d_saberCombat;
 extern cvar_t		*d_moraleDebug;		// draw group morale/squad-state info over NPC heads
 extern int AI_GetGroupMoraleTier( const AIGroupInfo_t *group );	// 0 ROUTED .. 4 RUSH
+extern void G_DamageGuard( gentity_t *victim, gentity_t *attacker, int amount );	// saber guard/composure drain (wp_saber.cpp)
 extern void NPC_Think ( gentity_t *self);
 extern void pitch_roll_for_slope( gentity_t *forwhom, vec3_t pass_slope = NULL, vec3_t storeAngles = NULL, qboolean keepPitch = qfalse );
 

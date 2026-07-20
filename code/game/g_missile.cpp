@@ -145,7 +145,7 @@ G_ReflectMissile
 ================
 */
 extern gentity_t *Jedi_FindEnemyInCone( gentity_t *self, gentity_t *fallback, float minDot );
-void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward )
+void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward, qboolean perfect = qfalse )
 {
 	vec3_t	bounce_dir;
 	int		i;
@@ -161,7 +161,19 @@ void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward )
 	//save the original speed
 	speed = VectorNormalize( missile->s.pos.trDelta );
 
-	if ( ent && owner && owner->client && !owner->client->ps.saberInFlight )
+	if ( perfect && owner && owner->client )
+	{//timed perfect parry: dead-accurate along the crosshair, no roll
+		vec3_t viewFwd;
+		AngleVectors( owner->client->ps.viewangles, viewFwd, NULL, NULL );
+		VectorCopy( viewFwd, bounce_dir );
+		for ( i = 0; i < 3; i++ )
+		{
+			bounce_dir[i] += Q_flrand( -0.05f, 0.05f );
+		}
+		VectorNormalize( bounce_dir );
+		reflected = qtrue;
+	}
+	else if ( ent && owner && owner->client && !owner->client->ps.saberInFlight )
 	{//saber in hand: accuracy determined by defense level (75% at level 3, 50% at level 2, 20% at level 1)
 		int defLevel = owner->client->ps.forcePowerLevel[FP_SABER_DEFENSE];
 
@@ -805,6 +817,8 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace, int hitLoc=HL_NONE )
 
 extern bool WP_DoingMoronicForcedAnimationForForcePowers(gentity_t *ent);
 extern cvar_t *g_saberAutoBlocking;
+extern qboolean WP_InPerfectParryWindow( const gentity_t *self );
+extern void WP_PerfectParrySuccess( gentity_t *self, vec3_t impactPoint, vec3_t normal );
 	// check for hitting a lightsaber
 	if ( other->contents & CONTENTS_LIGHTSABER )
 	{
@@ -830,10 +844,11 @@ extern cvar_t *g_saberAutoBlocking;
 					G_FreeEntity( ent );
 					return;
 				}
-				// Player with no force power cannot deflect missiles
+				// Player with no force power cannot deflect missiles (unless perfectly timed — perfect parries are free)
 				if ( other->owner && other->owner->client && !other->owner->s.number
 					&& !g_saberAutoBlocking->integer
-					&& other->owner->client->ps.forcePower <= 0 )
+					&& other->owner->client->ps.forcePower <= 0
+					&& !WP_InPerfectParryWindow( other->owner ) )
 				{
 					if ( other->owner->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time )
 					{
@@ -850,6 +865,14 @@ extern cvar_t *g_saberAutoBlocking;
 					&& other->owner->client->ps.saberBlockingTime <= level.time )
 				{
 					G_MissileImpacted( ent, other->owner, trace->endpos, trace->plane.normal, hitLoc );
+					return;
+				}
+				else if ( other->owner && WP_InPerfectParryWindow( other->owner ) )
+				{//timed perfect parry: guaranteed reflect, dead-accurate, free, with distinct feedback
+					G_ReflectMissile( other, ent, trace->plane.normal, qtrue );
+					other->owner->client->ps.saberEventFlags |= SEF_DEFLECTED;
+					WP_PerfectParrySuccess( other->owner, trace->endpos, trace->plane.normal );
+					G_MissileReflectEffect( ent, trace->endpos, trace->plane.normal );
 					return;
 				}
 				else

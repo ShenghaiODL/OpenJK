@@ -385,6 +385,15 @@ public:
 	int			ffireDebounce;
 	int			ffireFadeDebounce;
 
+	// Saber guard/composure system (saber-wielding NPCs only; guardMax 0 = no guard)
+	int			guard;				//current guard points
+	int			guardMax;			//break threshold; refills after a break window ends
+	int			guardRegen;			//points per second regenerated
+	int			guardRegenDebounce;	//no regen until level.time passes this
+	int			guardBreakTime;		//while level.time < this, NPC is guard-broken (can't parry/evade, takes bonus saber damage)
+	int			lastBlockDir;		//saberBlocked direction of last blocked attack (predictability scaling)
+	int			sameBlockDirCount;	//consecutive same-direction blocked attacks
+
 
 	void sg_export(
 		ojk::SavedGameHelper& saved_game) const
@@ -508,6 +517,13 @@ public:
 		saved_game.write<int32_t>(ffireCount);
 		saved_game.write<int32_t>(ffireDebounce);
 		saved_game.write<int32_t>(ffireFadeDebounce);
+		saved_game.write<int32_t>(guard);
+		saved_game.write<int32_t>(guardMax);
+		saved_game.write<int32_t>(guardRegen);
+		saved_game.write<int32_t>(guardRegenDebounce);
+		saved_game.write<int32_t>(guardBreakTime);
+		saved_game.write<int32_t>(lastBlockDir);
+		saved_game.write<int32_t>(sameBlockDirCount);
 	}
 
 	void sg_import(
@@ -632,6 +648,13 @@ public:
 		saved_game.read<int32_t>(ffireCount);
 		saved_game.read<int32_t>(ffireDebounce);
 		saved_game.read<int32_t>(ffireFadeDebounce);
+		saved_game.read<int32_t>(guard);
+		saved_game.read<int32_t>(guardMax);
+		saved_game.read<int32_t>(guardRegen);
+		saved_game.read<int32_t>(guardRegenDebounce);
+		saved_game.read<int32_t>(guardBreakTime);
+		saved_game.read<int32_t>(lastBlockDir);
+		saved_game.read<int32_t>(sameBlockDirCount);
 	}
 }; // gNPC_t
 

@@ -2488,6 +2488,31 @@ void CG_DrawHealthBar(centity_t *cent, float chX, float chY, float chW, float ch
 
 	//then draw the other part greyed out
 	CG_FillRect(x+(percent*chW), y+1.0f, chW-(percent*chW)-1.0f, chH-1.0f, cColor);
+
+	// Saber guard/composure bar — thinner orange bar just below health for saberist NPCs
+	if ( cent->gent->NPC && cent->gent->NPC->guardMax > 0 )
+	{
+		const float gH = chH * 0.6f;
+		vec4_t gColor;
+		if ( cent->gent->NPC->guardBreakTime > cg.time )
+		{//broken — flash white so the opening reads instantly
+			const float flash = ( cg.time % 300 < 150 ) ? 1.0f : 0.6f;
+			gColor[0] = gColor[1] = gColor[2] = flash;
+			gColor[3] = 0.7f;
+			CG_DrawRect( x, y+chH+1.0f, chW, gH, 1.0f, colorTable[CT_BLACK] );
+			CG_FillRect( x+1.0f, y+chH+2.0f, chW-2.0f, gH-1.0f, gColor );
+		}
+		else
+		{
+			const float gPercent = (float)cent->gent->NPC->guard / (float)cent->gent->NPC->guardMax;
+			gColor[0] = 1.0f;
+			gColor[1] = 0.6f;
+			gColor[2] = 0.1f;
+			gColor[3] = 0.5f;
+			CG_DrawRect( x, y+chH+1.0f, chW, gH, 1.0f, colorTable[CT_BLACK] );
+			CG_FillRect( x+1.0f, y+chH+2.0f, (gPercent*chW)-1.0f, gH-1.0f, gColor );
+		}
+	}
 }
 
 #define MAX_HEALTH_BAR_ENTS 32
@@ -2869,6 +2894,24 @@ static void CG_DrawCrosshair( vec3_t worldPoint )
 		cgi_R_DrawStretchPic( x + cg.refdef.x + 0.5 * (640 - w),
 			y + cg.refdef.y + 0.5 * (480 - h),
 			w, h, 0, 0, 1, 1, hShader );
+	}
+
+	// Perfect-parry flash: bright force-swirl burst over the crosshair, expanding and fading ~600ms
+	{
+		extern int g_perfectParryFlashTime;
+		const int flashElapsed = cg.time - g_perfectParryFlashTime;
+		if ( g_perfectParryFlashTime && flashElapsed >= 0 && flashElapsed < 600 )
+		{
+			const float fade = 1.0f - (float)flashElapsed / 600.0f;
+			ecolor[0] = ecolor[1] = ecolor[2] = fade;
+			ecolor[3] = 1.0f;
+			cgi_R_SetColor( ecolor );
+			const float fw = w * ( 2.0f + (1.0f - fade) );
+			const float fh = h * ( 2.0f + (1.0f - fade) );
+			cgi_R_DrawStretchPic( x + cg.refdef.x + 0.5f * ( 640 - fw ), y + cg.refdef.y + 0.5f * ( 480 - fh ),
+									fw, fh, 0, 0, 1, 1, cgs.media.forceCoronaShader );
+			cgi_R_SetColor( NULL );
+		}
 	}
 
 	if ( cg.forceCrosshairStartTime && cg_crosshairForceHint.integer ) // drawing extra bits
@@ -3937,6 +3980,24 @@ qboolean cg_usingInFrontOf = qfalse;
 qboolean CanUseInfrontOf(gentity_t*);
 extern vec3_t g_playerUseOrigin;
 extern vec3_t g_playerUseForward;
+extern int    g_playerUseTargetEnt;
+extern int G_FindClassConflictWeapon( const playerState_t *ps, int newWeapon );
+
+// Display name for an item via the string packages ("SP_INGAME_<classname>",
+// falling back to "SPMOD_INGAME_<classname>", then the raw classname).
+static const char *CG_ItemDisplayName( const gitem_t *item, char *buf, int bufSize )
+{
+	if ( cgi_SP_GetStringTextString( va("SP_INGAME_%s", item->classname), buf, bufSize ) )
+	{
+		return buf;
+	}
+	if ( cgi_SP_GetStringTextString( va("SPMOD_INGAME_%s", item->classname), buf, bufSize ) )
+	{
+		return buf;
+	}
+	return item->classname;
+}
+
 static void CG_UseIcon()
 {
 	VectorCopy( cg.refdef.vieworg, g_playerUseOrigin );
@@ -3946,6 +4007,35 @@ static void CG_UseIcon()
 	{
 		cgi_R_SetColor( NULL );
 		CG_DrawPic( 50*cgs.widthRatioCoef, 285, 64*cgs.widthRatioCoef, 64, cgs.media.useableHint );
+
+		// Loadout hint: name the weapon pickup being looked at, and what it swaps out
+		if ( g_playerUseTargetEnt != ENTITYNUM_NONE )
+		{
+			const gentity_t *target = &g_entities[g_playerUseTargetEnt];
+			if ( target->s.eType == ET_ITEM && target->item && target->item->giType == IT_WEAPON )
+			{
+				char newBuf[128], oldBuf[128];
+				const char *text = NULL;
+				const char *newName = CG_ItemDisplayName( target->item, newBuf, sizeof(newBuf) );
+				const int conflictWeapon = G_FindClassConflictWeapon( &cg.snap->ps, target->item->giTag );
+				if ( conflictWeapon != WP_NONE )
+				{
+					const gitem_t *oldItem = FindItemForWeapon( (weapon_t)conflictWeapon );
+					if ( oldItem )
+					{
+						text = va( "Swap %s for %s", CG_ItemDisplayName( oldItem, oldBuf, sizeof(oldBuf) ), newName );
+					}
+				}
+				else if ( !cg.snap->ps.weapons[target->item->giTag] )
+				{
+					text = va( "Take %s", newName );
+				}
+				if ( text )
+				{
+					cgi_R_Font_DrawString( 50*cgs.widthRatioCoef, 351, text, colorTable[CT_WHITE], cgs.media.qhFontSmall, -1, 0.8f, cgs.widthRatioCoef );
+				}
+			}
+		}
 	}
 }
 

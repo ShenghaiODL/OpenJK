@@ -1984,6 +1984,10 @@ static qboolean PM_CheckJump( void )
 									VectorScale( oppDir, -1, oppDir );
 									//FIXME: need knockdown anim
 									G_Damage( traceEnt, pm->gent, pm->gent, oppDir, traceEnt->currentOrigin, 10, DAMAGE_NO_ARMOR|DAMAGE_NO_HIT_LOC|DAMAGE_NO_KNOCKBACK, MOD_MELEE );
+									{
+										extern void G_DamageGuard( gentity_t *victim, gentity_t *attacker, int amount );
+										G_DamageGuard( traceEnt, pm->gent, 20 );	//flip-kicks chunk saber guard
+									}
 									VectorCopy( fwd, fxDir );
 									VectorScale( fxDir, -1, fxDir );
 									G_PlayEffect( G_EffectIndex( "melee/kick_impact" ), trace.endpos, fxDir );
@@ -14838,6 +14842,17 @@ void PM_AdjustAttackStates( pmove_t *pm )
 		&& (pm->cmd.buttons&BUTTON_SABERBLOCK)
 		&& pm->ps->weapon == WP_SABER )
 	{
+		// Perfect-parry window: pm->gent->client->buttons still holds LAST frame's buttons
+		// (the swap happens after Pmove in ClientThink), so this detects the press edge.
+		// A new window is only granted past the cooldown; WP_PerfectParrySuccess resets it.
+		if ( pm->gent && pm->gent->client
+			&& !(pm->gent->client->buttons&BUTTON_SABERBLOCK)
+			&& pm->ps->perfectParryDebounce < pm->cmd.serverTime )
+		{
+			extern cvar_t *g_perfectParryCooldown;
+			pm->ps->saberBlockStartTime = pm->cmd.serverTime;
+			pm->ps->perfectParryDebounce = pm->cmd.serverTime + g_perfectParryCooldown->integer;
+		}
 		pm->ps->saberBlockingTime = pm->cmd.serverTime + 100;
 		pm->cmd.buttons &= ~BUTTON_ATTACK;
 		pm->cmd.buttons &= ~BUTTON_ALT_ATTACK;

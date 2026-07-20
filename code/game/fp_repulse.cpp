@@ -41,7 +41,7 @@ extern qboolean Rosh_BeingHealed( gentity_t *self );
 extern void G_KnockOffVehicle( gentity_t *pRider, gentity_t *self, qboolean bPull );
 extern void WP_ForceKnockdown( gentity_t *self, gentity_t *pusher, qboolean pull, qboolean strongKnockdown, qboolean breakSaberLock );
 extern qboolean Jedi_WaitingAmbush( gentity_t *self );
-extern void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward );
+extern void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward, qboolean perfect = qfalse );
 extern qboolean InFront( vec3_t spot, vec3_t from, vec3_t fromAngles, float threshHold = 0.0f );
 extern void WP_KnockdownTurret( gentity_t *self, gentity_t *pas );
 extern void WP_SaberDrop( gentity_t *self, gentity_t *saber );

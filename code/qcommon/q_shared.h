@@ -1892,6 +1892,8 @@ public:
 	int			saberHitWallSoundDebounceTime;
 	int			saberEventFlags;
 	int			saberBlockingTime;
+	int			saberBlockStartTime;	//stamped when the block button is PRESSED (perfect-parry window start)
+	int			perfectParryDebounce;	//no new perfect-parry window until this passes (reset on success)
 	int			saberAnimLevel;
 	int			saberAttackChainCount;
 	int			saberLockTime;
@@ -2078,6 +2080,8 @@ public:
 		saved_game.write<int32_t>(saberHitWallSoundDebounceTime);
 		saved_game.write<int32_t>(saberEventFlags);
 		saved_game.write<int32_t>(saberBlockingTime);
+		saved_game.write<int32_t>(saberBlockStartTime);
+		saved_game.write<int32_t>(perfectParryDebounce);
 		saved_game.write<int32_t>(saberAnimLevel);
 		saved_game.write<int32_t>(saberAttackChainCount);
 		saved_game.write<int32_t>(saberLockTime);
@@ -2256,6 +2260,8 @@ public:
 		saved_game.read<int32_t>(saberHitWallSoundDebounceTime);
 		saved_game.read<int32_t>(saberEventFlags);
 		saved_game.read<int32_t>(saberBlockingTime);
+		saved_game.read<int32_t>(saberBlockStartTime);
+		saved_game.read<int32_t>(perfectParryDebounce);
 		saved_game.read<int32_t>(saberAnimLevel);
 		saved_game.read<int32_t>(saberAttackChainCount);
 		saved_game.read<int32_t>(saberLockTime);

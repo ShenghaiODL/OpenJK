@@ -493,6 +493,33 @@ void G_DropClassWeapon( gentity_t *self, int weaponTag )
 	}
 }
 
+// Which owned weapon (if any) conflicts with picking up newWeapon under the
+// class-based loadout — i.e. the first owned weapon sharing its loadout class.
+// WP_NONE if no conflict (also used by cgame for the "Swap X for Y" use hint).
+int G_FindClassConflictWeapon( const playerState_t *ps, int newWeapon )
+{
+	if ( newWeapon <= WP_NONE || newWeapon >= WP_NUM_WEAPONS || newWeapon == WP_SABER
+		|| ps->weapons[newWeapon] )
+	{//invalid, saber, or already owned — no conflict
+		return WP_NONE;
+	}
+	const weaponClass_t pickupClass = weaponData[newWeapon].loadoutClass;
+	if ( pickupClass == WPCLASS_NONE )
+	{
+		return WP_NONE;
+	}
+	for ( int i = 0; i < WP_NUM_WEAPONS; i++ )
+	{
+		if ( i != newWeapon
+			&& ps->weapons[i]
+			&& weaponData[i].loadoutClass == pickupClass )
+		{
+			return i;
+		}
+	}
+	return WP_NONE;
+}
+
 int Pickup_Weapon (gentity_t *ent, gentity_t *other)
 {
 	int		quantity;
@@ -530,34 +557,20 @@ int Pickup_Weapon (gentity_t *ent, gentity_t *other)
 	// (stays in the world) unless the player is explicitly holding +use, in which case
 	// it's a deliberate swap: drop the currently-held weapon of that class first.
 	qboolean didClassSwap = qfalse;
-	if ( !other->s.number && !hadWeapon && ent->item->giTag != WP_SABER )
+	if ( !other->s.number && !hadWeapon )
 	{
-		weaponClass_t pickupClass = weaponData[ent->item->giTag].loadoutClass;
-		if ( pickupClass != WPCLASS_NONE )
+		int conflictWeapon = G_FindClassConflictWeapon( &other->client->ps, ent->item->giTag );
+		if ( conflictWeapon != WP_NONE )
 		{
-			int conflictWeapon = WP_NONE;
-			for ( int i = 0; i < WP_NUM_WEAPONS; i++ )
-			{
-				if ( i != ent->item->giTag
-					&& other->client->ps.weapons[i]
-					&& weaponData[i].loadoutClass == pickupClass )
-				{
-					conflictWeapon = i;
-					break;
-				}
+			if ( !(other->client->usercmd.buttons&BUTTON_USE) || other->useDebounceTime > level.time )
+			{//not pressing use, or still debounced from a very recent swap - leave it in the world.
+				//useDebounceTime makes this a press, not a hold: holding +use down across
+				//multiple touch frames should only swap once, not oscillate every frame.
+				return 0;
 			}
-			if ( conflictWeapon != WP_NONE )
-			{
-				if ( !(other->client->usercmd.buttons&BUTTON_USE) || other->useDebounceTime > level.time )
-				{//not pressing use, or still debounced from a very recent swap - leave it in the world.
-					//useDebounceTime makes this a press, not a hold: holding +use down across
-					//multiple touch frames should only swap once, not oscillate every frame.
-					return 0;
-				}
-				G_DropClassWeapon( other, conflictWeapon );
-				other->useDebounceTime = level.time + 300;
-				didClassSwap = qtrue;
-			}
+			G_DropClassWeapon( other, conflictWeapon );
+			other->useDebounceTime = level.time + 300;
+			didClassSwap = qtrue;
 		}
 	}
 

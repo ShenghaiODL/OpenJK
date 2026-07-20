@@ -2018,6 +2018,7 @@ gentity_t *G_KickTrace( gentity_t *ent, vec3_t kickDir, float kickDist, vec3_t k
 					if ( hitEnt->takedamage )
 					{//hurt it
 						G_Damage( hitEnt, ent, ent, kickDir, trace.endpos, kickDamage, DAMAGE_NO_KNOCKBACK|DAMAGE_NO_KILL, MOD_MELEE );
+						G_DamageGuard( hitEnt, ent, 20 );	//kicks chunk saber guard
 					}
 					//do kick hit sound and impact effect
 					if ( TIMER_Done( ent, "kickSoundDebounce" ) )

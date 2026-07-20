@@ -4133,6 +4133,10 @@ static void Jedi_EvasionSaber( vec3_t enemy_movedir, float enemy_dist, vec3_t en
 	qboolean	throwing_saber = qfalse;
 	qboolean	shooting_lightning = qfalse;
 
+	if ( NPCInfo->guardBreakTime > level.time )
+	{//guard-broken — too staggered to evade or set up a block
+		return;
+	}
 	if ( !NPC->enemy->client )
 	{
 		return;
@@ -7635,6 +7639,28 @@ extern void NPC_BSSniper_Default( void );
 extern void G_UcmdMoveForDir( gentity_t *self, usercmd_t *cmd, vec3_t dir );
 void NPC_BSJedi_Default( void )
 {
+	// Saber guard: refill after a break window ends; otherwise slow regen when not recently hit
+	if ( NPCInfo->guardMax > 0 )
+	{
+		if ( NPCInfo->guardBreakTime && NPCInfo->guardBreakTime <= level.time )
+		{//break window over — fresh guard (bosses effectively fight in guard phases)
+			NPCInfo->guard = NPCInfo->guardMax;
+			NPCInfo->guardBreakTime = 0;
+		}
+		else if ( NPCInfo->guardBreakTime <= level.time
+			&& NPCInfo->guard < NPCInfo->guardMax
+			&& NPCInfo->guardRegenDebounce <= level.time
+			&& TIMER_Done( NPC, "guardRegen" ) )
+		{//half the per-second rate on a 500ms tick
+			TIMER_Set( NPC, "guardRegen", 500 );
+			NPCInfo->guard += Q_max( 1, NPCInfo->guardRegen / 2 );
+			if ( NPCInfo->guard > NPCInfo->guardMax )
+			{
+				NPCInfo->guard = NPCInfo->guardMax;
+			}
+		}
+	}
+
 	if ( Jedi_InSpecialMove() )
 	{
 		return;

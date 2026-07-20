@@ -40,6 +40,9 @@ extern qboolean PM_CrouchAnim( int anim );
 // so both the icon check and activation trace along the crosshair direction.
 vec3_t g_playerUseOrigin  = {0.0f, 0.0f, 0.0f};
 vec3_t g_playerUseForward = {1.0f, 0.0f, 0.0f};
+// Entity CanUseInfrontOf resolved this frame (ENTITYNUM_NONE if none) — read by
+// cgame (same module) to name the use target, e.g. the "Swap X for Y" hint.
+int    g_playerUseTargetEnt = ENTITYNUM_NONE;
 /*
 =========================================================================
 
@@ -1634,13 +1637,16 @@ static qboolean CanUseInfrontOfPartOfLevel(gentity_t* ent )	//originally from VV
 	return qfalse;
 }
 
-#define USE_DISTANCE	64.0f
+#define USE_DISTANCE		64.0f
+#define ITEM_USE_DISTANCE	128.0f	//weapon/item pickups can be use-grabbed from farther away
 extern qboolean eweb_can_be_used( gentity_t *self, gentity_t *other, gentity_t *activator );
 qboolean CanUseInfrontOf(gentity_t *ent)
 {
 	gentity_t	*target;
 	trace_t		trace;
 	vec3_t		src, dest, vf;
+
+	g_playerUseTargetEnt = ENTITYNUM_NONE;
 
 	if ( ent->s.number && ent->client->NPC_class == CLASS_ATST )
 	{//a player trying to get out of his ATST
@@ -1690,20 +1696,22 @@ qboolean CanUseInfrontOf(gentity_t *ent)
 		return (CanUseInfrontOfPartOfLevel(ent));
 	}
 
+	target = &g_entities[trace.entityNum];
+
 	// Use player body eye position (not renderInfo.eyePoint, which equals camera pos in gun cam).
+	// Item pickups get a longer reach so the swap/take hint shows without standing on them.
 	vec3_t playerEye;
 	VectorCopy( ent->currentOrigin, playerEye );
 	playerEye[2] += ent->client->ps.viewheight;
-	if ( Distance( playerEye, trace.endpos ) > USE_DISTANCE )
+	if ( Distance( playerEye, trace.endpos ) > ( (target->s.eType == ET_ITEM) ? ITEM_USE_DISTANCE : USE_DISTANCE ) )
 	{
 		return qfalse;
 	}
 
-	target = &g_entities[trace.entityNum];
-
 	if ( target && target->client && target->client->NPC_class == CLASS_VEHICLE )
 	{
 		// Attempt to board this vehicle.
+		g_playerUseTargetEnt = trace.entityNum;
 		return qtrue;
 	}
 	//Check for a use command
@@ -1712,8 +1720,9 @@ qboolean CanUseInfrontOf(gentity_t *ent)
 		{//item, see if we could actually pick it up
 			if ( (target->spawnflags&128/*ITMSF_USEPICKUP*/) )
 			{//player has to be touching me and hit use to pick it up, so don't allow this
-				if ( !G_BoundsOverlap( target->absmin, target->absmax, ent->absmin, ent->absmax ) )
-				{//not touching
+				if ( !(target->item && target->item->giType == IT_WEAPON)
+					&& !G_BoundsOverlap( target->absmin, target->absmax, ent->absmin, ent->absmax ) )
+				{//not touching (weapons are exempt — they can be use-grabbed at range for loadout swaps)
 					return qfalse;
 				}
 			}
@@ -1740,6 +1749,7 @@ qboolean CanUseInfrontOf(gentity_t *ent)
 				return qfalse;
 			}
 		}
+		g_playerUseTargetEnt = trace.entityNum;
 		return qtrue;
 	}
 
@@ -1751,6 +1761,7 @@ qboolean CanUseInfrontOf(gentity_t *ent)
 		&& !(target->NPC->scriptFlags&SCF_NO_RESPONSE)
 		&& G_ValidActivateBehavior (target, BSET_USE))
 	{
+		g_playerUseTargetEnt = trace.entityNum;
 		return qtrue;
 	}
 
@@ -1804,11 +1815,7 @@ void TryUse( gentity_t *ent )
 
 	gi.trace( &trace, g_playerUseOrigin, vec3_origin, vec3_origin, dest, ent->s.number, MASK_OPAQUE|CONTENTS_SOLID|CONTENTS_TERRAIN|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE , G2_NOCOLLIDE, 10);
 
-	vec3_t playerEyeTU;
-	VectorCopy( ent->currentOrigin, playerEyeTU );
-	playerEyeTU[2] += ent->client->ps.viewheight;
-	if ( trace.fraction == 1.0f || trace.entityNum  >= ENTITYNUM_WORLD
-		|| Distance( playerEyeTU, trace.endpos ) > USE_DISTANCE )
+	if ( trace.fraction == 1.0f || trace.entityNum  >= ENTITYNUM_WORLD )
 	{
 		//TODO: Play a failure sound
 		/*
@@ -1822,11 +1829,27 @@ void TryUse( gentity_t *ent )
 
 	target = &g_entities[trace.entityNum];
 
+	vec3_t playerEyeTU;
+	VectorCopy( ent->currentOrigin, playerEyeTU );
+	playerEyeTU[2] += ent->client->ps.viewheight;
+	if ( Distance( playerEyeTU, trace.endpos ) > ( (target->s.eType == ET_ITEM) ? ITEM_USE_DISTANCE : USE_DISTANCE ) )
+	{
+		return;
+	}
+
 	if ( target && target->client && target->client->NPC_class == CLASS_VEHICLE )
 	{
 		// Attempt to board this vehicle.
 		target->m_pVehicle->m_pVehicleInfo->Board( target->m_pVehicle, ent );
 
+		return;
+	}
+
+	if ( target->s.eType == ET_ITEM && target->item && target->item->giType == IT_WEAPON )
+	{//use-grab a weapon pickup at range (loadout swap UX) — Touch_Item re-checks
+		//BUTTON_USE, pickup delay, and grabbability, so this can't bypass the swap rules
+		extern void Touch_Item( gentity_t *ent, gentity_t *other, trace_t *trace );
+		Touch_Item( target, ent, NULL );
 		return;
 	}
 

@@ -74,7 +74,7 @@ extern void G_AddVoiceEvent( gentity_t *self, int event, int speakDebounceTime )
 extern void CG_ChangeWeapon( int num );
 extern void CG_SaberDoWeaponHitMarks( gclient_t *client, gentity_t *saberEnt, gentity_t *hitEnt, int saberNum, int bladeNum, vec3_t hitPos, vec3_t hitDir, vec3_t uaxis, vec3_t splashBackDir, float sizeTimeScale );
 extern void G_AngerAlert( gentity_t *self );
-extern void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward );
+extern void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward, qboolean perfect = qfalse );
 extern int G_CheckLedgeDive( gentity_t *self, float checkDist, const vec3_t checkVel, qboolean tryOpposite, qboolean tryPerp );
 extern void G_BounceMissile( gentity_t *ent, trace_t *trace );
 extern qboolean G_PointInBounds( const vec3_t point, const vec3_t mins, const vec3_t maxs );
@@ -4258,10 +4258,103 @@ qboolean WP_SabersCheckLock( gentity_t *ent1, gentity_t *ent2 )
 	return qfalse;
 }
 
+extern cvar_t	*g_perfectParryWindow;
+extern cvar_t	*g_perfectParryCooldown;
+
+/*
+WP_InPerfectParryWindow
+
+qtrue while the player (manual block mode) is inside the perfect-parry timing
+window: the first g_perfectParryWindow ms after PRESSING the block button
+(saberBlockStartTime is stamped on the press edge in PM_AdjustAttackStates,
+gated by the perfectParryDebounce cooldown).
+*/
+qboolean WP_InPerfectParryWindow( const gentity_t *self )
+{
+	if ( !self || self->s.number != 0 || !self->client
+		|| g_saberAutoBlocking->integer
+		|| self->client->ps.saberBlockingTime <= level.time
+		|| !self->client->ps.saberBlockStartTime )
+	{
+		return qfalse;
+	}
+	return (qboolean)( level.time - self->client->ps.saberBlockStartTime < g_perfectParryWindow->integer );
+}
+
+int g_perfectParryFlashTime = 0;	// read by CG_DrawCrosshair (same module) for the crosshair swirl flash
+
+/*
+WP_PerfectParrySuccess
+
+Feedback + chaining for a landed perfect parry (saber or projectile): resets the
+cooldown so streams (repeater/Z-6) and multi-duelist pressure can be ridden
+tap-by-tap, consumes the current window (each parry needs its own timed tap),
+and fires the distinct audio/visual cue.
+*/
+void WP_PerfectParrySuccess( gentity_t *self, vec3_t impactPoint, vec3_t normal )
+{
+	self->client->ps.perfectParryDebounce = 0;
+	self->client->ps.saberBlockStartTime = 0;
+	g_perfectParryFlashTime = level.time;
+	G_SoundOnEnt( self, CHAN_ITEM, "sound/items/respawn1.wav" );
+	G_PlayEffect( "saber/saber_block", impactPoint, normal );
+}
+
+/*
+G_DamageGuard
+
+Saber guard/composure (NPCs only). Drains the victim's guard; at zero, forces a
+guard break: an extended broken-parry stagger during which they cannot parry or
+evade (WP_SaberParry / Jedi_EvasionSaber check guardBreakTime) and take bonus
+saber damage (G_Damage). Guard refills when the break window lapses, so bosses
+naturally fight in guard phases.
+*/
+void G_DamageGuard( gentity_t *victim, gentity_t *attacker, int amount )
+{
+	if ( !victim || !victim->NPC || !victim->client || victim->NPC->guardMax <= 0 )
+	{
+		return;
+	}
+	if ( victim->health <= 0 || victim->NPC->guardBreakTime > level.time )
+	{//dead or already broken
+		return;
+	}
+
+	victim->NPC->guard -= amount;
+	victim->NPC->guardRegenDebounce = level.time + 2000;
+
+	if ( victim->NPC->guard <= 0 )
+	{//guard break — stagger open
+		victim->NPC->guard = 0;
+		const qboolean guardBoss = (qboolean)( (victim->NPC->aiFlags&NPCAI_BOSS_CHARACTER)
+			|| victim->client->NPC_class == CLASS_DESANN
+			|| victim->client->NPC_class == CLASS_TAVION
+			|| victim->client->NPC_class == CLASS_ALORA
+			|| victim->client->NPC_class == CLASS_KYLE
+			|| victim->client->NPC_class == CLASS_SHADOWTROOPER );
+		victim->NPC->guardBreakTime = level.time + ( guardBoss ? Q_irand( 900, 1300 ) : Q_irand( 1600, 2400 ) );
+		//same stagger the engine uses for an overwhelmed parry (pmove picks the anim)
+		victim->client->ps.saberBlocked = BLOCKED_PARRY_BROKEN;
+		victim->client->ps.saberBounceMove = LS_NONE;
+		//audible tell — stumble bark
+		G_AddVoiceEvent( victim, Q_irand( EV_PUSHED1, EV_PUSHED3 ), 500 );
+#ifndef FINAL_BUILD
+		if ( d_saberCombat->integer )
+		{
+			gi.Printf( S_COLOR_RED"%s GUARD BROKEN (%dms window)!\n", victim->NPC_type, victim->NPC->guardBreakTime - level.time );
+		}
+#endif
+	}
+}
+
 qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, int bladeNum )
 {
 	if ( !victim || !victim->client || !attacker )
 	{
+		return qfalse;
+	}
+	if ( victim->NPC && victim->NPC->guardBreakTime > level.time )
+	{//guard-broken — defenseless until the window lapses
 		return qfalse;
 	}
 	if ( Rosh_BeingHealed( victim ) )
@@ -4277,29 +4370,9 @@ qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, in
 	{
 		return qfalse;
 	}
+	// Manual mode: holding block parries from any direction — timing (the perfect-parry
+	// window) is the skill test, and impact position picks the directional block anim.
 	qboolean canParry = (qboolean)(victim->s.number != 0 || g_saberAutoBlocking->integer || victim->client->ps.saberBlockingTime > level.time);
-
-	// For manual-mode player, require strafing toward side attacks
-	if ( canParry && !victim->s.number && !g_saberAutoBlocking->integer )
-	{
-		vec3_t diff={0,0,0}, fwdangles={0,0,0}, right;
-		VectorSubtract( saberHitLocation, victim->client->renderInfo.eyePoint, diff );
-		diff[2] = 0;
-		VectorNormalize( diff );
-		fwdangles[1] = victim->client->ps.viewangles[1];
-		AngleVectors( fwdangles, NULL, right, NULL );
-		float rightdot = DotProduct( right, diff );
-		signed char rm = victim->client->pers.lastCommand.rightmove;
-		if ( rightdot > 0.3f )
-		{//attack from player's right — must strafe right to block
-			canParry = (qboolean)(rm > 40);
-		}
-		else if ( rightdot < -0.3f )
-		{//attack from player's left — must strafe left to block
-			canParry = (qboolean)(rm < -40);
-		}
-		// center/top attacks always parried when button held
-	}
 
 	if ( canParry )
 	{//either an NPC or a player who is blocking
@@ -4310,6 +4383,41 @@ qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, in
 			WP_SaberBlockNonRandom( victim, saberHitLocation, qfalse );
 		}
 		victim->client->ps.saberEventFlags |= SEF_PARRIED;
+
+		// Saber guard: blocking costs composure (NPC defenders only)
+		if ( victim->NPC && victim->NPC->guardMax > 0 && attacker->client )
+		{
+			int gdmg;
+			switch ( attacker->client->ps.saberAnimLevel )
+			{
+			case SS_FAST:	gdmg = 6;	break;
+			case SS_MEDIUM:	gdmg = 10;	break;
+			case SS_STRONG:	gdmg = 16;	break;
+			case SS_DESANN:	gdmg = 20;	break;
+			case SS_TAVION:	gdmg = 12;	break;
+			case SS_DUAL:	gdmg = 8;	break;
+			case SS_STAFF:	gdmg = 9;	break;
+			default:		gdmg = 10;	break;
+			}
+			gdmg += attacker->client->ps.saber[saberNum].breakParryBonus * 2;
+			// Repeated attacks from the same angle lose guard-damage effectiveness
+			if ( victim->client->ps.saberBlocked == victim->NPC->lastBlockDir )
+			{
+				victim->NPC->sameBlockDirCount++;
+				float scale = 1.0f - 0.25f * victim->NPC->sameBlockDirCount;
+				if ( scale < 0.4f )
+				{
+					scale = 0.4f;
+				}
+				gdmg = (int)(gdmg * scale);
+			}
+			else
+			{
+				victim->NPC->sameBlockDirCount = 0;
+				victim->NPC->lastBlockDir = victim->client->ps.saberBlocked;
+			}
+			G_DamageGuard( victim, attacker, gdmg );
+		}
 
 		//since it was parried, take away any damage done
 		//FIXME: what if the damage was done before the parry?
@@ -5558,11 +5666,12 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 							ent->client->ps.saberEventFlags |= SEF_BLOCKED;
 						}
 						//base parry breaks on animation (saber attack level), not FP_SABER_OFFENSE
-						if ( entPowerLevel < FORCE_LEVEL_3
+						if ( WP_InPerfectParryWindow( hitOwner )//timed perfect parry always knocks the attack away
+							|| ( entPowerLevel < FORCE_LEVEL_3
 							//&& ent->client->ps.forcePowerLevel[FP_SABER_OFFENSE] < FORCE_LEVEL_3//if you have high saber offense, you cannot have your attack knocked away, regardless of what style you're using?
 							//&& hitOwner->client->ps.saberAnimLevel != FORCE_LEVEL_5
 							&& activeDefense
-							&& (hitOwnerPowerLevel > FORCE_LEVEL_2||(hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]>FORCE_LEVEL_2&&Q_irand(0,hitOwner->client->ps.forcePowerLevel[FP_SABER_OFFENSE]))) )
+							&& (hitOwnerPowerLevel > FORCE_LEVEL_2||(hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]>FORCE_LEVEL_2&&Q_irand(0,hitOwner->client->ps.forcePowerLevel[FP_SABER_OFFENSE]))) ) )
 						{//knockaways can make fast-attacker go into a broken parry anim if the ent is using fast or med (but not Tavion)
 							//make me parry
 							WP_SaberParry( hitOwner, ent, saberNum, bladeNum );
@@ -5571,6 +5680,11 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 							//make them go into a broken parry
 							ent->client->ps.saberBounceMove = PM_BrokenParryForAttack( ent->client->ps.saberMove );
 							ent->client->ps.saberBlocked = BLOCKED_PARRY_BROKEN;
+							if ( WP_InPerfectParryWindow( hitOwner ) )
+							{//timed perfect parry — big composure hit + distinct feedback, and reset the tap cooldown
+								G_DamageGuard( ent, hitOwner, 25 );
+								WP_PerfectParrySuccess( hitOwner, saberHitLocation, saberHitNormal );
+							}
 							if ( saberNum == 0 )
 							{//FIXME: can only lose right-hand saber for now
 								if ( !(ent->client->ps.saber[saberNum].saberFlags&SFL_NOT_DISARMABLE)
@@ -5869,6 +5983,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 		{
 			if ( inFlightSaberBlocked )
 			{//we threw a saber and it was blocked, do any effects, etc.
+				G_DamageGuard( hitOwner, ent, 8 );	//blocking a thrown saber costs composure
 				int	knockAway = 5;
 				if ( hitEnt
 					&& hitOwner
@@ -7746,6 +7861,7 @@ void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlo
 	if ( self->client->ps.saberBlocked != BLOCKED_NONE )
 	{
 		if ( self->s.number == 0 && !g_saberAutoBlocking->integer
+			&& !WP_InPerfectParryWindow( self )	//perfect-parry blocks are free
 			&& self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time )
 		{
 			int defLevel = self->client->ps.forcePowerLevel[FP_SABER_DEFENSE];
@@ -8825,6 +8941,11 @@ void WP_ResistForcePush( gentity_t *self, gentity_t *pusher, qboolean noPenalty 
 	if ( !PM_SaberCanInterruptMove( self->client->ps.saberMove, self->client->ps.torsoAnim ) )
 	{//can't interrupt my current torso anim/sabermove with this, so ignore it entirely!
 		return;
+	}
+
+	if ( !noPenalty )
+	{//even a successful resist wears down saber guard — Push pays off against duelists
+		G_DamageGuard( self, pusher, 15 );
 	}
 
 	if ( (!self->s.number
@@ -11422,6 +11543,7 @@ void ForceLightningDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, flo
 	{
 		if ( !traceEnt->client || traceEnt->client->playerTeam != self->client->playerTeam || self->enemy == traceEnt || traceEnt->enemy == self )
 		{//an enemy or object
+			G_DamageGuard( traceEnt, self, 4 );	//lightning wears down saber guard per zap tick
 			int	dmg;
 			//FIXME: check for client using FP_ABSORB
 			if ( self->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_2 )
