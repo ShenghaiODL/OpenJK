@@ -19,6 +19,17 @@ Reflection accuracy is now tied to FP Saber Defense level:
   Level 1: 10% chance, aimed back at the shooter with large spread
 Bowcaster bolts are now blockable at all difficulty levels; they dissipate on saber contact instead of reflecting //Made balancing around NPCs with the bowcaster very difficult. Might revisit this and just reduce the number of bowcasters, but hey.
 
+
+SABER GUARD & PERFECT PARRY
+--------------------------------------
+Boss-tier and other saber-capable NPCs now have a hidden "guard" (composure) pool alongside health, sized off their Saber Defense level (70/100/130) and boosted 50% for bosses (Desann, Tavion, Alora, Kyle, Shadowtrooper, or anything flagged as a boss character)
+Every parry, kick, resisted Force push, and lightning tick chips away at guard; repeatedly blocking from the same direction loses effectiveness (down to 40% after a few reps) so turtling in one spot stops working
+At zero guard the NPC breaks -- an extended stagger (1.6-2.4s, 0.9-1.3s for bosses) where they can't parry or evade and take 2.5x saber damage -- then guard fully refills once the break window ends, so bosses effectively fight in phases
+New player mechanic: tap +saberblock right as an attack lands (default 200ms window, g_perfectParryWindow) for a "perfect parry" -- guaranteed deflect/parry regardless of Force Defense level, costs no Force, and knocks a huge chunk off an NPC's guard. Distinct crosshair flash + sound on success, ~900ms cooldown between windows (g_perfectParryCooldown) //basically a timing-based alternative to the FP-gated block, should reward actually paying attention instead of just holding the button
+Removed the old requirement to strafe toward side attacks while manually blocking -- holding block now parries from any direction, timing is the skill test instead
+NPCs with a guard pool show a thin orange composure bar under their health bar; flashes white while broken
+
+
 Weapon Rework:
 ---------------------
 
@@ -61,6 +72,15 @@ BLASTER BALANCING
 Blaster bolt velocity: 2300 -> 3000
 
 
+CLASS-BASED WEAPON LOADOUTS
+--------------------------------------
+Weapons are now grouped into loadout classes -- Pistol, Medium, Heavy, Throwable (the saber is its own thing, excluded entirely) -- and you can only hold one weapon per class at a time
+Walking over a weapon whose class you already hold leaves it on the ground; hold +use to swap it in (drops your current one, picks up the new one, switches to it immediately) -- weapon pickups can now be use-grabbed from further away (128 units) instead of requiring you to stand right on top of them, with an on-screen "Swap X for Y" / "Take X" hint while looking at one
+New dropweapon command (bound to G by default) to voluntarily drop your current weapon; can't drop the saber this way
+Number keys 1-5 now select loadout slots (1=saber, 2=pistol, 3=medium, 4=heavy, 5=throwable) instead of specific weapons, resolving to whatever you're currently holding in that slot
+16 reserved "custom weapon" slots added under the hood so future weapons can be added via weapons.dat/items.dat alone, no code changes needed //groundwork for whenever I add more guns
+
+
 SHIELD SYSTEM REDESIGN
 --------------------------------------
 Shield cap raised to 200 (100 on Jedi Master)
@@ -71,6 +91,7 @@ New Three-tier absorption:
   On Jedi Master (cap 100), the 100% absorption tier is never reachable
 Passive shield regen: +5 every 250ms after 5 seconds without taking damage;
 caps at 75 (50 on Jedi Master); requires a pickup to exceed the regen cap // Pickups currently bugged? Will also probably make this faster.
+Armor now has its own pickup/charger cap (200 normal, 100 Jedi Master), decoupled from max health, instead of capping at whatever your max health happened to be
 
 
 NPC AI IMPROVEMENTS
@@ -82,6 +103,17 @@ rather than rush into melee
 NPCs seek cover when below 50% health
 When an NPC discovers a dead teammate, it alerts nearby allies
 New AI Class_Mando; same as a stormtrooper, but has a flamethrower. //Might add more to this later, this was just to see if I could.
+Squad morale & leadership: any rank can now lead a squad (previously locked to Imperial officers, so an all-trooper squad with no officer had no commander at all); morale rises/falls with combat outcomes and casualties and drives a 5-tier aggression scale, from routed/hiding at the bottom to charging/flanking at the top, with the commander calling out lines as the squad's mood shifts
+Stormtroopers fall back on geometry-based cover searches when no pre-placed cover point is nearby, holding a duck/pop-out firing pattern instead of standing in the open; squads coordinate so at least half the group keeps firing while the rest repositions, rather than everyone exposing at once
+NPC think rate now scales with their Reactions stat, so elite troops react noticeably faster than grunts instead of everything sharing one tick rate
+Stormtroopers reposition more often, fire while moving/retreating more, and hold a line-of-sight "grace window" before breaking off a shot; Reborn/Sith without chase-enemies flags now slowly advance instead of standing idle, and their rocket/saber missile-reflect chances are now probabilistic instead of guaranteed
+New NPC_StormtrooperRandom spawner: drops a weighted-random stormtrooper variant (rifle/heavy/officer/grenadier) from a config file instead of needing a distinct classname per spawn -- add new variants by editing the .npc/.cfg, no recompile
+Various stormtrooper fixes: grenadier now switches back to its blaster properly after throwing, saber no longer flickers off/on during door-cam cutscenes, fixed stormtrooper_random always falling back to the hardcoded variant list
+
+
+SABOTEUR CLOAK REWORK
+--------------------------------------
+Saboteurs now cloak far less often (cooldown 2s -> 8s) but are a real threat while cloaked instead of a non-issue: they can fire without decloaking now (previously had to decloak to shoot at all), and the cloak itself is dimmed to ~35% opacity so it's harder to spot on sight //still might need more tuning once the model gets swapped out
 
 
 DEATH ANIMATION FIX
@@ -93,6 +125,18 @@ New console command g_saberloaddebug to inspect animation and movement state for
 RENDERER
 --------
 Vertex limit per surface raised (from my brief testing, negligible impact on fps/performance. Opens up a couple of cool possibilties with rend2 I think.)
+
+
+CAMERA
+--------
+Third-person camera now shifts between three profiles depending on what you're holding -- a looser "explore" view with the saber holstered, a tighter dueling view with the blade lit, and a closer over-the-shoulder "shooter" view for guns -- smoothly blending between them and re-tracing to avoid clipping into walls
+Shooter mode aims to fix the old mismatch between the 3D crosshair and where shots actually land //inspired by Jedi Survivor's camera, still tuning the exact offsets
+
+
+PHYSICS
+--------
+Corpse despawn time is now a cvar (g_corpseRemovalTime) instead of hardcoded; set it to 0 to keep bodies around forever
+Force push/pull can now grab severed limbs without needing a pixel-perfect crosshair on them, and gibs fly with less knockback so they don't ragdoll violently
 
 
 ## Based on OpenJK

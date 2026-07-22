@@ -6853,14 +6853,17 @@ static void UI_WeaponAllocBeginButton(qboolean activeFlag)
 	}
 }
 
-// If we have both weapons and the throwable weapon, turn on the begin mission button,
+// If we have a bonus weapon and the throwable weapon, turn on the begin mission button,
 // otherwise, turn it off
 static void UI_WeaponsSelectionsComplete( void )
 {
-	// We need two weapons and one throwable
-	if (( uiInfo.selectedWeapon1 != NOWEAPON ) &&
-		( uiInfo.selectedWeapon2 != NOWEAPON ) &&
-		( uiInfo.selectedThrowWeapon != NOWEAPON ))
+	// Class-based loadout: the two slots can never hold the same class (see
+	// UI_AddWeaponSelection's bump logic), and only one class may be unlocked at a
+	// given story tier (Heavy is locked out early) -- so requiring both slots would
+	// make it impossible to ever begin the mission. One bonus weapon + a throwable
+	// is enough; a second, different-class pick is still allowed, just not required.
+	if ( ( ( uiInfo.selectedWeapon1 != NOWEAPON ) || ( uiInfo.selectedWeapon2 != NOWEAPON ) ) &&
+		( uiInfo.selectedThrowWeapon != NOWEAPON ) )
 	{
 		UI_WeaponAllocBeginButton(qtrue);	// Turn it on
 	}
