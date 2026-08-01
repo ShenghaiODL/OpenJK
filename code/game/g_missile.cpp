@@ -819,6 +819,8 @@ extern bool WP_DoingMoronicForcedAnimationForForcePowers(gentity_t *ent);
 extern cvar_t *g_saberAutoBlocking;
 extern qboolean WP_InPerfectParryWindow( const gentity_t *self );
 extern void WP_PerfectParrySuccess( gentity_t *self, vec3_t impactPoint, vec3_t normal );
+extern int WP_SaberBlockForceCost( gentity_t *self, qboolean missileBlock );
+extern void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
 	// check for hitting a lightsaber
 	if ( other->contents & CONTENTS_LIGHTSABER )
 	{
@@ -901,6 +903,17 @@ extern void WP_PerfectParrySuccess( gentity_t *self, vec3_t impactPoint, vec3_t 
 					else
 					{
 						G_ReflectMissile( other, ent, trace->plane.normal );
+					}
+					// Non-perfect deflect: charge the block cost here, once, at actual resolution --
+					// not in WP_SaberBlockNonRandom's predictive pre-impact pose call, which can fire
+					// on earlier frames before the perfect-parry timing window even opens.
+					if ( other->owner && other->owner->client && !other->owner->s.number
+						&& !g_saberAutoBlocking->integer
+						&& other->owner->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time )
+					{
+						int cost = WP_SaberBlockForceCost( other->owner, qtrue );
+						WP_ForcePowerDrain( other->owner, FP_SABER_DEFENSE, cost );
+						other->owner->client->ps.forcePowerRegenDebounceTime = level.time + 1500;
 					}
 					G_MissileReflectEffect( ent, trace->endpos, trace->plane.normal );
 					return;

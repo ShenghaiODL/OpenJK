@@ -149,6 +149,7 @@ extern cvar_t	*g_saberNewControlScheme;
 extern cvar_t	*g_stepSlideFix;
 extern cvar_t	*g_saberAutoBlocking;
 extern cvar_t	*g_noIgniteTwirl;
+extern cvar_t	*g_heavyAttackSpeedScale;
 
 static void PM_SetWaterLevelAtPoint( vec3_t org, int *waterlevel, int *watertype );
 
@@ -9788,6 +9789,26 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 			}
 		}
 
+		// Heavy-attack telegraph exit edge: phase-tracked (not raw move-ID matched) so a later,
+		// unrelated ordinary swing that happens to reuse the same LS_A_* id can never be mistaken
+		// for a continuation of our sequence. The time-based safety net is an unconditional backstop
+		// (e.g. the attacker died mid-swing, or the phase handoff was somehow never reached).
+		if ( pm->ps->heavyAttackMove != LS_NONE
+			&& ( ( pm->ps->heavyAttackPhase == 2 && pm->ps->saberMove == pm->ps->heavyAttackMove && newMove != pm->ps->heavyAttackMove )
+				|| level.time >= pm->ps->heavyAttackEndTime ) )
+		{
+			if ( pm->gent && pm->gent->chestBolt != -1 )
+			{
+				extern void G_StopEffect( int fxID, const int modelIndex, const int boltIndex, const int entNum );
+				extern int G_EffectIndex( const char *name );
+				G_StopEffect( G_EffectIndex("force/rage2"), pm->gent->playerModel, pm->gent->chestBolt, pm->gent->s.number );
+			}
+			pm->ps->saber[0].animSpeedScale = pm->ps->heavyAttackSpeedRestore;
+			pm->ps->heavyAttackMove = LS_NONE;
+			pm->ps->heavyAttackPhase = 0;
+			pm->ps->heavyAttackEndTime = 0;
+		}
+
 		/*
 		//wtf... getting stuck with weaponTime set even though we're not in an attack...?
 		if ( PM_SaberInAttack( pm->ps->saberMove )
@@ -12777,6 +12798,12 @@ void PM_WeaponLightsaber(void)
 			if ( curmove >= LS_S_TL2BR && curmove <= LS_S_T2B )
 			{//started a swing, must continue from here
 				newmove = LS_A_TL2BR + (curmove-LS_S_TL2BR);
+				if ( pm->ps->heavyAttackPhase == 1 && curmove == (LS_S_TL2BR + (pm->ps->heavyAttackMove - LS_A_TL2BR)) )
+				{//our telegraphed windup just finished -- entering the live strike at normal speed
+					pm->ps->heavyAttackPhase = 2;
+					pm->ps->heavyAttackEndTime = level.time + 3000;
+					pm->ps->saber[0].animSpeedScale = pm->ps->heavyAttackSpeedRestore;
+				}
 			}
 			else if ( curmove >= LS_A_TL2BR && curmove <= LS_A_T2B )
 			{//finished an attack, must continue from here
@@ -12871,7 +12898,33 @@ void PM_WeaponLightsaber(void)
 				}
 				return;
 			}
-			if ( curmove >= LS_PARRY_UP && curmove <= LS_REFLECT_LL )
+			if ( pm->ps->heavyAttackPending )
+			{//AI has requested a telegraphed heavy attack -- force the windup pose for one of the 7 base
+			//swings first (not the live swing itself), so there's a real anticipation phase; the engine's
+			//own existing "started a swing, must continue from here" logic carries it into the actual
+			//attack once the windup finishes. The entity's current style (Strong/Tavion/Desann, guaranteed
+			//by the AI-side gate) resolves the right anim for both the windup and the attack.
+				static const saberMoveName_t heavySwings[7] =
+				{ LS_A_TL2BR, LS_A_L2R, LS_A_BL2TR, LS_A_BR2TL, LS_A_R2L, LS_A_TR2BL, LS_A_T2B };
+				saberMoveName_t chosenAttack = heavySwings[ Q_irand( 0, 6 ) ];
+				pm->ps->heavyAttackPending = qfalse;
+				pm->ps->heavyAttackMove = chosenAttack;
+				pm->ps->heavyAttackPhase = 1;//1 = windup, 2 = strike, 0 = inactive
+				newmove = (saberMoveName_t)( LS_S_TL2BR + (chosenAttack - LS_A_TL2BR) );
+				if ( pm->ps->saber[0].animSpeedScale != 0 )
+				{
+					pm->ps->heavyAttackSpeedRestore = pm->ps->saber[0].animSpeedScale;
+					pm->ps->saber[0].animSpeedScale *= g_heavyAttackSpeedScale->value;
+				}
+				pm->ps->heavyAttackEndTime = level.time + 3000;//generous safety net; refreshed again at the windup->strike handoff
+				if ( pm->gent && pm->gent->chestBolt != -1 )
+				{//telegraph starts right here -- the one place we know for certain this is a genuine new heavy attack
+					extern void G_PlayEffect( int fxID, const int modelIndex, const int boltIndex, const int entNum, const vec3_t origin, int iLoopTime, qboolean isRelative );
+					extern int G_EffectIndex( const char *name );
+					G_PlayEffect( G_EffectIndex("force/rage2"), pm->gent->playerModel, pm->gent->chestBolt, pm->gent->s.number, pm->gent->currentOrigin, 3000, qtrue );
+				}
+			}
+			else if ( curmove >= LS_PARRY_UP && curmove <= LS_REFLECT_LL )
 			{//from a parry or reflection, can go directly into an attack
 				if ( pm->ps->clientNum >= MAX_CLIENTS && !PM_ControlledByPlayer() )
 				{//NPCs
@@ -12902,6 +12955,12 @@ void PM_WeaponLightsaber(void)
 				else if ( curmove >= LS_S_TL2BR && curmove <= LS_S_T2B )
 				{//started a swing, must continue from here
 					newmove = LS_A_TL2BR + (curmove-LS_S_TL2BR);
+					if ( pm->ps->heavyAttackPhase == 1 && curmove == (LS_S_TL2BR + (pm->ps->heavyAttackMove - LS_A_TL2BR)) )
+					{//our telegraphed windup just finished -- entering the live strike at normal speed
+						pm->ps->heavyAttackPhase = 2;
+						pm->ps->heavyAttackEndTime = level.time + 3000;
+						pm->ps->saber[0].animSpeedScale = pm->ps->heavyAttackSpeedRestore;
+					}
 				}
 				else if ( PM_SaberInBrokenParry( curmove ) )
 				{//broken parries must always return to ready
@@ -14842,16 +14901,27 @@ void PM_AdjustAttackStates( pmove_t *pm )
 		&& (pm->cmd.buttons&BUTTON_SABERBLOCK)
 		&& pm->ps->weapon == WP_SABER )
 	{
-		// Perfect-parry window: pm->gent->client->buttons still holds LAST frame's buttons
-		// (the swap happens after Pmove in ClientThink), so this detects the press edge.
-		// A new window is only granted past the cooldown; WP_PerfectParrySuccess resets it.
+		// Perfect-parry window: triggered by tapping ATTACK while block is already held, not by
+		// block's own press-edge -- holding block continuously no longer requires releasing and
+		// re-pressing it just to get a fresh timing window. pm->gent->client->buttons still holds
+		// LAST frame's buttons (the swap happens after Pmove in ClientThink), so this detects the
+		// attack button's press edge. A new window is only granted past the cooldown;
+		// WP_PerfectParrySuccess resets it.
 		if ( pm->gent && pm->gent->client
-			&& !(pm->gent->client->buttons&BUTTON_SABERBLOCK)
+			&& (pm->cmd.buttons&BUTTON_ATTACK)
+			&& !(pm->gent->client->buttons&BUTTON_ATTACK)
 			&& pm->ps->perfectParryDebounce < pm->cmd.serverTime )
 		{
-			extern cvar_t *g_perfectParryCooldown;
+			// Missile fire is much faster-paced than saber swings, so a missed window against
+			// a blaster shouldn't cost anywhere near as long a cooldown as a missed saber parry.
+			// lastNearbyMissileTime is stamped every frame a live blockable missile is nearby
+			// (WP_SaberStartMissileBlockCheck), independent of block/cooldown state.
+			extern cvar_t *g_perfectParryCooldownSaber;
+			extern cvar_t *g_perfectParryCooldownMissile;
+			qboolean missileThreat = (qboolean)( ( pm->cmd.serverTime - pm->ps->lastNearbyMissileTime ) < 300 );
+			int cooldown = missileThreat ? g_perfectParryCooldownMissile->integer : g_perfectParryCooldownSaber->integer;
 			pm->ps->saberBlockStartTime = pm->cmd.serverTime;
-			pm->ps->perfectParryDebounce = pm->cmd.serverTime + g_perfectParryCooldown->integer;
+			pm->ps->perfectParryDebounce = pm->cmd.serverTime + cooldown;
 		}
 		pm->ps->saberBlockingTime = pm->cmd.serverTime + 100;
 		pm->cmd.buttons &= ~BUTTON_ATTACK;

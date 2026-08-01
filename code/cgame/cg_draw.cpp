@@ -2541,6 +2541,60 @@ void CG_DrawHealthBars( void )
 	}
 }
 
+// Perfect-parry cooldown bar -- placeholder HUD element, deliberately self-contained (own fixed
+// screen position, no data-driven HUD-asset plumbing) so it's a one-line change to relocate/restyle
+// once the full HUD rework happens. Hidden entirely once the cooldown is up, to stay unobtrusive.
+void CG_DrawParryCooldownBar( const centity_t *cent )
+{
+	if ( !cent || !cent->gent || !cent->gent->client )
+	{
+		return;
+	}
+	// Read the live game-side ps directly rather than cg.snap->ps -- this SP build still routes
+	// playerState_t through the client/server snapshot delta whitelist (playerStateFields[] in
+	// msg.cpp), and custom fields like this one were never added to it, so cg.snap->ps would always
+	// be stale. game+cgame share one process here, so dereferencing the real entity is safe and is
+	// the same trick CG_DrawForcePower already uses (cent->gent->client->ps.forcePowersKnown).
+	playerState_t *ps = &cent->gent->client->ps;
+	if ( ps->weapon != WP_SABER || ps->perfectParryDebounce <= cg.time )
+	{
+		return;
+	}
+
+	extern cvar_t *g_perfectParryCooldownSaber;
+	extern cvar_t *g_perfectParryCooldownMissile;
+	qboolean missileThreat = (qboolean)( ( cg.time - ps->lastNearbyMissileTime ) < 300 );
+	int cooldownDuration = missileThreat ? g_perfectParryCooldownMissile->integer : g_perfectParryCooldownSaber->integer;
+	if ( cooldownDuration <= 0 )
+	{
+		return;
+	}
+
+	float percent = (float)( ps->perfectParryDebounce - cg.time ) / (float)cooldownDuration;
+	if ( percent > 1.0f )
+	{
+		percent = 1.0f;
+	}
+	else if ( percent < 0.0f )
+	{
+		percent = 0.0f;
+	}
+
+	const float barW = 100.0f;
+	const float barH = 6.0f;
+	const float x = 320.0f - (barW*0.5f);
+	const float y = 440.0f;
+	//bar fills back up as the cooldown counts down -- empty right after a parry attempt, full once ready
+	const float filled = (1.0f-percent) * barW;
+
+	vec4_t emptyColor = { 0.5f, 0.5f, 0.5f, 0.5f };
+	vec4_t fillColor = { 0.2f, 0.6f, 1.0f, 0.7f };
+
+	CG_DrawRect( x, y, barW, barH, 1.0f, colorTable[CT_BLACK] );
+	CG_FillRect( x+1.0f, y+1.0f, filled-1.0f, barH-1.0f, fillColor );
+	CG_FillRect( x+filled, y+1.0f, barW-filled-1.0f, barH-1.0f, emptyColor );
+}
+
 #define HEALTHBARRANGE 422
 void CG_AddHealthBarEnt( int entNum )
 {
@@ -4484,6 +4538,7 @@ static void CG_Draw2D( void )
 			CG_DrawStats();
 		}
 		CG_DrawAmmoWarning();
+		CG_DrawParryCooldownBar( cent );
 
 		//CROSSHAIR is now done from the crosshair ent trace
 		//if ( !cg.renderingThirdPerson && !cg_dynamicCrosshair.integer ) // disruptor draws it's own crosshair artwork; binocs draw nothing; third person draws its own crosshair

@@ -188,7 +188,11 @@ cvar_t	*g_numEntities;
 
 cvar_t	*g_saberAutoBlocking;
 cvar_t	*g_perfectParryWindow;
-cvar_t	*g_perfectParryCooldown;
+cvar_t	*g_perfectParryCooldownSaber;
+cvar_t	*g_perfectParryCooldownMissile;
+cvar_t	*g_forceStaggerLockoutScale;
+cvar_t	*g_heavyAttackCooldown;
+cvar_t	*g_heavyAttackSpeedScale;
 cvar_t	*g_saberRealisticCombat;
 cvar_t	*debug_subdivision;
 cvar_t	*g_saberDamageCapping;
@@ -689,7 +693,11 @@ void G_InitCvars( void ) {
 
 	g_saberAutoBlocking = gi.cvar( "g_saberAutoBlocking", "0", CVAR_CHEAT );//must press +block button to do any blocking
 	g_perfectParryWindow = gi.cvar( "g_perfectParryWindow", "200", CVAR_ARCHIVE );//ms after pressing block that counts as a perfect parry
-	g_perfectParryCooldown = gi.cvar( "g_perfectParryCooldown", "900", CVAR_ARCHIVE );//ms before a new perfect-parry window is granted (reset on a successful perfect parry)
+	g_perfectParryCooldownSaber = gi.cvar( "g_perfectParryCooldownSaber", "1000", CVAR_ARCHIVE );//ms before a new perfect-parry window is granted after pressing block with no nearby missile threat (reset on a successful perfect parry)
+	g_perfectParryCooldownMissile = gi.cvar( "g_perfectParryCooldownMissile", "150", CVAR_ARCHIVE );//same, but used when a live blockable missile is nearby -- blasters fire much faster than sabers swing, so this needs to be much shorter
+	g_forceStaggerLockoutScale = gi.cvar( "g_forceStaggerLockoutScale", "0.6", CVAR_ARCHIVE );//when a push/pull/repulse/grip actually staggers someone, scale the caster's own follow-up attack lockout by this much of the victim's recovery time, so they can't just walk up and get free hits
+	g_heavyAttackCooldown = gi.cvar( "g_heavyAttackCooldown", "7000", CVAR_ARCHIVE );//minimum ms between one NPC's telegraphed heavy attacks
+	g_heavyAttackSpeedScale = gi.cvar( "g_heavyAttackSpeedScale", "0.7", CVAR_ARCHIVE );//playback speed multiplier for a forced heavy attack's telegraphed windup only (the strike itself plays at normal speed)
 	g_saberRealisticCombat = gi.cvar( "g_saberMoreRealistic", "0", CVAR_ARCHIVE );//makes collision more precise, increases damage
 	debug_subdivision = gi.cvar( "debug_subdivision", "0", CVAR_ARCHIVE );//debug for dismemberment
 	g_dismemberProbabilities = gi.cvar ( "g_dismemberProbabilities", "1", CVAR_ARCHIVE );//0 = ignore probabilities, 1 = use probabilities
@@ -765,7 +773,7 @@ void G_InitCvars( void ) {
 	
 	g_noIgniteTwirl = gi.cvar( "g_noIgniteTwirl", "0", CVAR_ARCHIVE );//if 1, don't do ignite twirl
 	
-	g_forceRegenTime = gi.cvar( "g_forceRegenTime", "100", CVAR_ARCHIVE );//Force regen time cvar similar to MP
+	g_forceRegenTime = gi.cvar( "g_forceRegenTime", "60", CVAR_ARCHIVE );//Force regen time cvar similar to MP
 
 	g_useIdleAnims = gi.cvar( "g_useIdleAnims", "1", CVAR_ARCHIVE );//if 0, don't show idle animations
 }

@@ -97,6 +97,7 @@ extern qboolean G_ClearLineOfSight(const vec3_t point1, const vec3_t point2, int
 extern cvar_t	*g_saberRealisticCombat;
 extern cvar_t	*d_slowmodeath;
 extern cvar_t	*g_saberNewControlScheme;
+extern cvar_t	*g_heavyAttackCooldown;
 extern int parryDebounce[];
 extern int missileParryDebounce[];
 
@@ -1738,10 +1739,12 @@ static void Jedi_CombatDistance( int enemy_dist )
 			}
 			if ( (NPCInfo->rank >= RANK_LT_JG||WP_ForcePowerUsable( NPC, FP_SABERTHROW, 0 ))
 				&& !Q_irand( 0, 5 )
+				&& TIMER_Done( NPC, "saberThrowDebounce" )
 				&& !(NPC->client->ps.forcePowersActive&(1 << FP_SPEED))
 				&& !(NPC->client->ps.saberEventFlags&SEF_INWATER) )//saber not in water
 			{//throw saber
 				ucmd.buttons |= BUTTON_SABERTHROW;
+				TIMER_Set( NPC, "saberThrowDebounce", Q_irand( 4000, 8000 ) );
 			}
 		}
 		else if ( NPC->enemy && NPC->enemy->client && //valid enemy
@@ -1832,7 +1835,7 @@ static void Jedi_CombatDistance( int enemy_dist )
 				if ( chanceScale
 					&& (enemy_dist > Q_irand( 100, 200 ) || (NPCInfo->scriptFlags&SCF_DONT_FIRE) || (!Q_stricmp("Yoda",NPC->NPC_type)&&!Q_irand(0,3)) )
 					&& enemy_dist < 500
-					&& (Q_irand( 0, chanceScale*10 )<5 || (NPC->enemy->client && NPC->enemy->client->ps.weapon != WP_SABER && !Q_irand( 0, chanceScale ) ) ) )
+					&& (Q_irand( 0, chanceScale*10 )<3 || (NPC->enemy->client && NPC->enemy->client->ps.weapon != WP_SABER && !Q_irand( 0, chanceScale ) ) ) )
 				{//else, randomly try some kind of attack every now and then
 					//FIXME: Cultist fencers don't have any of these fancy powers
 					//			the only thing they might be able to do is throw their saber
@@ -1911,20 +1914,24 @@ static void Jedi_CombatDistance( int enemy_dist )
 						else
 						{
 							if ( WP_ForcePowerUsable( NPC, FP_SABERTHROW, 0 )
+								&& TIMER_Done( NPC, "saberThrowDebounce" )
 								&& !(NPC->client->ps.forcePowersActive&(1 << FP_SPEED))
 								&& !(NPC->client->ps.saberEventFlags&SEF_INWATER) )//saber not in water
 							{//throw saber
 								ucmd.buttons |= BUTTON_SABERTHROW;
+								TIMER_Set( NPC, "saberThrowDebounce", Q_irand( 4000, 8000 ) );
 							}
 						}
 					}
 					else
 					{
 						if ( (NPCInfo->rank >= RANK_LT_JG||WP_ForcePowerUsable( NPC, FP_SABERTHROW, 0 ))
+							&& TIMER_Done( NPC, "saberThrowDebounce" )
 							&& !(NPC->client->ps.forcePowersActive&(1 << FP_SPEED))
 							&& !(NPC->client->ps.saberEventFlags&SEF_INWATER) )//saber not in water
 						{//throw saber
 							ucmd.buttons |= BUTTON_SABERTHROW;
+							TIMER_Set( NPC, "saberThrowDebounce", Q_irand( 4000, 8000 ) );
 						}
 					}
 				}
@@ -4373,7 +4380,7 @@ static void Jedi_EvasionSaber( vec3_t enemy_movedir, float enemy_dist, vec3_t en
 			default:
 				//Evade!
 				//start a strafe left/right if not already
-				if ( !Q_irand( 0, 5 ) || !Jedi_Strafe( 300, 1000, 0, 1000, qfalse ) )
+				if ( !Q_irand( 0, 5 ) || !Jedi_Strafe( 600, 1500, 400, 1200, qfalse ) )
 				{//certain chance they will pick an alternative evasion
 					//if couldn't strafe, try a different kind of evasion...
 					if ( Jedi_DecideKick() && G_CanKickEntity(NPC, NPC->enemy ) && G_PickAutoKick( NPC, NPC->enemy, qtrue ) != LS_NONE )
@@ -4383,7 +4390,7 @@ static void Jedi_EvasionSaber( vec3_t enemy_movedir, float enemy_dist, vec3_t en
 					else if ( shooting_lightning || throwing_saber || enemy_dist < 80 )
 					{
 						//FIXME: force-jump+forward - jump over the guy!
-						if ( shooting_lightning || (!Q_irand( 0, 2 ) && NPCInfo->stats.aggression < 4 && TIMER_Done( NPC, "parryTime" ) ) )
+						if ( shooting_lightning || (!Q_irand( 0, 5 ) && NPCInfo->stats.aggression < 4 && TIMER_Done( NPC, "parryTime" ) ) )
 						{
 							if ( (NPCInfo->rank == RANK_ENSIGN || NPCInfo->rank > RANK_LT_JG) && !shooting_lightning && Q_irand( 0, 2 ) )
 							{//FIXME: check forcePushRadius[NPC->client->ps.forcePowerLevel[FP_PUSH]]
@@ -4437,7 +4444,7 @@ static void Jedi_EvasionSaber( vec3_t enemy_movedir, float enemy_dist, vec3_t en
 						&& !(NPC->client->ps.forcePowersActive&(1<<FP_RAGE))
 						&& (NPCInfo->rank == RANK_CREWMAN || NPCInfo->rank > RANK_LT_JG )
 						&& !PM_InKnockDown( &NPC->client->ps )
-						&& !Q_irand( 0, 5 ) )
+						&& !Q_irand( 0, 19 ) )
 					{//FIXME: make this a function call?
 						//FIXME: check for clearance, safety of landing spot?
 						if ( NPC->client->NPC_class == CLASS_BOBAFETT
@@ -5042,7 +5049,7 @@ static void Jedi_CombatTimersUpdate( int enemy_dist )
 	if ( TIMER_Done( NPC, "noStrafe" ) && TIMER_Done( NPC, "strafeLeft" ) && TIMER_Done( NPC, "strafeRight" ) )
 	{
 		//FIXME: Maybe more likely to do this if aggression higher?  Or some other stat?
-		if ( !Q_irand( 0, 4 ) )
+		if ( !Q_irand( 0, 7 ) )
 		{//start a strafe
 			if ( Jedi_Strafe( 1000, 3000, 0, 4000, qtrue ) )
 			{
@@ -6543,6 +6550,40 @@ void NPC_BSJedi_FollowLeader( void )
 
 }
 
+qboolean Jedi_CheckHeavyAttack( void )
+{
+	if ( NPC->client->ps.saberAnimLevel == SS_STRONG
+		|| NPC->client->ps.saberAnimLevel == SS_TAVION
+		|| NPC->client->ps.saberAnimLevel == SS_DESANN )
+	{//heavy attacks are a Strong/Tavion/Desann-style thing -- any NPC fighting in one of these styles can throw one
+		if ( NPC->client->ps.saberMove == LS_READY )
+		{//only from a neutral stance -- never hijack an attack/combo already in flight
+			if ( NPC->client->ps.heavyAttackDebounce < level.time )
+			{//not still on its own dedicated cooldown (independent of the kata roll below)
+				if ( (ucmd.buttons&BUTTON_ATTACK) )
+				{//attacking
+					if ( NPC->client->ps.groundEntityNum != ENTITYNUM_NONE )
+					{//on the ground
+						if ( ucmd.upmove <= 0 && NPC->client->ps.forceJumpCharge <= 0 )
+						{//not going to try to jump
+							if ( Q_irand( 0, g_spskill->integer+1 ) //50% chance on easy, 66% on medium, 75% on hard
+								&& !Q_irand( 0, 4 ) )//20% chance overall -- paced primarily by its own cooldown, not this roll
+							{
+								ucmd.upmove = 0;
+								VectorClear( NPC->client->ps.moveDir );
+								NPC->client->ps.heavyAttackPending = qtrue;
+								NPC->client->ps.heavyAttackDebounce = level.time + g_heavyAttackCooldown->integer;
+								return qtrue;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return qfalse;
+}
+
 qboolean Jedi_CheckKataAttack( void )
 {
 	if ( NPCInfo->rank >= RANK_LT_COMM )
@@ -6972,9 +7013,12 @@ static void Jedi_Attack( void )
 		}
 	}
 
-	//Check for trying a kata move
+	//Check for trying a heavy attack, then a kata move
 	//FIXME: what about force-pull attacks?
-	if ( Jedi_CheckKataAttack() )
+	if ( Jedi_CheckHeavyAttack() )
+	{//doing a heavy attack
+	}
+	else if ( Jedi_CheckKataAttack() )
 	{//doing a kata attack
 	}
 	else

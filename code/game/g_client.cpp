@@ -2498,6 +2498,13 @@ static void G_SaberLoadClearTransientSaberState( gentity_t *ent )
 	ps->saberBlockingTime = 0;
 	ps->saberBlockStartTime = 0;
 	ps->perfectParryDebounce = 0;
+	ps->lastNearbyMissileTime = 0;
+	ps->heavyAttackPending = 0;
+	ps->heavyAttackMove = LS_NONE;
+	ps->heavyAttackEndTime = 0;
+	ps->heavyAttackPhase = 0;
+	ps->heavyAttackSpeedRestore = 1.0f;
+	ps->heavyAttackDebounce = 0;
 	ps->saberBlocking = BLK_NO;
 	ps->saberBlocked = BLOCKED_NONE;
 	ps->saberMoveNext = LS_NONE;

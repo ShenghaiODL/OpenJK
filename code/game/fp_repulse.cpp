@@ -50,6 +50,7 @@ extern qboolean PM_InKnockDown( playerState_t *ps );
 extern void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
 
 extern cvar_t	*g_timescale;
+extern cvar_t	*g_forceStaggerLockoutScale;
 
 extern int forcePowerNeeded[NUM_FORCE_POWERS];
 
@@ -258,13 +259,14 @@ void ForceRepulseThrow( gentity_t *self, int chargeTime )
 		}
 	}
 	
+	int maxVictimRecovery = 0;//longest recovery inflicted on any target this throw, used below to keep our own follow-up lockout honest
 	for ( int x = 0; x < ent_count; x++ )
 	{
 		if ( push_list[x]->client )
 		{
 			vec3_t	pushDir;
 			float	knockback = 200;
-			
+
 			//SIGH band-aid...
 			if ( push_list[x]->s.number >= MAX_CLIENTS
 				&& self->s.number < MAX_CLIENTS )
@@ -498,6 +500,10 @@ void ForceRepulseThrow( gentity_t *self, int chargeTime )
 				}
 				push_list[x]->forcePushTime = level.time + 600; // let the push effect last for 600 ms
 			}
+			if ( push_list[x]->client->ps.torsoAnimTimer > maxVictimRecovery )
+			{//track the longest recovery we just inflicted, so our own lockout below can respect it
+				maxVictimRecovery = push_list[x]->client->ps.torsoAnimTimer;
+			}
 		}
 		else if ( !fake )
 		{//not a fake push/pull
@@ -711,5 +717,10 @@ void ForceRepulseThrow( gentity_t *self, int chargeTime )
 	else
 	{
 		self->client->ps.forcePowerDebounce[FP_REPULSE] = level.time + self->client->ps.torsoAnimTimer + 500;
+	}
+	if ( ent_count && maxVictimRecovery > 0 )
+	{//don't let us get back to attacking well before whoever we just knocked down can defend themselves
+		int scaledHold = (int)( maxVictimRecovery * g_forceStaggerLockoutScale->value );
+		self->client->ps.weaponTime = Q_max( self->client->ps.weaponTime, scaledHold );
 	}
 }

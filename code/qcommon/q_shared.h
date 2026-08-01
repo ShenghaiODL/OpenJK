@@ -1894,6 +1894,13 @@ public:
 	int			saberBlockingTime;
 	int			saberBlockStartTime;	//stamped when the block button is PRESSED (perfect-parry window start)
 	int			perfectParryDebounce;	//no new perfect-parry window until this passes (reset on success)
+	int			lastNearbyMissileTime;	//stamped whenever a live blockable missile is nearby; used to pick the missile vs saber perfect-parry cooldown at press time
+	int			heavyAttackPending;		//AI has requested a heavy attack; consumed (and cleared) by pmove's chain-attack move selection
+	int			heavyAttackMove;		//saberMoveName_t of the currently in-progress forced heavy swing, LS_NONE when none
+	int			heavyAttackEndTime;		//safety-net stamp to clear the heavy attack telegraph/speed scale if the normal exit edge is missed
+	int			heavyAttackPhase;		//0 = inactive, 1 = telegraphed windup, 2 = live strike -- avoids misidentifying a later ordinary swing that reuses the same move id
+	float		heavyAttackSpeedRestore;//saber[0].animSpeedScale snapshotted before being slowed for a heavy attack, restored on exit
+	int			heavyAttackDebounce;	//no new heavy attack from this NPC until this passes
 	int			saberAnimLevel;
 	int			saberAttackChainCount;
 	int			saberLockTime;
@@ -2082,6 +2089,13 @@ public:
 		saved_game.write<int32_t>(saberBlockingTime);
 		saved_game.write<int32_t>(saberBlockStartTime);
 		saved_game.write<int32_t>(perfectParryDebounce);
+		saved_game.write<int32_t>(lastNearbyMissileTime);
+		saved_game.write<int32_t>(heavyAttackPending);
+		saved_game.write<int32_t>(heavyAttackMove);
+		saved_game.write<int32_t>(heavyAttackEndTime);
+		saved_game.write<int32_t>(heavyAttackPhase);
+		saved_game.write<float>(heavyAttackSpeedRestore);
+		saved_game.write<int32_t>(heavyAttackDebounce);
 		saved_game.write<int32_t>(saberAnimLevel);
 		saved_game.write<int32_t>(saberAttackChainCount);
 		saved_game.write<int32_t>(saberLockTime);
@@ -2262,6 +2276,13 @@ public:
 		saved_game.read<int32_t>(saberBlockingTime);
 		saved_game.read<int32_t>(saberBlockStartTime);
 		saved_game.read<int32_t>(perfectParryDebounce);
+		saved_game.read<int32_t>(lastNearbyMissileTime);
+		saved_game.read<int32_t>(heavyAttackPending);
+		saved_game.read<int32_t>(heavyAttackMove);
+		saved_game.read<int32_t>(heavyAttackEndTime);
+		saved_game.read<int32_t>(heavyAttackPhase);
+		saved_game.read<float>(heavyAttackSpeedRestore);
+		saved_game.read<int32_t>(heavyAttackDebounce);
 		saved_game.read<int32_t>(saberAnimLevel);
 		saved_game.read<int32_t>(saberAttackChainCount);
 		saved_game.read<int32_t>(saberLockTime);

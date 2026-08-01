@@ -166,6 +166,7 @@ extern cvar_t	*g_saberRealisticCombat;
 extern cvar_t	*g_saberDamageCapping;
 extern cvar_t	*g_saberNewControlScheme;
 extern cvar_t	*g_flippedHolsters;
+extern cvar_t	*g_forceStaggerLockoutScale;
 extern int g_crosshairEntNum;
 
 qboolean g_saberNoEffects = qfalse;
@@ -3033,6 +3034,26 @@ qboolean WP_SaberDamageForTrace( int ignore, vec3_t start, vec3_t end, float dmg
 			}
 		}
 
+		if ( hitEnt && hitEnt->client && hitEnt != attacker && hitEnt->health > 0
+			&& hitEnt->client->ps.weapon == WP_SABER
+			&& !hitEnt->client->ps.saberInFlight
+			&& hitEnt->client->ps.saberLockTime < level.time
+			&& ( PM_SaberInParry( hitEnt->client->ps.saberMove ) || hitEnt->client->ps.saberMove == LS_READY ) )
+		{//the blade geometrically slipped past their saber (missed the CONTENTS_LIGHTSABER trace/re-trace
+		//above) even though they were actively holding a block/parry pose -- resolve it as a proper
+		//block (anim + force cost) via the same self-contained function used for missile/saber blocks
+		//elsewhere, instead of letting raw, unmitigated damage through. Don't fake saberHitFraction/
+		//saberHitEntity here: those feed WP_SabersDamageTrace's hitOwner lookup via hitEnt->owner,
+		//which expects a saber-prop entity, not the client entity itself -- stamping the client's own
+		//number there previously caused a null hitOwner crash a few frames later.
+			WP_SaberBlockNonRandom( hitEnt, tr.endpos, qfalse );
+			if ( hitEnt->client->ps.saberBlocked != BLOCKED_NONE )
+			{//the block actually took (they had force power / were eligible to auto-block) -- no damage through
+				return qfalse;	// Exit, but we didn't hit the wall.
+			}
+			//else: couldn't actually block (e.g. out of force power) -- fall through to normal damage below
+		}
+
 		if ( hitEnt->takedamage )
 		{
 			//no team damage: if ( !hitEnt->client || attacker == NULL || !attacker->client || (hitEnt->client->playerTeam != attacker->client->playerTeam) )
@@ -4259,7 +4280,6 @@ qboolean WP_SabersCheckLock( gentity_t *ent1, gentity_t *ent2 )
 }
 
 extern cvar_t	*g_perfectParryWindow;
-extern cvar_t	*g_perfectParryCooldown;
 
 /*
 WP_InPerfectParryWindow
@@ -5499,6 +5519,14 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 				qboolean entDefending = qfalse;
 				qboolean hitOwnerDefending = qfalse;
 				qboolean forceLock = qfalse;
+				// Telegraphed heavy attack — an explicitly forced Strong/Tavion/Desann swing (not a
+				// kata/special), identified directly via the heavyAttackMove flag it stamps on itself,
+				// so this can't misfire on kicks/taunts/saberlock-wins the way PM_SaberInSpecialAttack did.
+				// Perfectly timed defense still routes into the favorable knockaway branch below
+				// (unchanged); a held-but-mistimed block gets a guaranteed, softer punish instead of
+				// the ordinary roll.
+				qboolean heavyAttack = (qboolean)( ent->client->ps.heavyAttackMove != LS_NONE
+					&& ent->client->ps.saberMove == ent->client->ps.heavyAttackMove );
 
 				if ( (ent->client->NPC_class == CLASS_KYLE && (ent->spawnflags&1) && hitOwner->s.number < MAX_CLIENTS )
 					|| (hitOwner->client->NPC_class == CLASS_KYLE && (hitOwner->spawnflags&1) && ent->s.number < MAX_CLIENTS ) )
@@ -5711,9 +5739,28 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 							}
 #endif
 						}
+						else if ( heavyAttack && activeDefense )
+						{//telegraphed heavy attack (Strong/Tavion/Desann kata), blocked but not perfectly
+						//timed — guaranteed stagger with softened damage instead of the ordinary roll,
+						//rewarding the attempt to block even though the timing wasn't perfect
+							hitOwner->client->ps.saberBlocked = BLOCKED_PARRY_BROKEN;
+							hitOwner->client->ps.saberBounceMove = LS_NONE;
+							for ( int vi = 0; vi < numVictims; vi++ )
+							{
+								if ( victimEntityNum[vi] == hitOwner->s.number )
+								{
+									totalDmg[vi] *= 0.5f;
+									break;
+								}
+							}
+#ifndef FINAL_BUILD
+							if ( d_saberCombat->integer )
+							{
+								gi.Printf( S_COLOR_RED"%s staggered by %s's heavy attack (mistimed block, softened damage)\n", hitOwner->targetname, ent->NPC_type );
+							}
+#endif
+						}
 						else if ( !activeDefense//they're not defending
-							|| (entPowerLevel > FORCE_LEVEL_2 //I hit hard
-								&& hitOwnerPowerLevel < entPowerLevel)//they are defending, but their defense strength is lower than my attack...
 							|| (!deflected && Q_irand( 0, Q_max(0, PM_PowerLevelForSaberAnim( &ent->client->ps, saberNum ) - hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE])/*PM_PowerLevelForSaberAnim( &hitOwner->client->ps )*/ ) > 0 ) )
 						{//broke their parry altogether
 							if ( entPowerLevel > FORCE_LEVEL_2 || Q_irand( 0, Q_max(0, ent->client->ps.forcePowerLevel[FP_SABER_OFFENSE] - hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]) ) )
@@ -5918,7 +5965,17 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 					{//saber collided when not attacking, parry it
 						if ( !PM_SaberInBrokenParry( hitOwner->client->ps.saberMove ) )
 						{//not currently in a broken parry
-							if ( !WP_SaberParry( hitOwner, ent, saberNum, bladeNum ) )
+							if ( ent->client->ps.saberInFlight && WP_InPerfectParryWindow( hitOwner ) )
+							{//a perfectly-timed block against a thrown saber disarms the thrower
+								WP_PerfectParrySuccess( hitOwner, saberHitLocation, saberHitNormal );
+								vec3_t throwDir;
+								if ( !PM_VelocityForBlockedMove( &hitOwner->client->ps, throwDir ) )
+								{
+									PM_VelocityForSaberMove( &ent->client->ps, throwDir );
+								}
+								WP_SaberLose( ent, throwDir );
+							}
+							else if ( !WP_SaberParry( hitOwner, ent, saberNum, bladeNum ) )
 							{//FIXME: hitOwner can't parry, do some time-consuming saber-knocked-aside broken parry anim?
 								//hitOwner->client->ps.saberBlocked = BLOCKED_PARRY_BROKEN;
 							}
@@ -7709,6 +7766,20 @@ static int blockForceCost[] = {
 	10,  // SS_STAFF
 };
 
+// Shared cost formula for a non-perfect block, used both by WP_SaberBlockNonRandom (saber-vs-saber)
+// and by g_missile.cpp's ordinary (non-perfect) bolt-deflect resolution -- kept here since
+// blockForceCost[] is file-static.
+int WP_SaberBlockForceCost( gentity_t *self, qboolean missileBlock )
+{
+	int defLevel = self->client->ps.forcePowerLevel[FP_SABER_DEFENSE];
+	int cost = blockForceCost[self->client->ps.saberAnimLevel];
+	if ( defLevel >= FORCE_LEVEL_3 )      cost /= 2;
+	else if ( defLevel >= FORCE_LEVEL_2 ) cost = cost * 3 / 4;
+	if ( missileBlock ) cost = cost * 3 / 2;  // 1.5x for blaster bolt blocks
+	else                cost = cost * 5;       // 5x for saber attack blocks -- non-perfect blocks should sting
+	return cost;
+}
+
 int WP_MissileBlockForBlock( int saberBlock )
 {
 	switch( saberBlock )
@@ -7860,19 +7931,18 @@ void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlo
 
 	if ( self->client->ps.saberBlocked != BLOCKED_NONE )
 	{
-		if ( self->s.number == 0 && !g_saberAutoBlocking->integer
+		if ( !missileBlock	//missile-block cost is charged once at actual impact resolution in g_missile.cpp
+							//instead: this function gets called predictively, once per frame, while an
+							//incoming bolt is still approaching -- charging here could bill an early,
+							//pre-timing-window frame even though the player goes on to land a perfect parry
+			&& self->s.number == 0 && !g_saberAutoBlocking->integer
 			&& !WP_InPerfectParryWindow( self )	//perfect-parry blocks are free
 			&& self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time )
 		{
-			int defLevel = self->client->ps.forcePowerLevel[FP_SABER_DEFENSE];
-			int cost = blockForceCost[self->client->ps.saberAnimLevel];
-			if ( defLevel >= FORCE_LEVEL_3 )      cost /= 2;
-			else if ( defLevel >= FORCE_LEVEL_2 ) cost = cost * 3 / 4;
-			if ( missileBlock ) cost = cost * 3 / 2;  // 1.5x for blaster bolt blocks
-			else                cost = cost * 3;       // 3x for saber attack blocks
+			int cost = WP_SaberBlockForceCost( self, missileBlock );
 			WP_ForcePowerDrain( self, FP_SABER_DEFENSE, cost );
 			// Longer regen pause for saber attacks since they drain significantly more FP
-			self->client->ps.forcePowerRegenDebounceTime = level.time + ( missileBlock ? 1500 : 2000 );
+			self->client->ps.forcePowerRegenDebounceTime = level.time + 3200;
 		}
 		int parryReCalcTime = Jedi_ReCalcParryTime( self, missileBlock ? EVASION_MISSILE_PARRY : EVASION_PARRY );
 		if ( self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time + parryReCalcTime )
@@ -7896,6 +7966,32 @@ void WP_SaberStartMissileBlockCheck( gentity_t *self, usercmd_t *ucmd  )
 	vec3_t		traceTo, entDir;
 	qboolean	dodgeOnlySabers = qfalse;
 
+	// Lightweight "is anything currently threatening me" signal for perfect-parry cooldown
+	// selection (missile vs saber, see PM_AdjustAttackStates) — runs regardless of the
+	// early-returns below, since those gate the actual block *attempt*, not whether the
+	// player is still under fire while on cooldown. Deliberately simple: doesn't need to
+	// match the full blockability filtering further down, just a rough proximity signal.
+	if ( self->s.number == 0 && self->client )
+	{
+		vec3_t threatMins, threatMaxs;
+		gentity_t *threatList[MAX_GENTITIES];
+		for ( int ti = 0; ti < 3; ti++ )
+		{
+			threatMins[ti] = self->currentOrigin[ti] - 256;
+			threatMaxs[ti] = self->currentOrigin[ti] + 256;
+		}
+		int numThreats = gi.EntitiesInBox( threatMins, threatMaxs, threatList, MAX_GENTITIES );
+		for ( int ti = 0; ti < numThreats; ti++ )
+		{
+			gentity_t *tent = threatList[ti];
+			if ( tent->inuse && tent->s.eType == ET_MISSILE
+				&& !(tent->owner && OnSameTeam( self, tent->owner )) )
+			{
+				self->client->ps.lastNearbyMissileTime = level.time;
+				break;
+			}
+		}
+	}
 
 	if ( self->NPC && (self->NPC->scriptFlags&SCF_IGNORE_ALERTS) )
 	{//don't react to things flying at me...
@@ -9486,6 +9582,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 	vec3_t		v;
 	int			i, e;
 	int			ent_count = 0;
+	int			maxVictimRecovery = 0;//longest recovery inflicted on any target this throw, used below to keep our own follow-up lockout honest
 	int			radius;
 	vec3_t		center, ent_org, size, forward, right, end, dir, fwdangles = {0};
 	float		dot1, cone;
@@ -10094,6 +10191,10 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 						{//NPC and force-push/pull at level 2 or higher
 							WP_ForceKnockdown( push_list[x], self, pull, (qboolean)(!pull&&knockback>100), qfalse );
 						}
+						if ( push_list[x]->client->ps.torsoAnimTimer > maxVictimRecovery )
+						{//track the longest recovery we just inflicted, so our own lockout below can respect it
+							maxVictimRecovery = push_list[x]->client->ps.torsoAnimTimer;
+						}
 					}
 					push_list[x]->forcePushTime = level.time + 600; // let the push effect last for 600 ms
 				}
@@ -10567,6 +10668,11 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 		{
 			self->client->ps.forcePowerDebounce[FP_PUSH] = level.time + self->client->ps.torsoAnimTimer + 500;
 		}
+	}
+	if ( ent_count && maxVictimRecovery > 0 )
+	{//don't let us get back to attacking well before whoever we just knocked down can defend themselves
+		int scaledHold = (int)( maxVictimRecovery * g_forceStaggerLockoutScale->value );
+		self->client->ps.weaponTime = Q_max( self->client->ps.weaponTime, scaledHold );
 	}
 }
 
@@ -11611,6 +11717,8 @@ void ForceLightningDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, flo
 				if ( traceEnt->client //a client
 					&& !traceEnt->client->ps.saberInFlight//saber in hand
 					&& ( traceEnt->client->ps.saberMove == LS_READY || PM_SaberInParry( traceEnt->client->ps.saberMove ) || PM_SaberInReturn( traceEnt->client->ps.saberMove ) )//not attacking with saber
+					&& (traceEnt->s.number || g_saberAutoBlocking->integer || traceEnt->client->ps.saberBlockingTime > level.time)//actually holding block (NPCs have no manual block button, so the pose check above is their whole signal)
+					&& (traceEnt->s.number != 0 || traceEnt->client->ps.forcePower > 0)//player with no force power left can't block it
 					&& InFOV( self->currentOrigin, traceEnt->currentOrigin, traceEnt->client->ps.viewangles, 20, 35 ) //I'm in front of them
 					&& !PM_InKnockDown( &traceEnt->client->ps ) //they're not in a knockdown
 					&& !PM_SuperBreakLoseAnim( traceEnt->client->ps.torsoAnim )
@@ -11638,6 +11746,10 @@ void ForceLightningDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, flo
 							traceEnt->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] = level.time + parryReCalcTime;
 						}
 						traceEnt->client->ps.weaponTime = Q_irand( 100, 300 );//hold this move - can't attack! - FIXME: unless dual sabers?
+						if ( traceEnt->s.number == 0 )
+						{//tanking the stream costs the player force power per tick, same rate the caster pays to sustain it (forcePowerNeeded[FP_LIGHTNING])
+							WP_ForcePowerDrain( traceEnt, FP_SABER_DEFENSE, forcePowerNeeded[FP_LIGHTNING] );
+						}
 					}
 				}
 				else if ( Q_irand( 0, 1 ) )
@@ -14079,6 +14191,11 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower )
 							{
 								G_AngerAlert( gripEnt );
 							}
+						}
+						if ( holdTime > 0 )
+						{//don't let us get back to attacking well before they can defend themselves again
+							int scaledHold = (int)( holdTime * g_forceStaggerLockoutScale->value );
+							self->client->ps.weaponTime = Q_max( self->client->ps.weaponTime, scaledHold );
 						}
 					}
 				}
