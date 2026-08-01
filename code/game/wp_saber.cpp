@@ -10512,6 +10512,11 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 					if ( Q_stricmp( "limb", push_list[x]->classname ) == 0 )
 					{//gibs are small and light - don't let them go flying as hard as a full ragdoll/prop
 						knockback *= 0.4f;
+						//spread multiple gibs out instead of letting them all converge on the exact same point
+						pushDir[0] += Q_flrand( -0.3f, 0.3f );
+						pushDir[1] += Q_flrand( -0.3f, 0.3f );
+						pushDir[2] += Q_flrand( -0.1f, 0.3f );//slight upward bias so they don't just clip into the floor together
+						VectorNormalize( pushDir );
 					}
 					//FIXME: if pull a FL_FORCE_PULLABLE_ONLY, clear the flag, assuming it's no longer in solid?  or check?
 					VectorCopy( push_list[x]->currentOrigin, push_list[x]->s.pos.trBase );
@@ -10555,6 +10560,12 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 						push_list[x]->s.apos.trType = TR_LINEAR;
 						VectorClear( push_list[x]->s.apos.trDelta );
 						push_list[x]->s.apos.trDelta[1] = Q_irand( -800, 800 );
+						if ( Q_stricmp( "limb", push_list[x]->classname ) == 0 )
+						{//restore pitch spin like a freshly-spawned gib gets (g_combat.cpp) -- fixes gibs
+						//freezing mid-air at whatever pitch they had at the moment of the push impulse.
+						//Roll is deliberately left alone, per the rotational-center warning just above.
+							push_list[x]->s.apos.trDelta[0] = Q_irand( -300, 300 );
+						}
 					}
 
 					if ( Q_stricmp( "limb", push_list[x]->classname ) == 0 )

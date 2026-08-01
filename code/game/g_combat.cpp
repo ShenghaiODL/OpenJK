@@ -2168,8 +2168,8 @@ static qboolean G_Dismember( gentity_t *ent, vec3_t point,
 	gi.linkentity( limb );
 	//need size, contents, clipmask
 	limb->svFlags = SVF_USE_CURRENT_ORIGIN;
-	limb->clipmask = MASK_SOLID;
-	limb->contents = CONTENTS_CORPSE;
+	limb->clipmask = MASK_SOLID|CONTENTS_BODY|CONTENTS_CORPSE;
+	limb->contents = CONTENTS_CORPSE|CONTENTS_BODY;
 	VectorSet( limb->mins, -3.0f, -3.0f, -6.0f );
 	VectorSet( limb->maxs, 3.0f, 3.0f, 6.0f );
 
@@ -6405,8 +6405,8 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 					limb->enemy			= targ->enemy;
 					limb->svFlags		= SVF_USE_CURRENT_ORIGIN;
 					limb->playerModel	= 0;
-					limb->clipmask		= MASK_SOLID;
-					limb->contents		= CONTENTS_CORPSE;
+					limb->clipmask		= MASK_SOLID|CONTENTS_BODY|CONTENTS_CORPSE;
+					limb->contents		= CONTENTS_CORPSE|CONTENTS_BODY;
 					limb->e_clThinkFunc = clThinkF_CG_Limb;
 					limb->e_ThinkFunc	= thinkF_LimbThink;
 					limb->nextthink		= level.time + FRAMETIME;
