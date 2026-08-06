@@ -183,6 +183,7 @@ cvar_t	*com_buildScript;
 
 cvar_t	*g_skippingcin;
 cvar_t	*g_AIsurrender;
+cvar_t	*g_moraleSurrender;
 cvar_t	*g_numEntities;
 //cvar_t	*g_iscensored;
 
@@ -714,6 +715,7 @@ void G_InitCvars( void ) {
 	g_saberPickuppableDroppedSabers = gi.cvar( "g_saberPickuppableDroppedSabers", "0", CVAR_CHEAT );//lets you pick up sabers that are dropped
 
 	g_AIsurrender = gi.cvar( "g_AIsurrender", "0", CVAR_CHEAT );
+	g_moraleSurrender = gi.cvar( "g_moraleSurrender", "1", CVAR_ARCHIVE );//lets any surrender-eligible NPC give up once their squad's morale is routed, not just Ugnaught/Jawa
 	g_numEntities = gi.cvar( "g_numEntities", "0", 0 );
 
 	gi.cvar( "newTotalSecrets", "0", CVAR_ROM );

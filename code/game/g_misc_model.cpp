@@ -339,6 +339,12 @@ void GunRackAddItem( gitem_t *gun, vec3_t org, vec3_t angs, float ffwd, float fr
 		// FinishSpawningItem handles everything, so clear the thinkFunc that was set in G_SpawnItem
 		FinishSpawningItem( it_ent );
 
+		if ( gun->giType == IT_WEAPON )
+		{//a deliberate, level-designer-placed re-arm point -- let disarmed NPCs path here even
+		//though it's not a "dropped" item (see CheckItemCanBePickedUpByNPC)
+			it_ent->flags |= FL_NPC_REARM_SOURCE;
+		}
+
 		if ( gun->giType == IT_AMMO )
 		{
 			if ( gun->giTag == AMMO_BLASTER ) // I guess this just has to use different logic??

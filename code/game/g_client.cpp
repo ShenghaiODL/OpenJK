@@ -2505,6 +2505,8 @@ static void G_SaberLoadClearTransientSaberState( gentity_t *ent )
 	ps->heavyAttackPhase = 0;
 	ps->heavyAttackSpeedRestore = 1.0f;
 	ps->heavyAttackDebounce = 0;
+	ps->z6Heat = 0;
+	ps->z6HeatDecayTime = 0;
 	ps->saberBlocking = BLK_NO;
 	ps->saberBlocked = BLOCKED_NONE;
 	ps->saberMoveNext = LS_NONE;

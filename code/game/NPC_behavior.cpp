@@ -37,6 +37,7 @@ we need it...
 #include "g_nav.h"
 
 extern cvar_t	*g_AIsurrender;
+extern cvar_t	*g_moraleSurrender;
 extern	qboolean	showBBoxes;
 static vec3_t NPCDEBUG_BLUE = {0.0, 0.0, 1.0};
 extern void CG_Cube( vec3_t mins, vec3_t maxs, vec3_t color, float alpha );
@@ -1479,6 +1480,11 @@ qboolean NPC_CanSurrender( void )
 		{
 			return qfalse;
 		}
+		if ( NPC->client->ps.weapon == WP_MELEE )
+		{//committed to a desperate last-ditch fistfight, not backing down now --
+		//also avoids surrendering while still actively closing in to attack
+			return qfalse;
+		}
 	}
 	if ( NPCInfo )
 	{
@@ -1573,9 +1579,19 @@ void NPC_Surrender( void )
 
 qboolean NPC_CheckSurrender( void )
 {
+	// A routed squad (morale tier 0) can surrender even without g_AIsurrender being on globally --
+	// gated by its own cvar so this is opt-out-able independent of the dev/cheat toggle above.
+	// Only for still-armed NPCs: a disarmed (WP_NONE) NPC has its own dedicated give-up decision
+	// in NPC_BSFlee (which also checks morale) that's meant to run *after* a fair chance to flee/
+	// recover a weapon first -- letting this generic heuristic fire for WP_NONE too let surrender
+	// preempt that entirely, since this function can get reached well before the flee timers do.
+	qboolean moraleRouted = (qboolean)( g_moraleSurrender->integer
+		&& NPC->s.weapon != WP_NONE
+		&& NPCInfo && NPCInfo->group && AI_GetGroupMoraleTier( NPCInfo->group ) == 0 );
 	if ( !g_AIsurrender->integer
 		&& NPC->client->NPC_class != CLASS_UGNAUGHT
-		&& NPC->client->NPC_class != CLASS_JAWA )
+		&& NPC->client->NPC_class != CLASS_JAWA
+		&& !moraleRouted )
 	{//not enabled
 		return qfalse;
 	}
@@ -1704,8 +1720,6 @@ qboolean NPC_BSFlee( void )
 	bool		moveSuccess			= false;
 	bool		inSurrender			= (level.time<NPCInfo->surrenderTime);
 
-
-
 	// Check For Enemies And Alert Events
 	//------------------------------------
 	NPC_CheckEnemy(qtrue, qfalse);
@@ -1754,6 +1768,33 @@ qboolean NPC_BSFlee( void )
 		else
 		{
 			TIMER_Set(NPC, "CheckForWeaponToPickup", Q_irand(1000, 5000));
+		}
+	}
+
+	// Given up fleeing/searching for a weapon -- either surrender (if eligible, or if the enemy has
+	// an active lightsaber and charging bare-handed would just be suicide) or fight back with fists.
+	if ( NPC->s.weapon == WP_NONE
+		&& NPC->client->NPC_class != CLASS_PRISONER
+		&& NPCInfo->rank > RANK_CIVILIAN
+		&& TIMER_Done( NPC, "meleeFallback" ) )
+	{
+		qboolean facingActiveSaber = (qboolean)( NPC->enemy && NPC->enemy->client && NPC->enemy->client->ps.weapon == WP_SABER && NPC->enemy->client->ps.SaberActive() );
+		qboolean moraleRouted = (qboolean)( g_moraleSurrender->integer && NPCInfo->group && AI_GetGroupMoraleTier( NPCInfo->group ) == 0 );
+		if ( NPC_CanSurrender() && ( g_AIsurrender->integer || moraleRouted || facingActiveSaber ) )
+		{//give up instead of a hopeless fight
+			NPC_Surrender();
+		}
+		else if ( facingActiveSaber )
+		{//can't formally surrender but still too dangerous to charge bare-handed -- check again later
+			TIMER_Set( NPC, "meleeFallback", Q_irand( 3000, 5000 ) );
+		}
+		else
+		{
+			NPC->client->ps.weapons[WP_MELEE] = 1;
+			ChangeWeapon( NPC, WP_MELEE );
+			NPC->s.weapon = WP_MELEE;
+			NPCInfo->last_ucmd.weapon = WP_MELEE;
+			NPCInfo->tempBehavior = BS_DEFAULT;//stop fleeing, fight back with fists instead
 		}
 	}
 
@@ -1934,21 +1975,34 @@ void NPC_StartFlee( gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int f
 
 
 	//FIXME: if don't have a weapon, find nearest one we have a route to and run for it?
+	// Bias the flee search toward a nearby ally, if there is one, instead of pure self-position --
+	// this makes fleeing NPCs naturally gravitate toward cover near a teammate rather than being
+	// totally ally-agnostic about where they run to.
+	vec3_t fleeSearchOrigin;
+	VectorCopy( NPC->currentOrigin, fleeSearchOrigin );
+	gentity_t *nearbyAlly = NPC_PickAlly( qfalse, 512.0f, qfalse, qfalse );
+	if ( nearbyAlly )
+	{
+		fleeSearchOrigin[0] = ( fleeSearchOrigin[0] + nearbyAlly->currentOrigin[0] ) * 0.5f;
+		fleeSearchOrigin[1] = ( fleeSearchOrigin[1] + nearbyAlly->currentOrigin[1] ) * 0.5f;
+		fleeSearchOrigin[2] = ( fleeSearchOrigin[2] + nearbyAlly->currentOrigin[2] ) * 0.5f;
+	}
+
 	int cp = -1;
 	if ( dangerLevel > AEL_DANGER || NPC->s.weapon == WP_NONE || ((!NPCInfo->group || NPCInfo->group->numGroup <= 1) && NPC->health <= 10 ) )
 	{//IF either great danger OR I have no weapon OR I'm alone and low on health, THEN try to find a combat point out of PVS
-		cp = NPC_FindCombatPoint( NPC->currentOrigin, dangerPoint, NPC->currentOrigin, CP_COVER|CP_AVOID|CP_HAS_ROUTE|CP_NO_PVS, 128 );
+		cp = NPC_FindCombatPoint( fleeSearchOrigin, dangerPoint, NPC->currentOrigin, CP_COVER|CP_AVOID|CP_HAS_ROUTE|CP_NO_PVS, 128 );
 	}
 	//FIXME: still happens too often...
 	if ( cp == -1 )
 	{//okay give up on the no PVS thing
-		cp = NPC_FindCombatPoint( NPC->currentOrigin, dangerPoint, NPC->currentOrigin, CP_COVER|CP_AVOID|CP_HAS_ROUTE, 128 );
+		cp = NPC_FindCombatPoint( fleeSearchOrigin, dangerPoint, NPC->currentOrigin, CP_COVER|CP_AVOID|CP_HAS_ROUTE, 128 );
 		if ( cp == -1 )
 		{//okay give up on the avoid
-			cp = NPC_FindCombatPoint( NPC->currentOrigin, dangerPoint, NPC->currentOrigin, CP_COVER|CP_HAS_ROUTE, 128 );
+			cp = NPC_FindCombatPoint( fleeSearchOrigin, dangerPoint, NPC->currentOrigin, CP_COVER|CP_HAS_ROUTE, 128 );
 			if ( cp == -1 )
 			{//okay give up on the cover
-				cp = NPC_FindCombatPoint( NPC->currentOrigin, dangerPoint, NPC->currentOrigin, CP_HAS_ROUTE, 128 );
+				cp = NPC_FindCombatPoint( fleeSearchOrigin, dangerPoint, NPC->currentOrigin, CP_HAS_ROUTE, 128 );
 			}
 		}
 	}
@@ -1984,6 +2038,12 @@ void NPC_StartFlee( gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int f
 	TIMER_Set( NPC, "flee", Q_irand( fleeTimeMin, fleeTimeMax ) );
 	TIMER_Set( NPC, "panic", Q_irand( 1000, 4000 ) );//how long to wait before trying to nav to a dropped weapon
 	TIMER_Set( NPC, "duck", 0 );
+	if ( NPC->s.weapon == WP_NONE )
+	{//if still unarmed once this elapses, give up on fleeing and fight back with fists instead --
+	//long enough to give the "panic" delay plus a couple of weapon-search/nav attempts a fair shot
+	//first, rather than racing straight past them to melee almost every time
+		TIMER_Set( NPC, "meleeFallback", Q_irand( 9000, 13000 ) );
+	}
 }
 
 void G_StartFlee( gentity_t *self, gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int fleeTimeMin, int fleeTimeMax )

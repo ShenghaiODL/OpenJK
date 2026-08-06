@@ -233,7 +233,10 @@ typedef struct ammoData_s
 
 // Tenloss Disruptor
 //----------
-#define DISRUPTOR_MAIN_DAMAGE			14
+// Reworked into a long-range sniper rifle: real travel-time bolts (like a blaster) instead of an
+// instant hitscan trace, for both primary and the charged alt-fire; no more disintegration finisher.
+#define DISRUPTOR_VELOCITY				2200	// slower than BLASTER_VELOCITY (3000) -- a heavy, sniper-weight bolt
+#define DISRUPTOR_MAIN_DAMAGE			40		// well above the blaster's 20 -- hits much harder, but slower and single-shot
 #define DISRUPTOR_NPC_MAIN_DAMAGE_EASY	5
 #define DISRUPTOR_NPC_MAIN_DAMAGE_MEDIUM	10
 #define DISRUPTOR_NPC_MAIN_DAMAGE_HARD	15
@@ -268,7 +271,7 @@ typedef struct ammoData_s
 //----------
 #define REPEATER_SPREAD				1.4f
 #define REPEATER_NPC_SPREAD			0.7f
-#define	REPEATER_DAMAGE				8
+#define	REPEATER_DAMAGE				10
 #define	REPEATER_VELOCITY			1600
 #define	REPEATER_NPC_DAMAGE_EASY	2
 #define	REPEATER_NPC_DAMAGE_NORMAL	4

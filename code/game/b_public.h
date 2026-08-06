@@ -395,6 +395,7 @@ public:
 	int			sameBlockDirCount;	//consecutive same-direction blocked attacks
 
 
+
 	void sg_export(
 		ojk::SavedGameHelper& saved_game) const
 	{

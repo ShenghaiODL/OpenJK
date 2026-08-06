@@ -963,7 +963,7 @@ void ChangeWeapon( gentity_t *ent, int newWeapon )
 	case WP_MELEE:
 	case WP_TUSKEN_STAFF:
 		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		ent->NPC->burstSpacing = 1000;//attackdebounce
+		ent->NPC->burstSpacing = 600;//attackdebounce -- faster, more aggressive cadence
 		break;
 
 	case WP_ATST_MAIN:

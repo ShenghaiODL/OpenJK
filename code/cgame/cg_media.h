@@ -376,6 +376,10 @@ typedef struct
 	fxHandle_t	cloneBlasterWallImpactEffect;
 	fxHandle_t	cloneBlasterFleshImpactEffect;
 
+	// Z-6 ROTARY
+	fxHandle_t	z6ShotEffect;		// own handle -- used to share cloneBlasterShotEffect with DC-15S/A, which meant whichever weapon type registered last silently won for all of them
+	fxHandle_t	z6BarrelGlowEffect;
+
 	//FORCE
 	fxHandle_t	forceConfusion;
 	fxHandle_t	forceLightning;

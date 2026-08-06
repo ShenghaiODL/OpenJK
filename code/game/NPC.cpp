@@ -2082,8 +2082,13 @@ void NPC_RunBehavior( int team, int bState )
 				return;
 			}
 
-			if ( NPC->enemy && NPC->client->ps.weapon == WP_NONE && bState != BS_HUNT_AND_KILL && !Q3_TaskIDPending( NPC, TID_MOVE_NAV ) )
+			if ( NPC->enemy && NPC->client->ps.weapon == WP_NONE && bState != BS_HUNT_AND_KILL )
 			{//if in battle and have no weapon, run away, fixme: when in BS_HUNT_AND_KILL, they just stand there
+			//NOTE: deliberately NOT gated on !Q3_TaskIDPending(NPC,TID_MOVE_NAV) -- that's true for
+			//most of an active flee (mid-navigation to cover/a weapon), so requiring it false meant
+			//this block stopped dispatching to NPC_BSFlee() almost as soon as fleeing actually started,
+			//falling through to the surrender checks below instead. NPC_StartFlee() already has its
+			//own internal check to avoid interrupting a genuinely script-required move.
 				if ( bState != BS_FLEE )
 				{
 					NPC_StartFlee( NPC->enemy, NPC->enemy->currentOrigin, AEL_DANGER_GREAT, 5000, 10000 );

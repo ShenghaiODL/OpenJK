@@ -100,6 +100,8 @@ extern cvar_t	*g_saberNewControlScheme;
 extern cvar_t	*g_heavyAttackCooldown;
 extern int parryDebounce[];
 extern int missileParryDebounce[];
+extern float saberStyleParryRecoveryScale[];
+extern float saberStyleMissileParryScale[];
 
 //Locals
 static void Jedi_Aggression( gentity_t *self, int change );
@@ -2664,11 +2666,12 @@ int Jedi_ReCalcParryTime( gentity_t *self, evasionType_t evasionType )
 	}
 	if ( !self->s.number )
 	{//player
+		const float styleScale = saberStyleParryRecoveryScale[self->client->ps.saberAnimLevel];
 		if ( evasionType == EVASION_MISSILE_PARRY )
 		{
-			return missileParryDebounce[self->client->ps.forcePowerLevel[FP_SABER_DEFENSE]];
+			return (int)(missileParryDebounce[self->client->ps.forcePowerLevel[FP_SABER_DEFENSE]] * styleScale * saberStyleMissileParryScale[self->client->ps.saberAnimLevel]);
 		}
-		return parryDebounce[self->client->ps.forcePowerLevel[FP_SABER_DEFENSE]];
+		return (int)(parryDebounce[self->client->ps.forcePowerLevel[FP_SABER_DEFENSE]] * styleScale);
 	}
 	else if ( self->NPC )
 	{
@@ -2806,6 +2809,16 @@ int Jedi_ReCalcParryTime( gentity_t *self, evasionType_t evasionType )
 				else if ( evasionType == EVASION_FJUMP )
 				{
 					baseTime += 300;//400;//100;
+				}
+
+				if ( evasionType == EVASION_PARRY || evasionType == EVASION_DUCK_PARRY
+					|| evasionType == EVASION_JUMP_PARRY || evasionType == EVASION_MISSILE_PARRY )
+				{//give each saber style a distinct parry-recovery feel
+					baseTime = (int)(baseTime * saberStyleParryRecoveryScale[self->client->ps.saberAnimLevel]);
+					if ( evasionType == EVASION_MISSILE_PARRY )
+					{
+						baseTime = (int)(baseTime * saberStyleMissileParryScale[self->client->ps.saberAnimLevel]);
+					}
 				}
 			}
 
@@ -6593,7 +6606,7 @@ qboolean Jedi_CheckKataAttack( void )
 			if ( (g_saberNewControlScheme->integer
 				&& !(ucmd.buttons&BUTTON_FORCE_FOCUS) )
 				||(!g_saberNewControlScheme->integer
-				&& !(ucmd.buttons&BUTTON_ALT_ATTACK) ) )
+				&& !(ucmd.buttons&BUTTON_KATA) ) )
 			{//not already going to do a kata move somehow
 				if ( NPC->client->ps.groundEntityNum != ENTITYNUM_NONE )
 				{//on the ground
@@ -6620,7 +6633,7 @@ qboolean Jedi_CheckKataAttack( void )
 							}
 							else
 							{
-								ucmd.buttons |= BUTTON_ALT_ATTACK;
+								ucmd.buttons |= BUTTON_KATA;
 							}
 							return qtrue;
 						}
@@ -7683,21 +7696,41 @@ extern void NPC_BSSniper_Default( void );
 extern void G_UcmdMoveForDir( gentity_t *self, usercmd_t *cmd, vec3_t dir );
 void NPC_BSJedi_Default( void )
 {
-	// Saber guard: refill after a break window ends; otherwise slow regen when not recently hit
+	// Saber guard: bosses effectively fight in guard phases, so their guard fully refills once a
+	// break window ends. Generic fighters get no such freebie -- breaking their guard should
+	// actually matter, so once broken they only trickle it back the slow way below, and slower
+	// than a boss would.
 	if ( NPCInfo->guardMax > 0 )
 	{
+		const qboolean guardBoss = (qboolean)( (NPCInfo->aiFlags&NPCAI_BOSS_CHARACTER)
+			|| NPC->client->NPC_class == CLASS_DESANN
+			|| NPC->client->NPC_class == CLASS_TAVION
+			|| NPC->client->NPC_class == CLASS_ALORA
+			|| NPC->client->NPC_class == CLASS_KYLE
+			|| NPC->client->NPC_class == CLASS_SHADOWTROOPER );
 		if ( NPCInfo->guardBreakTime && NPCInfo->guardBreakTime <= level.time )
-		{//break window over — fresh guard (bosses effectively fight in guard phases)
-			NPCInfo->guard = NPCInfo->guardMax;
+		{//break window over
+			if ( guardBoss )
+			{
+				NPCInfo->guard = NPCInfo->guardMax;
+			}
 			NPCInfo->guardBreakTime = 0;
 		}
 		else if ( NPCInfo->guardBreakTime <= level.time
 			&& NPCInfo->guard < NPCInfo->guardMax
 			&& NPCInfo->guardRegenDebounce <= level.time
 			&& TIMER_Done( NPC, "guardRegen" ) )
-		{//half the per-second rate on a 500ms tick
-			TIMER_Set( NPC, "guardRegen", 500 );
-			NPCInfo->guard += Q_max( 1, NPCInfo->guardRegen / 2 );
+		{//bosses regen at half the per-second rate on a 500ms tick; generic fighters much slower
+			if ( guardBoss )
+			{
+				TIMER_Set( NPC, "guardRegen", 500 );
+				NPCInfo->guard += Q_max( 1, NPCInfo->guardRegen / 2 );
+			}
+			else
+			{
+				TIMER_Set( NPC, "guardRegen", 1000 );
+				NPCInfo->guard += Q_max( 1, NPCInfo->guardRegen / 4 );
+			}
 			if ( NPCInfo->guard > NPCInfo->guardMax )
 			{
 				NPCInfo->guard = NPCInfo->guardMax;

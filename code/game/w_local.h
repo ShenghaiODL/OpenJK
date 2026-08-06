@@ -70,6 +70,7 @@ void WP_FireFlechette( gentity_t *ent, qboolean alt_fire );
 void WP_Melee( gentity_t *ent );
 void WP_FireNoghriStick( gentity_t *ent );
 void WP_FireRepeater( gentity_t *ent, qboolean alt_fire );
+void WP_FireZ6Rotary( gentity_t *ent );
 void rocketThink( gentity_t *ent );
 void WP_FireRocket( gentity_t *ent, qboolean alt_fire );
 void WP_FireStunBaton( gentity_t *ent, qboolean alt_fire );

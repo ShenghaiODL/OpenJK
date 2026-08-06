@@ -806,6 +806,17 @@ qboolean CheckItemCanBePickedUpByNPC( gentity_t *item, gentity_t *pickerupper )
 		}
 		return qtrue;
 	}
+	if ( (item->flags&FL_NPC_REARM_SOURCE)
+		&& pickerupper->s.number
+		&& pickerupper->s.weapon == WP_NONE
+		&& pickerupper->enemy
+		&& pickerupper->painDebounceTime < level.time
+		&& pickerupper->NPC && pickerupper->NPC->surrenderTime < level.time //not surrendering
+		&& !(pickerupper->NPC->scriptFlags&SCF_FORCED_MARCH) ) // not being forced to march
+	{//a deliberate, level-designer-placed re-arm point (e.g. an ammo rack) -- not a dropped item,
+	//so no ownership/age checks apply, it's just always available
+		return qtrue;
+	}
 	return qfalse;
 }
 

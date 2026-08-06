@@ -73,6 +73,49 @@ void FX_CloneBlasterProjectileThink( centity_t *cent, const struct weaponInfo_s 
 
 /*
 -------------------------
+FX_Z6ProjectileThink -- identical logic to FX_CloneBlasterProjectileThink, but plays through its
+own effect handle so the Z-6's trail can't get silently overwritten by whichever DC-15 variant
+happens to register last in a given level.
+-------------------------
+*/
+void FX_Z6ProjectileThink( centity_t *cent, const struct weaponInfo_s *weapon )
+{
+	vec3_t forward;
+
+ 	if (cent->currentState.eFlags & EF_USE_ANGLEDELTA)
+	{
+		AngleVectors(cent->currentState.angles, forward, 0, 0);
+	}
+	else
+	{
+		if ( VectorNormalize2( cent->gent->s.pos.trDelta, forward ) == 0.0f )
+		{
+			if ( VectorNormalize2( cent->currentState.pos.trDelta, forward ) == 0.0f )
+			{
+				forward[2] = 1.0f;
+			}
+		}
+	}
+
+	int dif = cg.time - cent->gent->s.pos.trTime;
+
+	if ( dif < 75 )
+	{
+		if ( dif < 0 )
+		{
+			dif = 0;
+		}
+
+		float scale = ( dif / 75.0f ) * 0.95f + 0.05f;
+
+		VectorScale( forward, scale, forward );
+	}
+
+	theFxScheduler.PlayEffect( cgs.effects.z6ShotEffect, cent->lerpOrigin, forward );
+}
+
+/*
+-------------------------
 FX_CloneBlasterAltFireThink
 -------------------------
 */

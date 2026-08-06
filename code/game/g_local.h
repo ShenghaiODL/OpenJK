@@ -78,6 +78,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #define FL_OVERCHARGED_HEALTH	0x00100000	// Reduce health back to max
 #define FL_NO_ANGLES			0x00200000	// No bone angle overrides, no pitch or roll in full angles
 #define FL_RED_CROSSHAIR		0x00400000	// Crosshair red on me
+#define FL_NPC_REARM_SOURCE	0x00000008	// weapon item placed as a deliberate NPC re-arm point (e.g. an ammo rack), not just a dropped weapon
 
 
 //Pointer safety utilities

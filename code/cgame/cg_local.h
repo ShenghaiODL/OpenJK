@@ -1153,6 +1153,8 @@ void FX_BlasterProjectileThink( centity_t *cent, const struct weaponInfo_s *weap
 void FX_BlasterAltFireThink( centity_t *cent, const struct weaponInfo_s *weapon );
 void FX_BlasterWeaponHitWall( vec3_t origin, vec3_t normal );
 void FX_BlasterWeaponHitPlayer( gentity_t *hit, vec3_t origin, vec3_t normal, qboolean humanoid );
+void FX_DisruptorWeaponHitWall( vec3_t origin, vec3_t normal );
+void FX_DisruptorWeaponHitPlayer( gentity_t *hit, vec3_t origin, vec3_t normal, qboolean humanoid );
 
 void FX_DisruptorMainShot( vec3_t start, vec3_t end );
 void FX_DisruptorAltShot( vec3_t start, vec3_t end, qboolean full );
@@ -1203,6 +1205,7 @@ void FX_CloneBlasterProjectileThink( centity_t *cent, const struct weaponInfo_s 
 void FX_CloneBlasterAltFireThink( centity_t *cent, const struct weaponInfo_s *weapon );
 void FX_CloneBlasterWeaponHitWall( vec3_t origin, vec3_t normal );
 void FX_CloneBlasterWeaponHitPlayer( gentity_t *hit, vec3_t origin, vec3_t normal, qboolean humanoid );
+void FX_Z6ProjectileThink( centity_t *cent, const struct weaponInfo_s *weapon );
 
 void FX_DestructionProjectileThink( centity_t *cent, const struct weaponInfo_s *weapon );
 void FX_DestructionHitWall( vec3_t origin, vec3_t normal );

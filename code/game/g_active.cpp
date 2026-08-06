@@ -4743,6 +4743,21 @@ void	ClientAlterSpeed(gentity_t *ent, usercmd_t *ucmd, qboolean	controlledByPlay
 			{
 				client->ps.speed *= client->ps.saber[1].moveSpeedScale;
 			}
+
+			//give each saber style a distinct mobility feel, independent of saber data
+			static const float saberStyleSpeedScale[SS_NUM_SABER_STYLES] =
+			{
+				1.0f,//SS_NONE
+				1.15f,//SS_FAST
+				1.0f,//SS_MEDIUM
+				0.9f,//SS_STRONG
+				0.9f,//SS_DESANN
+				1.0f,//SS_TAVION
+				1.0f,//SS_KATARN
+				1.05f,//SS_DUAL
+				0.95f,//SS_STAFF
+			};
+			client->ps.speed *= saberStyleSpeedScale[client->ps.saberAnimLevel];
 		}
 
 	}

@@ -362,6 +362,36 @@ int missileParryDebounce[NUM_FORCE_POWER_LEVELS] =
 	15
 };
 
+// Per-style multiplier applied on top of the FP_SABER_DEFENSE-based recovery times above.
+// <1.0 recovers faster, >1.0 recovers slower. Gives each saber style a distinct parry feel.
+float saberStyleParryRecoveryScale[SS_NUM_SABER_STYLES] =
+{
+	1.0f,//SS_NONE
+	0.75f,//SS_FAST - quick to recover, rewards aggressive fencing
+	1.0f,//SS_MEDIUM
+	1.3f,//SS_STRONG - heavy swings leave you open longer
+	1.3f,//SS_DESANN
+	1.0f,//SS_TAVION
+	1.0f,//SS_KATARN
+	0.9f,//SS_DUAL - sustained pressure, rapid direction changes
+	0.95f,//SS_STAFF
+};
+
+// Additional per-style multiplier applied only to missile (blaster bolt) parries, on top
+// of saberStyleParryRecoveryScale above. Staff is meant to have superior missile defense.
+float saberStyleMissileParryScale[SS_NUM_SABER_STYLES] =
+{
+	1.0f,//SS_NONE
+	1.0f,//SS_FAST
+	1.0f,//SS_MEDIUM
+	1.0f,//SS_STRONG
+	1.0f,//SS_DESANN
+	1.0f,//SS_TAVION
+	1.0f,//SS_KATARN
+	1.0f,//SS_DUAL
+	0.7f,//SS_STAFF - superior missile defense
+};
+
 float saberAnimSpeedMod[NUM_FORCE_POWER_LEVELS] =
 {
 	0.0f,//if don't even have offense, can't use offense!
@@ -3038,6 +3068,7 @@ qboolean WP_SaberDamageForTrace( int ignore, vec3_t start, vec3_t end, float dmg
 			&& hitEnt->client->ps.weapon == WP_SABER
 			&& !hitEnt->client->ps.saberInFlight
 			&& hitEnt->client->ps.saberLockTime < level.time
+			&& ( hitEnt->s.number != 0 || g_saberAutoBlocking->integer || hitEnt->client->ps.saberBlockingTime > level.time )//actually trying to block, not just standing in ready stance
 			&& ( PM_SaberInParry( hitEnt->client->ps.saberMove ) || hitEnt->client->ps.saberMove == LS_READY ) )
 		{//the blade geometrically slipped past their saber (missed the CONTENTS_LIGHTSABER trace/re-trace
 		//above) even though they were actively holding a block/parry pose -- resolve it as a proper
@@ -4420,8 +4451,10 @@ qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, in
 			default:		gdmg = 10;	break;
 			}
 			gdmg += attacker->client->ps.saber[saberNum].breakParryBonus * 2;
-			// Repeated attacks from the same angle lose guard-damage effectiveness
-			if ( victim->client->ps.saberBlocked == victim->NPC->lastBlockDir )
+			// Repeated attacks from the same angle lose guard-damage effectiveness --
+			// except Dual, whose rapid direction changes and sustained pressure are its identity
+			if ( victim->client->ps.saberBlocked == victim->NPC->lastBlockDir
+				&& attacker->client->ps.saberAnimLevel != SS_DUAL )
 			{
 				victim->NPC->sameBlockDirCount++;
 				float scale = 1.0f - 0.25f * victim->NPC->sameBlockDirCount;
@@ -4498,16 +4531,11 @@ qboolean G_TryingKataAttack( gentity_t *self, usercmd_t *cmd )
 		}
 	}
 	else //if ( self && self->client )
-	{//use the old control scheme
-		if ( (cmd->buttons&BUTTON_ALT_ATTACK) )
-		{//pressing alt-attack
-			//if ( !(self->client->ps.pm_flags&PMF_ALT_ATTACK_HELD) )
-			{//haven't been holding alt-attack
-				if ( (cmd->buttons&BUTTON_ATTACK) )
-				{//pressing attack
-					return qtrue;
-				}
-			}
+	{//use the old control scheme: dedicated Kata key (the old alt-attack+attack combo is no
+	 //longer reachable now that Block asserts alt-attack for the perfect-parry input scheme)
+		if ( (cmd->buttons&BUTTON_KATA) )
+		{
+			return qtrue;
 		}
 	}
 	return qfalse;
@@ -5519,14 +5547,18 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 				qboolean entDefending = qfalse;
 				qboolean hitOwnerDefending = qfalse;
 				qboolean forceLock = qfalse;
-				// Telegraphed heavy attack — an explicitly forced Strong/Tavion/Desann swing (not a
-				// kata/special), identified directly via the heavyAttackMove flag it stamps on itself,
-				// so this can't misfire on kicks/taunts/saberlock-wins the way PM_SaberInSpecialAttack did.
-				// Perfectly timed defense still routes into the favorable knockaway branch below
-				// (unchanged); a held-but-mistimed block gets a guaranteed, softer punish instead of
-				// the ordinary roll.
-				qboolean heavyAttack = (qboolean)( ent->client->ps.heavyAttackMove != LS_NONE
-					&& ent->client->ps.saberMove == ent->client->ps.heavyAttackMove );
+				// Telegraphed heavy attack — an explicitly forced Strong/Tavion/Desann swing,
+				// identified directly via the heavyAttackMove flag it stamps on itself, so this can't
+				// misfire on kicks/taunts/saberlock-wins the way PM_SaberInSpecialAttack did -- OR a
+				// kata/special move (BOTH_A1/2/3_SPECIAL), which is just as committed/hard to time a
+				// perfect parry against but never got its own windup telegraph. Perfectly timed defense
+				// still routes into the favorable knockaway branch below (unchanged); a held-but-mistimed
+				// block gets a guaranteed, softer punish (and no Force cost) instead of the ordinary roll.
+				qboolean heavyAttack = (qboolean)( ( ent->client->ps.heavyAttackMove != LS_NONE
+						&& ent->client->ps.saberMove == ent->client->ps.heavyAttackMove )
+					|| ent->client->ps.torsoAnim == BOTH_A1_SPECIAL
+					|| ent->client->ps.torsoAnim == BOTH_A2_SPECIAL
+					|| ent->client->ps.torsoAnim == BOTH_A3_SPECIAL );
 
 				if ( (ent->client->NPC_class == CLASS_KYLE && (ent->spawnflags&1) && hitOwner->s.number < MAX_CLIENTS )
 					|| (hitOwner->client->NPC_class == CLASS_KYLE && (hitOwner->spawnflags&1) && ent->s.number < MAX_CLIENTS ) )
@@ -5686,7 +5718,16 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 					}
 					else if ( saberHitFraction < 1.0f )
 					{//an actual collision
-						if ( entPowerLevel < FORCE_LEVEL_3 && activeDefense )
+						// Maxed offense always powers through a clash instead of deflecting/bouncing;
+						// partially-invested offense also gets a real chance to punch through now,
+						// instead of every single clash against a defending target bouncing the
+						// attacker's swing (which was breaking attack rhythm on nearly every hit).
+						qboolean skipDeflect = (qboolean)( entPowerLevel >= FORCE_LEVEL_3 );
+						if ( !skipDeflect && entPowerLevel >= FORCE_LEVEL_2 && !Q_irand( 0, 1 ) )
+						{//50/50 chance to push through at level 2
+							skipDeflect = qtrue;
+						}
+						if ( !skipDeflect && activeDefense )
 						{//strong attacks cannot be deflected
 							//based on angle of attack & angle of defensive saber, see if I should deflect off in another dir rather than bounce back
 							deflected = WP_GetSaberDeflectionAngle( ent, hitOwner );
@@ -5837,6 +5878,40 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 								{
 									hitOwner->client->ps.saberBlocked = BLOCKED_NONE;
 									hitOwner->client->ps.saberBounceMove = LS_NONE;
+								}
+							}
+						}
+						// Guard-gated damage scaling -- explicitly restricted to actual saber-wielders
+						// with a guard pool (never to e.g. blaster troopers, whose stale/default
+						// saberMove can otherwise look like they're "defending" -- this is exactly
+						// what caused the stormtrooper lightsaber-immunity regression previously).
+						if ( hitOwner->NPC && hitOwner->NPC->guardMax > 0 && hitOwner->client->ps.weapon == WP_SABER )
+						{
+							if ( hitOwner->NPC->guardBreakTime > level.time )
+							{
+								if ( ent->client->ps.saberAnimLevel == SS_STRONG || ent->client->ps.saberAnimLevel == SS_DESANN )
+								{//punish a guard-broken victim harder with a heavy follow-up hit
+									for ( int vi = 0; vi < numVictims; vi++ )
+									{
+										if ( victimEntityNum[vi] == hitOwner->s.number )
+										{
+											totalDmg[vi] = (int)(totalDmg[vi] * 1.5f);
+											break;
+										}
+									}
+								}
+							}
+							else if ( hitOwner->NPC->guard > 0 )
+							{//guard intact -- the more of it remaining, the harder they are to actually hurt
+								float guardFrac = (float)hitOwner->NPC->guard / (float)hitOwner->NPC->guardMax;
+								float resist = 1.0f - (guardFrac * 0.6f);//up to 60% reduction at full guard
+								for ( int vi = 0; vi < numVictims; vi++ )
+								{
+									if ( victimEntityNum[vi] == hitOwner->s.number )
+									{
+										totalDmg[vi] = (int)(totalDmg[vi] * resist);
+										break;
+									}
 								}
 							}
 						}
@@ -7215,6 +7290,10 @@ qboolean WP_SaberLose( gentity_t *self, vec3_t throwDir )
 	if ( self->NPC )
 	{
 		self->NPC->last_ucmd.buttons &= ~BUTTON_ATTACK;
+		if ( self->health > 0 && (!self->client->ps.dualSabers || !self->client->ps.saber[1].Active()) )
+		{//no backup saber left -- react immediately instead of waiting for an AI tick to notice
+			G_StartFlee( self, self->enemy, self->enemy ? self->enemy->currentOrigin : self->currentOrigin, AEL_DANGER_GREAT, 5000, 10000 );
+		}
 	}
 	return qtrue;
 }
@@ -7775,9 +7854,37 @@ int WP_SaberBlockForceCost( gentity_t *self, qboolean missileBlock )
 	int cost = blockForceCost[self->client->ps.saberAnimLevel];
 	if ( defLevel >= FORCE_LEVEL_3 )      cost /= 2;
 	else if ( defLevel >= FORCE_LEVEL_2 ) cost = cost * 3 / 4;
-	if ( missileBlock ) cost = cost * 3 / 2;  // 1.5x for blaster bolt blocks
+	if ( missileBlock )
+	{
+		cost = cost * 3 / 2;  // 1.5x for blaster bolt blocks
+		if ( self->client->ps.saberAnimLevel == SS_STAFF )
+		{//Staff has superior missile defense
+			cost /= 2;
+		}
+	}
 	else                cost = cost * 5;       // 5x for saber attack blocks -- non-perfect blocks should sting
 	return cost;
+}
+
+// Perfect-parry refund: half of what a non-perfect block would cost at zero Defense investment.
+// Deliberately NOT scaled down by the defender's own Defense level (unlike WP_SaberBlockForceCost)
+// so a high-Defense character's reward doesn't shrink toward an imperceptible 1 point.
+int WP_SaberPerfectParryRefund( gentity_t *self, qboolean missileBlock )
+{
+	int cost = blockForceCost[self->client->ps.saberAnimLevel];
+	if ( missileBlock )
+	{
+		cost = cost * 3 / 2;
+		if ( self->client->ps.saberAnimLevel == SS_STAFF )
+		{
+			cost /= 2;
+		}
+	}
+	else
+	{
+		cost = cost * 5;
+	}
+	return cost / 2;
 }
 
 int WP_MissileBlockForBlock( int saberBlock )
@@ -7936,13 +8043,24 @@ void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlo
 							//incoming bolt is still approaching -- charging here could bill an early,
 							//pre-timing-window frame even though the player goes on to land a perfect parry
 			&& self->s.number == 0 && !g_saberAutoBlocking->integer
-			&& !WP_InPerfectParryWindow( self )	//perfect-parry blocks are free
 			&& self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time )
 		{
-			int cost = WP_SaberBlockForceCost( self, missileBlock );
-			WP_ForcePowerDrain( self, FP_SABER_DEFENSE, cost );
-			// Longer regen pause for saber attacks since they drain significantly more FP
-			self->client->ps.forcePowerRegenDebounceTime = level.time + 3200;
+			if ( WP_InPerfectParryWindow( self ) )
+			{//perfect parries stay free, and refund half of what a sloppy block would have cost
+				//(not scaled down by the defender's own Defense level, so it stays noticeable)
+				self->client->ps.forcePower += WP_SaberPerfectParryRefund( self, missileBlock );
+				if ( self->client->ps.forcePower > self->client->ps.forcePowerMax )
+				{
+					self->client->ps.forcePower = self->client->ps.forcePowerMax;
+				}
+			}
+			else
+			{
+				int cost = WP_SaberBlockForceCost( self, missileBlock );
+				WP_ForcePowerDrain( self, FP_SABER_DEFENSE, cost );
+				// Longer regen pause for saber attacks since they drain significantly more FP
+				self->client->ps.forcePowerRegenDebounceTime = level.time + 3200;
+			}
 		}
 		int parryReCalcTime = Jedi_ReCalcParryTime( self, missileBlock ? EVASION_MISSILE_PARRY : EVASION_PARRY );
 		if ( self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time + parryReCalcTime )
@@ -7965,6 +8083,11 @@ void WP_SaberStartMissileBlockCheck( gentity_t *self, usercmd_t *ucmd  )
 	trace_t		trace;
 	vec3_t		traceTo, entDir;
 	qboolean	dodgeOnlySabers = qfalse;
+
+	if ( self->client && self->client->ps.saberAnimLevel == SS_STAFF )
+	{//Staff has superior missile defense -- wider threat-detection radius
+		radius = 320;
+	}
 
 	// Lightweight "is anything currently threatening me" signal for perfect-parry cooldown
 	// selection (missile vs saber, see PM_AdjustAttackStates) — runs regardless of the
@@ -8907,6 +9030,14 @@ void WP_DropWeapon( gentity_t *dropper, vec3_t velocity )
 		}
 		//FIXME: gets stuck inside it's former owner...
 		weapon->forcePushTime = level.time + 600; // let the push effect last for 600 ms
+	}
+	if ( dropper->NPC )
+	{
+		if ( replaceWeap == WP_NONE && dropper->health > 0 )
+		{//actually left unarmed (not the thermal->melee swap) -- react immediately instead of
+		//waiting for a class-specific AI tick to eventually notice weapon==WP_NONE
+			G_StartFlee( dropper, dropper->enemy, dropper->enemy ? dropper->enemy->currentOrigin : dropper->currentOrigin, AEL_DANGER_GREAT, 5000, 10000 );
+		}
 	}
 }
 

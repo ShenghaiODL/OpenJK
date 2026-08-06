@@ -11482,7 +11482,7 @@ qboolean PM_CanDoKata( void )
 		&& pm->ps->saberAnimLevel <= SS_STRONG//FIXME: Tavion, too?
 		*/
 		&& pm->ps->groundEntityNum != ENTITYNUM_NONE//not in the air
-		&& (pm->cmd.buttons&BUTTON_ATTACK)//pressing attack
+		&& (!g_saberNewControlScheme->integer || (pm->cmd.buttons&BUTTON_ATTACK))//new scheme needs attack held with focus; old scheme's dedicated Kata key works alone
 		&& pm->cmd.forwardmove >=0 //not moving back (used to be !pm->cmd.forwardmove)
 		&& !pm->cmd.rightmove//not moving r/l
 		&& pm->cmd.upmove <= 0//not jumping...?
@@ -13241,6 +13241,17 @@ static bool PM_DoChargedWeapons( void )
 		break;
 
 	//------------------
+	case WP_REPEATER:
+
+		// alt-fire charges the "blob" -- longer hold throws it farther (see WP_RepeaterAltFire)
+		if ( pm->cmd.buttons & BUTTON_ALT_ATTACK )
+		{
+			charging = qtrue;
+			altFire = qtrue;
+		}
+		break;
+
+	//------------------
 	case WP_DISRUPTOR:
 
 		// alt-fire charges the weapon...but due to zooming being controlled by the alt-button, the main button actually charges...but only when zoomed.
@@ -13779,6 +13790,15 @@ static void PM_Weapon( void )
 		return;
 	}
 
+	if ( pm->ps->weapon == WP_Z6_ROTARY && pm->ps->z6Heat > 0 && pm->ps->z6HeatDecayTime < level.time )
+	{//cool down when not actively adding heat (WP_FireZ6Rotary keeps pushing this stamp forward while firing)
+		pm->ps->z6Heat -= 1;
+		if ( pm->ps->z6Heat < 0 )
+		{
+			pm->ps->z6Heat = 0;
+		}
+	}
+
 	if ( PM_InKnockDown( pm->ps ) || PM_InRoll( pm->ps ))
 	{//in knockdown
 		if ( pm->ps->weaponTime > 0 ) {
@@ -14134,6 +14154,11 @@ static void PM_Weapon( void )
 						else
 						{
 							anim = PM_PickAnim( pm->gent, BOTH_MELEE1, BOTH_MELEE2 );
+							if ( pm->gent && pm->gent->NPC && !Q_irand( 0, 5 ) )
+							{//occasional telegraphed "power" hit using the Kyle grab-reach pose,
+							//instead of every disarmed fistfight looking like the same two punches
+								anim = BOTH_KYLE_GRAB;
+							}
 						}
 						if ( anim != -1 )
 						{
@@ -14467,6 +14492,17 @@ static void PM_Weapon( void )
 		case WP_REPEATER:
 			// repeater is supposed to do smoke after sustained bursts
 			pm->ps->weaponShotCount++;
+			// 3-round burst: fast sub-interval between the first two shots of each burst, then a
+			// real cooldown pause on the third shot -- without this the "burst" just runs at the
+			// weapon's base 50ms firetime between bursts and reads as full auto with a stutter
+			if ( pm->ps->weaponShotCount % 3 != 0 )
+			{
+				addTime = 60;
+			}
+			else
+			{
+				addTime = 450;
+			}
 			break;
 		case WP_THERMAL:
 			if ( pm->gent )

@@ -114,3 +114,21 @@ void FX_BlasterWeaponHitPlayer( gentity_t *hit, vec3_t origin, vec3_t normal, qb
 
 	theFxScheduler.PlayEffect( cgs.effects.blasterFleshImpactEffect, origin, normal );
 }
+
+/*
+-------------------------
+FX_DisruptorWeaponHitWall / FX_DisruptorWeaponHitPlayer -- now that the disruptor fires a real
+travel-time missile (instead of resolving damage on an instant hitscan trace), it needs to be
+wired into the generic missile hit-event dispatch like any other projectile weapon. Reuses the
+disruptor's own pre-existing impact effect assets, just via the generic missile-hit path now.
+-------------------------
+*/
+void FX_DisruptorWeaponHitWall( vec3_t origin, vec3_t normal )
+{
+	theFxScheduler.PlayEffect( "disruptor/wall_impact", origin, normal );
+}
+
+void FX_DisruptorWeaponHitPlayer( gentity_t *hit, vec3_t origin, vec3_t normal, qboolean humanoid )
+{
+	theFxScheduler.PlayEffect( "disruptor/flesh_impact", origin, normal );
+}

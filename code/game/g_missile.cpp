@@ -820,6 +820,7 @@ extern cvar_t *g_saberAutoBlocking;
 extern qboolean WP_InPerfectParryWindow( const gentity_t *self );
 extern void WP_PerfectParrySuccess( gentity_t *self, vec3_t impactPoint, vec3_t normal );
 extern int WP_SaberBlockForceCost( gentity_t *self, qboolean missileBlock );
+extern int WP_SaberPerfectParryRefund( gentity_t *self, qboolean missileBlock );
 extern void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
 	// check for hitting a lightsaber
 	if ( other->contents & CONTENTS_LIGHTSABER )
@@ -870,11 +871,21 @@ extern void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int o
 					return;
 				}
 				else if ( other->owner && WP_InPerfectParryWindow( other->owner ) )
-				{//timed perfect parry: guaranteed reflect, dead-accurate, free, with distinct feedback
+				{//timed perfect parry: guaranteed reflect, dead-accurate, with distinct feedback --
+				//stays free, and refunds half of what a sloppy deflect would have cost
 					G_ReflectMissile( other, ent, trace->plane.normal, qtrue );
 					other->owner->client->ps.saberEventFlags |= SEF_DEFLECTED;
 					WP_PerfectParrySuccess( other->owner, trace->endpos, trace->plane.normal );
 					G_MissileReflectEffect( ent, trace->endpos, trace->plane.normal );
+					if ( other->owner->client && !other->owner->s.number && !g_saberAutoBlocking->integer )
+					{
+						int refund = WP_SaberPerfectParryRefund( other->owner, qtrue );
+						other->owner->client->ps.forcePower += refund;
+						if ( other->owner->client->ps.forcePower > other->owner->client->ps.forcePowerMax )
+						{
+							other->owner->client->ps.forcePower = other->owner->client->ps.forcePowerMax;
+						}
+					}
 					return;
 				}
 				else

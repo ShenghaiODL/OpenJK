@@ -83,6 +83,7 @@ void FX_NoghriShotProjectileThink( centity_t *cent, const struct weaponInfo_s *w
 //Clone projectile
 void FX_CloneBlasterProjectileThink( centity_t *cent, const struct weaponInfo_s *weapon );
 void FX_CloneBlasterAltFireThink( centity_t *cent, const struct weaponInfo_s *weapon );
+void FX_Z6ProjectileThink( centity_t *cent, const struct weaponInfo_s *weapon );
 
 
 // Table used to attach an extern missile function string to the actual cgame function
@@ -94,6 +95,7 @@ func_t	funcs[] = {
 	{"bowcaster_func",		FX_BowcasterProjectileThink},
 	{"cloneblaster_func",		FX_CloneBlasterProjectileThink},
 	{"cloneblaster_alt_func",	FX_CloneBlasterAltFireThink},
+	{"z6_func",				FX_Z6ProjectileThink},
 	{"repeater_func",		FX_RepeaterProjectileThink},
 	{"repeater_alt_func",	FX_RepeaterAltProjectileThink},
 	{"demp2_func",			FX_DEMP2_ProjectileThink},

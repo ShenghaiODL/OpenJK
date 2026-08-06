@@ -1901,6 +1901,8 @@ public:
 	int			heavyAttackPhase;		//0 = inactive, 1 = telegraphed windup, 2 = live strike -- avoids misidentifying a later ordinary swing that reuses the same move id
 	float		heavyAttackSpeedRestore;//saber[0].animSpeedScale snapshotted before being slowed for a heavy attack, restored on exit
 	int			heavyAttackDebounce;	//no new heavy attack from this NPC until this passes
+	int			z6Heat;					//0-100, builds per Z-6 shot, decays when not firing; degrades accuracy as it rises
+	int			z6HeatDecayTime;		//no heat decay until level.time passes this (brief hold after firing before cooldown starts)
 	int			saberAnimLevel;
 	int			saberAttackChainCount;
 	int			saberLockTime;
@@ -2096,6 +2098,8 @@ public:
 		saved_game.write<int32_t>(heavyAttackPhase);
 		saved_game.write<float>(heavyAttackSpeedRestore);
 		saved_game.write<int32_t>(heavyAttackDebounce);
+		saved_game.write<int32_t>(z6Heat);
+		saved_game.write<int32_t>(z6HeatDecayTime);
 		saved_game.write<int32_t>(saberAnimLevel);
 		saved_game.write<int32_t>(saberAttackChainCount);
 		saved_game.write<int32_t>(saberLockTime);
@@ -2283,6 +2287,8 @@ public:
 		saved_game.read<int32_t>(heavyAttackPhase);
 		saved_game.read<float>(heavyAttackSpeedRestore);
 		saved_game.read<int32_t>(heavyAttackDebounce);
+		saved_game.read<int32_t>(z6Heat);
+		saved_game.read<int32_t>(z6HeatDecayTime);
 		saved_game.read<int32_t>(saberAnimLevel);
 		saved_game.read<int32_t>(saberAttackChainCount);
 		saved_game.read<int32_t>(saberLockTime);
@@ -2391,6 +2397,8 @@ using playerState_t = PlayerStateBase<saberInfo_t>;
 #define BUTTON_SABERBLOCK	2048
 
 #define BUTTON_KICK			4096	// bit 12, maps to in_buttons[12]
+
+#define BUTTON_KATA			8192	// bit 13, maps to in_buttons[13] -- dedicated Kata trigger
 
 #define	MOVE_RUN			120			// if forwardmove or rightmove are >= MOVE_RUN,
 										// then BUTTON_WALKING should be set

@@ -1638,9 +1638,7 @@ void FireWeapon( gentity_t *ent, qboolean alt_fire )
 		break;
 			
 	case WP_Z6_ROTARY:
-		if ( ent->s.number < MAX_CLIENTS )
-			WP_ForcePowerDrain( ent, FP_LEVITATION, 2 );
-		WP_FireRepeater( ent, qfalse );
+		WP_FireZ6Rotary( ent );
 		break;
 			
 	case WP_DC15A_RIFLE:

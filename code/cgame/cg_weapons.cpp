@@ -445,6 +445,9 @@ void CG_RegisterWeapon( int weaponNum ) {
 		break;
 
 	case WP_DISRUPTOR:
+		// now fires real blaster-style travel-time bolts (missileFuncName blaster_func) -- make sure
+		// that trail effect is registered even in a level that has no other blaster-family weapon
+		cgs.effects.blasterShotEffect			= theFxScheduler.RegisterEffect( "blaster/shot" );
 		theFxScheduler.RegisterEffect( "disruptor/wall_impact" );
 		theFxScheduler.RegisterEffect( "disruptor/flesh_impact" );
 		theFxScheduler.RegisterEffect( "disruptor/alt_miss" );
@@ -671,8 +674,15 @@ void CG_RegisterWeapon( int weaponNum ) {
 		break;
 
 	case WP_DC15S_CARBINE:
-	case WP_Z6_ROTARY:
 		cgs.effects.cloneBlasterShotEffect		= theFxScheduler.RegisterEffect( "z6/shot" );
+		cgs.effects.cloneBlasterWallImpactEffect		= theFxScheduler.RegisterEffect( "blaster/wall_impact" );
+		cgs.effects.cloneBlasterFleshImpactEffect	= theFxScheduler.RegisterEffect( "blaster/flesh_impact" );
+		break;
+	case WP_Z6_ROTARY:
+		// own effect handle -- previously shared cloneBlasterShotEffect with DC-15S/A, so whichever
+		// weapon type happened to register last silently won the shot trail for all of them
+		cgs.effects.z6ShotEffect				= theFxScheduler.RegisterEffect( "z6/shot" );
+		cgs.effects.z6BarrelGlowEffect			= theFxScheduler.RegisterEffect( "z6/barrel_glow" );
 		cgs.effects.cloneBlasterWallImpactEffect		= theFxScheduler.RegisterEffect( "blaster/wall_impact" );
 		cgs.effects.cloneBlasterFleshImpactEffect	= theFxScheduler.RegisterEffect( "blaster/flesh_impact" );
 		break;
@@ -3563,6 +3573,10 @@ void CG_MissileHitWall( centity_t *cent, int weapon, vec3_t origin, vec3_t dir, 
 		}
 		break;
 
+	case WP_DISRUPTOR:
+		FX_DisruptorWeaponHitWall( origin, dir );
+		break;
+
 	case WP_DEMP2:
 		if ( altFire )
 		{
@@ -3716,6 +3730,10 @@ void CG_MissileHitPlayer( centity_t *cent, int weapon, vec3_t origin, vec3_t dir
 		{
 			FX_RepeaterHitPlayer( origin, dir, humanoid );
 		}
+		break;
+
+	case WP_DISRUPTOR:
+		FX_DisruptorWeaponHitPlayer( other, origin, dir, humanoid );
 		break;
 
 	case WP_DEMP2:

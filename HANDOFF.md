@@ -18,6 +18,18 @@ External workspace directories used this session (outside the git repo):
   relative paths (`ext_data\weapons.dat`, `default.cfg`, `ui\controls.menu`,
   `ui\ingamecontrols.menu`) so they can be dropped into a deployment target later.
 
+**Note (later session, other PC)**: the same OneDrive-synced folder tree reappears as
+`C:\Users\Sheng\OneDrive\Desktop\JKA Workspace\...` on the user's other machine — same
+content, different Windows username. Same caveat applies: it's the actively-deployed/
+tested game folder, more current than the repo's `Mod Files/`/`Game Assets/` for data
+files. Tracks 8-10 below were done on that machine and use the `Sheng` path.
+
+A separate phased implementation plan (saber styles, disarm/surrender AI, companion AI,
+weapon reworks) lives outside the repo at
+`C:\Users\Sheng\.claude\plans\alright-time-to-actually-nifty-rossum.md` — check it for
+per-phase status before starting new work in those areas; Tracks 8-10 correspond to
+Phases 1/2/4 of that plan.
+
 ---
 
 ## What We've Been Working On (prior session)
@@ -303,8 +315,144 @@ Not touched this session; same working-directory scope applies whenever it's pic
 
 ---
 
+## Track 8: Saber Style Mechanical Identity + Kata Keybind — DONE
+
+Implements Phase 1 of the external plan (see path above). Gave each saber style (Fast/
+Medium/Strong/Dual/Staff/Desann/Tavion) a distinct mechanical identity beyond animation:
+per-style parry recovery time, a Strong guard-break punishment bonus, Fast/Dual mobility
+bumps, cheaper/wider Staff missile-block, Dual exemption from the same-direction guard-
+damage penalty, and a real dedicated Kata keybind (new `BUTTON_KATA` bit, `+kata`/`-kata`
+console commands, bind-menu rows) replacing the old dead left-click+right-click combo that
+the Block bind had made unreachable. Also picked up, from in-game testing, a guard FP-drain
+bug fix, a perfect-parry-refund change, folding katas into the heavy-attack mistimed-block
+treatment, boss-tier-only instant guard refill, a guard-intact damage-resistance scale, and
+loosening the saber clash/bounce gate for partial Saber Offense investment. All changes are
+in `code/game/wp_saber.cpp`, `code/game/bg_pmove.cpp`, `code/game/g_active.cpp`,
+`code/game/AI_Jedi.cpp`, `code/qcommon/q_shared.h`, `code/client/cl_input.cpp`,
+`code/ui/ui_shared.cpp`, plus `Mod Files/ui/controls.menu` /`ingamecontrols.menu` /
+`MENUS.str`. Iterated through several rounds of in-game testing already — considered stable.
+
+---
+
+## Track 9: Disarmed NPC Behavior + Weapon Re-arm — DONE (not yet tested in-game)
+
+Implements Phase 2 of the external plan. Gave disarmed NPCs a full reaction chain: flee
+toward cover on disarm, search for a weapon while fleeing, surrender if morale-routed or
+cornered by an active saber, or fall back to a faster/occasionally-grab-move desperate melee
+if nothing else works. Several real bugs found and fixed getting the `bState` dispatch to
+actually reach these branches (flee/combat dispatch are mutually exclusive `bState`s; melee-
+flagged NPCs could still be flagged surrender-eligible; disarmed NPCs would charge an active
+lit saber barehanded) — see the plan file's Phase 2 section for the blow-by-blow.
+
+**Reverted mid-session**: the original plan's item 6, a terminal "surrender → capture"
+state (seated pose, glowing wrist binders, `MOD_CAPTURED`), was implemented but never held
+up in testing — pose kept reverting, state kept getting preempted. Fully walked back per
+user direction: `NPC_Capture()`, the `firstSurrenderTime` field, and the
+`binders/wrist_glow.efx` asset are all gone. Surrendered NPCs now just cower/arms-up
+indefinitely with no terminal state — a stealth system is the suggested place to revisit
+this later, not scheduled.
+
+**Weapon re-arm reworked**: rather than an NPC preferring its own dropped weapon (that
+whole mechanic, including a `droppedWeapon` field, was removed), NPCs now only auto-rearm
+from a deliberate level-designer-placed source — a new `FL_NPC_REARM_SOURCE` entity flag
+(`code/game/g_local.h`) set on weapon items spawned by `misc_model_ammo_rack`
+(`GunRackAddItem`, `code/game/g_misc_model.cpp`) and checked in a new branch of
+`CheckItemCanBePickedUpByNPC` (`code/game/g_items.cpp`) that skips the normal "dropped
+item" ownership/age checks. This is additive — picking up an ordinary dropped weapon (a
+dead comrade's, etc.) still works exactly as before.
+
+Other files touched: `code/game/b_public.h`, `NPC_spawn.cpp`, `wp_saber.cpp`,
+`NPC_combat.cpp`, `NPC_behavior.cpp`, `NPC.cpp`, `AI_Civilian.cpp`.
+
+---
+
+## Track 10: Weapon Reworks — Z-6 / Repeater / Disruptor — DONE, one round of in-game fixes applied
+
+Implements Phase 4 of the external plan (done ahead of Phase 3 per user request — Phase 3,
+Companion AI, is still queued/not started).
+
+**Z-6 Rotary** — split off `WP_FireZ6Rotary` (`code/game/wp_repeater.cpp`) instead of
+sharing `WP_FireRepeater`; real heat (`playerState_t::z6Heat`/`z6HeatDecayTime`,
+`code/qcommon/q_shared.h`) that degrades accuracy as it climbs, Force Push interruption,
+own missile think/effects (fixed a real pre-existing bug where Z-6/DC-15S/DC-15A shared one
+cgame effect handle and silently overwrote each other's shot trail). Damage tuned to 14 —
+above the repeater's, per the user's original "Z-6 > repeater > blaster" ordering (not the
+plan text's "lower damage" framing).
+
+**Repeater** — primary fires a 3-round burst (reuses the existing `weaponShotCount`
+counter); alt-fire ("blob") now charges like the disruptor/bryar, throwing farther the
+longer it's held; alt-fire VFX recolored red/orange (later reverted, see below).
+
+**Disruptor** — both fire modes converted from instant hitscan to real travel-time
+`CreateMissile()` bolts (`code/game/wp_disruptor.cpp`, fully rewritten), higher damage,
+slower rate, reusing the blaster's visual style. Disintegration (`MOD_SNIPER`) fully
+removed from the disruptor (confirmed `g_combat.cpp`'s disintegration code is still needed
+as-is for the Tusken rifle and a `g_mover.cpp` trap — left untouched). Dropped, as a
+disclosed scope reduction: the old alt-fire multi-target penetration trace has no clean
+equivalent once it's a single projectile — a full charge is now one much harder-hitting
+bolt instead of a beam through several enemies.
+
+**Side quest, still unresolved**: investigated a pre-existing (unrelated) bug where the
+bowcaster's alt-fire charge visual doesn't show. Shader/texture/registration all look
+structurally correct, matching Bryar's working pattern — could not root-cause via static
+reading alone, needs in-game debugging.
+
+### First in-game test pass — user feedback + fixes applied
+- **Repeater still fired full-auto.** Root cause: the burst counter set a fast 60ms gap for
+  the first two shots of a burst but fell through to the weapon's normal 50ms rate on the
+  third instead of a real cooldown — never actually paused. Fixed: third shot now forces a
+  450ms gap (`code/game/bg_pmove.cpp`, `case WP_REPEATER` in the fire-rate switch).
+- **Repeater alt-fire charge had no sound, charged too fast, went too far.** No
+  `altchargesound` key existed for `WP_REPEATER` in `weapons.dat` at all — the generic
+  charge-sound wiring in `PM_DoChargedWeapons` silently no-ops if the key is missing.
+  Added one (reusing the disruptor's charge-whine sound). Slowed `REPEATER_ALT_CHARGE_UNIT`
+  150ms → 250ms and reduced max charge scale 2.0x → 1.48x (`code/game/wp_repeater.cpp`).
+- **Z-6 heat "wasn't doing much."** Spread scale was a flat linear curve off heat (max
+  3.5x). Replaced with a cubic curve (gentler at low/mid heat, up to 8x at full heat) and
+  slowed per-shot heat gain 4 → 3 so the ramp is felt over a couple seconds instead of
+  saturating almost instantly (`code/game/wp_repeater.cpp`, `WP_FireZ6Rotary`).
+- **Disruptor primary wanted more damage + a headshot multiplier.** Bumped
+  `DISRUPTOR_MAIN_DAMAGE` 30 → 40 (`code/game/weapons.h`). Headshot multiplier already
+  exists generically — `damageModifier[HL_HEAD] = 2.0f` (`code/game/g_combat.cpp` ~5320,
+  applied unless the MOD is listed in `G_NonLocationSpecificDamage`) — and `MOD_DISRUPTOR`
+  isn't excluded, so headshots already do 2x. No code added; flagged to user in case they
+  want more than the generic 2x specifically for this weapon.
+- **All Phase 4 `.efx` visual recolors reverted** per user request — they're going to hand-
+  author the visuals themselves instead. Exactly reverted (had originals on record):
+  deleted the new `effects/z6/barrel_glow.efx`, restored `effects/z6/shot.efx` and
+  `effects/repeater/alt_projectile.efx` to their exact pre-session colors. **Best-effort
+  only** (exact originals weren't on record, reconstructed via an R/B channel swap of the
+  recolor): `effects/repeater/altmuzzle_flash.efx` and `effects/repeater/concussion.efx` —
+  worth a manual sanity check before building further on them. **Known dangling
+  reference**: `WP_FireZ6Rotary` still calls `G_PlayEffect("z6/barrel_glow", ...)` at high
+  heat; since that file is deleted, the call now silently no-ops until either a new
+  `z6/barrel_glow.efx` is authored at that path or the call is removed from code.
+- **Gotcha found this round**: there are three separate `weapons.dat` copies in play —
+  `Mod Files/ext_data/` and `Game Assets/ext_data/` (both in the git repo, both stale/
+  untouched by any of this session's changes) and `ext_data/weapons.dat` inside the
+  OneDrive `combined base with jkenhanced` workspace (the live one, holding all of this
+  session's `firetime`/`missileFuncName`/`damage`/`altchargesound` changes). Make sure
+  it's the OneDrive copy that gets copied into any test/deployment target.
+
+**Not yet retested in-game** as of this round of fixes.
+
+---
+
 ## Ready for Next Session
 
+- **Retest Track 10's follow-up fixes in-game** — repeater burst pacing/charge sound/
+  distance, Z-6 heat curve, disruptor damage. None of this round of fixes has been
+  rebuilt/tested yet.
+- **Sanity-check the two best-effort `.efx` reverts** (`repeater/altmuzzle_flash.efx`,
+  `repeater/concussion.efx`, see Track 10) before building further on them, and decide
+  what to do about the dangling `z6/barrel_glow` effect reference (recreate the asset or
+  strip the call from `WP_FireZ6Rotary`) — user is planning to hand-author the repeater/
+  Z-6 visuals themselves from here.
+- **Bowcaster charge VFX bug** (Track 10 side quest) — charge sound plays, visual doesn't;
+  static analysis couldn't root-cause it, needs live in-game debugging.
+- **Phase 3 (Companion AI overhaul)** — queued in the external plan, not started. Was
+  deliberately deferred behind Phase 4 (Track 10) per user request; pick up once Track 10
+  is confirmed working.
 - **Test Track 5's swap/drop fixes and Track 6's cloak fixes in-game** — none of this
   session's final bugfix-pass changes (Items A/C/D from the latest plan) have been
   rebuilt/tested yet as of this writing.
@@ -353,3 +501,24 @@ Not touched this session; same working-directory scope applies whenever it's pic
 - Console command `uimenu <name>` force-opens a named menu directly (e.g.
   `uimenu ingameWpnSelect` for the pre-mission Weapon Select screen) without needing to
   trigger the real mission-transition flow — useful for testing menus in isolation.
+- **Three `weapons.dat` copies exist**: `Mod Files/ext_data/` and `Game Assets/ext_data/`
+  (both in-repo, both stale as of Track 10) vs. `ext_data/weapons.dat` in the OneDrive
+  `combined base with jkenhanced` workspace (the live/deployed one). Always confirm which
+  copy you're editing and which one actually ships.
+- `PM_DoChargedWeapons` (`code/game/bg_pmove.cpp` ~13420-13470) auto-plays
+  `weaponData[weapon].chargeSnd`/`altChargeSnd` when a weapon enters `WEAPON_CHARGING`/
+  `WEAPON_CHARGING_ALT` — but only if the corresponding `chargesound`/`altchargesound` key
+  actually exists in that weapon's `weapons.dat` block. Adding charge behavior in code to a
+  weapon that never had a charge mechanic before (e.g. the repeater in Track 10) does
+  *not* get a sound for free — the data key has to be added too, and it fails silently
+  (no warning) if forgotten.
+- `defaultDamage[]` (`code/game/g_weaponLoad.cpp` ~268) is a **fallback only** — a weapon's
+  real damage comes from its `weapons.dat` `damage`/`altdamage` key if present, and only
+  falls back to the `weapons.h` constant (e.g. `DISRUPTOR_MAIN_DAMAGE`) if that key is
+  absent from the block. Check the actual `.dat` block before assuming a `weapons.h`
+  damage constant is dead or live.
+- Generic per-hitlocation damage multiplier: `damageModifier[HL_MAX]`
+  (`code/game/g_combat.cpp` ~5320, `HL_HEAD` = 2.0x) applies automatically to **any**
+  weapon whose MOD isn't listed in `G_NonLocationSpecificDamage()` (~line 5434) — most
+  hitscan/projectile weapons already get a free 2x headshot bonus with no per-weapon code
+  needed. Check this list before adding a bespoke headshot multiplier for a "new" weapon.

@@ -98,6 +98,12 @@ void WP_Melee( gentity_t *ent )
 			dflags |= DAMAGE_DISMEMBER;
 		}
 
+		if ( ent->NPC && ent->client->ps.torsoAnim == BOTH_KYLE_GRAB )
+		{//telegraphed power hit connected -- hits harder than a plain punch
+			damage *= 2;
+			dflags &= ~DAMAGE_NO_KNOCKBACK;
+		}
+
 		G_Damage( tr_ent, ent, ent, forwardVec, tr.endpos, damage, dflags, MOD_MELEE );
 	}
 }
