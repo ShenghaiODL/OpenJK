@@ -25,9 +25,27 @@ SABER GUARD & PERFECT PARRY
 Boss-tier and other saber-capable NPCs now have a hidden "guard" (composure) pool alongside health, sized off their Saber Defense level (70/100/130) and boosted 50% for bosses (Desann, Tavion, Alora, Kyle, Shadowtrooper, or anything flagged as a boss character)
 Every parry, kick, resisted Force push, and lightning tick chips away at guard; repeatedly blocking from the same direction loses effectiveness (down to 40% after a few reps) so turtling in one spot stops working
 At zero guard the NPC breaks -- an extended stagger (1.6-2.4s, 0.9-1.3s for bosses) where they can't parry or evade and take 2.5x saber damage -- then guard fully refills once the break window ends, so bosses effectively fight in phases
-New player mechanic: tap +saberblock right as an attack lands (default 200ms window, g_perfectParryWindow) for a "perfect parry" -- guaranteed deflect/parry regardless of Force Defense level, costs no Force, and knocks a huge chunk off an NPC's guard. Distinct crosshair flash + sound on success, ~900ms cooldown between windows (g_perfectParryCooldown) //basically a timing-based alternative to the FP-gated block, should reward actually paying attention instead of just holding the button
+New player mechanic: hold block and tap attack right as a hit lands (default 200ms window, g_perfectParryWindow) for a "perfect parry" -- guaranteed deflect/parry regardless of Force Defense level, costs no Force, and knocks a huge chunk off an NPC's guard. Distinct crosshair flash + sound on success, HUD cooldown bar so you can see when the next window is up //basically a timing-based alternative to the FP-gated block, should reward actually paying attention instead of just holding the button
+Perfect parry retrigger changed from re-pressing block to tapping attack while block is already held -- no more releasing block just to get a fresh timing window
+Cooldown between perfect-parry windows is now split by threat: 1000ms after a saber hit, only 150ms if a blaster bolt is incoming (g_perfectParryCooldownSaber / g_perfectParryCooldownMissile) -- blasters fire way faster than sabers swing, so the old single cooldown made blocking a burst basically impossible
+Perfectly parrying a thrown saber now disarms the thrower entirely; NPCs throw their sabers less often and can't spam it back-to-back anymore
 Removed the old requirement to strafe toward side attacks while manually blocking -- holding block now parries from any direction, timing is the skill test instead
 NPCs with a guard pool show a thin orange composure bar under their health bar; flashes white while broken
+
+
+HEAVY ATTACKS
+--------------------------------------
+Saber-capable enemies can now telegraph a heavy attack: a visibly slowed windup into a normal-speed strike, so you get a real tell instead of every swing looking the same -- one enemy can only do this once every 7 seconds (g_heavyAttackCooldown)
+Blocking a heavy attack without perfect timing still staggers you, but damage is halved compared to a normal mistimed block -- rewards at least trying to block a heavy swing even if the timing's off
+A Force push/pull/repulse/grip that actually staggers someone now locks out the caster's own follow-up attack for a share of the victim's recovery time (g_forceStaggerLockoutScale, 60%) so you can't just push someone down and get a free hit every time
+
+
+FORCE ECONOMY
+--------------------------------------
+Passive Force regen ticks faster (every 60ms instead of 100ms)
+Non-perfect blocks cost a lot more now -- 5x the base cost blocking a saber hit, 1.5x blocking a blaster bolt -- so eating the timing window matters more //perfect parries are still completely free, this is just the "you didn't time it" tax
+Longer pause before regen resumes after blocking
+Force Lightning can now only be blocked by actually holding block, not just standing in a ready pose, and blocking it drains Force power like everything else
 
 
 Weapon Rework:
@@ -41,6 +59,7 @@ Player damage increased: 45 -> 55
 NPC hard difficulty damage: 36 -> 50
 Explosive bolt knocks down anyone within half the splash radius
 Alt fire nerf: significantly slower fire rate when charged
+// Fixed this round: the charge-up glow only rendered in first person -- third-person viewers (including yourself, if you switched your own camera to third person) never saw it at all, even though the sound always played. One condition was checking the wrong internal state; now shows correctly in both view modes
 
 
 Z-6 ROTARY BLASTER CANNON (from JKEnhanced)
@@ -49,8 +68,15 @@ Spin-up mechanic: must hold fire to spin up the barrel (500ms minimum) before it
 Loop sound plays while spinning; spin-down sound plays on button release
 Model and animations courtesy of MBII
 Stormtroopers, officers, and select NPCs can now spawn with the Z-6 as a weapon pool option
-Currently shoots red blaster EFX.
-// Not currently super happy with the projectiles and damage. Will probably adjust.
+Real heat mechanic: sustained fire builds heat, which widens the spread the longer you hold the trigger (gentle at first, falls off a cliff near max heat) -- trades accuracy for suppression instead of just being a bigger repeater
+// Fixed this round: muzzle flash/shot trail effects were firing slower than the gun itself, so most shots showed no visual at all; missing shader definitions were throwing console warnings; dropped Z-6 pickups showed the repeater's world model instead of their own; max-heat spread was a little much and got trimmed down
+
+
+REPEATER REWORK
+----------------------------------------
+Primary fire is a 3-round burst rather than straight full-auto -- holding the trigger keeps firing burst after burst automatically, no need to release and re-press
+Alt fire ("blob") charges the longer you hold it, throwing farther with a longer charge
+// Fixed this round: an instant tap on alt fire was getting the same power/range as a "properly" charged shot -- there was no actual weak/uncharged state at all. Quick taps are now noticeably weaker and shorter-range, full charge unchanged
 
 
 CYCLER RIFLE / AMBAN SNIPER (Replaces Disruptor for player and will eventually for NPCs)
@@ -109,6 +135,7 @@ NPC think rate now scales with their Reactions stat, so elite troops react notic
 Stormtroopers reposition more often, fire while moving/retreating more, and hold a line-of-sight "grace window" before breaking off a shot; Reborn/Sith without chase-enemies flags now slowly advance instead of standing idle, and their rocket/saber missile-reflect chances are now probabilistic instead of guaranteed
 New NPC_StormtrooperRandom spawner: drops a weighted-random stormtrooper variant (rifle/heavy/officer/grenadier) from a config file instead of needing a distinct classname per spawn -- add new variants by editing the .npc/.cfg, no recompile
 Various stormtrooper fixes: grenadier now switches back to its blaster properly after throwing, saber no longer flickers off/on during door-cam cutscenes, fixed stormtrooper_random always falling back to the hardcoded variant list
+Toned down how much NPCs strafe and jump around during saber duels -- was getting a bit chaotic to actually read what they were doing
 
 
 SABOTEUR CLOAK REWORK
@@ -137,6 +164,9 @@ PHYSICS
 --------
 Corpse despawn time is now a cvar (g_corpseRemovalTime) instead of hardcoded; set it to 0 to keep bodies around forever
 Force push/pull can now grab severed limbs without needing a pixel-perfect crosshair on them, and gibs fly with less knockback so they don't ragdoll violently
+Fixed gibs freezing mid-air or landing stuck pointing in strange directions after being Force pushed or pulled
+Fixed pushed/pulled gibs clumping together instead of scattering
+Gibs now actually collide with each other, with corpses, and with living characters instead of passing through everything
 
 
 ## Based on OpenJK

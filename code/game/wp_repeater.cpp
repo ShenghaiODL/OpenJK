@@ -110,15 +110,15 @@ static void WP_RepeaterAltFire( gentity_t *ent )
 		if ( ent->client )
 		{
 			int chargeCount = (int)( ( level.time - ent->client->ps.weaponChargeTime ) / REPEATER_ALT_CHARGE_UNIT );
-			if ( chargeCount < 1 )
+			if ( chargeCount < 0 )
 			{
-				chargeCount = 1;
+				chargeCount = 0;
 			}
 			else if ( chargeCount > 5 )
 			{
 				chargeCount = 5;
 			}
-			chargeScale = 1.0f + (chargeCount - 1) * 0.12f;//up to 1.48x throw distance at a full charge
+			chargeScale = 0.55f + chargeCount * 0.186f;//0.55x on an instant tap (was floored to 1.0x, i.e. no weak state at all), up to 1.48x at a full charge
 		}
 		missile = CreateMissile( start, forwardVec, (int)(REPEATER_ALT_VELOCITY * chargeScale), 10000, ent, qtrue );
 	}
@@ -274,10 +274,10 @@ void WP_FireZ6Rotary( gentity_t *ent )
 
 	// The hotter the barrel, the worse the spread -- cubic curve so low/moderate heat barely matters
 	// (e.g. half-heated is still fairly tight) but the last stretch to a fully red-hot barrel falls
-	// off a cliff (up to 8x baseline spread), so sustained fire trades accuracy for suppression
+	// off a cliff (up to 6x baseline spread), so sustained fire trades accuracy for suppression
 	// instead of just being a bigger repeater.
 	float heatFrac = ent->client->ps.z6Heat * 0.01f;
-	float spreadScale = 1.0f + ( heatFrac * heatFrac * heatFrac ) * 7.0f;
+	float spreadScale = 1.0f + ( heatFrac * heatFrac * heatFrac ) * 5.0f;
 
 	if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
 		|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )

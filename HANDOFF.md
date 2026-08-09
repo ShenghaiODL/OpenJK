@@ -2,27 +2,61 @@
 
 ## Project
 JKEnhanced mod for Jedi Academy (OpenJK codebase — Raven's JKA code only, no JK2/codemp).
-Working directory: `a:\JKEnhanced\OpenJK`
-Branch: `Test`
+Branch: `working-build-between-2-pcs` (the old `Test` branch is retired and deleted —
+it was a duplicate of this branch's history with nothing unique on it; everything
+now happens directly on `working-build-between-2-pcs`).
 
-External workspace directories used this session (outside the git repo):
-- `C:\Users\toitl\OneDrive\Desktop\JKA Workspace\combined base with jkenhanced` — the
-  user's actively-deployed/tested game folder. Treated as more current than `Mod Files/`
-  in this repo for some content (see Track 6) — always check both when a data file seems
-  stale.
-- `C:\Users\toitl\OneDrive\Desktop\JKA Workspace\sheng ultimate weapons` — extracted copy
-  of the real "Ultimate Weapons Mod" pk3, used as the sole workspace for VFX/effects work
-  (Track 7). Deliberately kept separate from the repo and from `combined base`.
-- `C:\Users\toitl\OneDrive\Desktop\JKA Workspace\big update` — a staging folder holding
-  copies of this session's new/modified *data* files only (not code), mirroring their
-  relative paths (`ext_data\weapons.dat`, `default.cfg`, `ui\controls.menu`,
-  `ui\ingamecontrols.menu`) so they can be dropped into a deployment target later.
+**Two machines share this repo via GitHub** — either can have the more recent commits
+at any given time, so always check `git log`/`git status` fresh rather than assuming.
 
-**Note (later session, other PC)**: the same OneDrive-synced folder tree reappears as
-`C:\Users\Sheng\OneDrive\Desktop\JKA Workspace\...` on the user's other machine — same
-content, different Windows username. Same caveat applies: it's the actively-deployed/
-tested game folder, more current than the repo's `Mod Files/`/`Game Assets/` for data
-files. Tracks 8-10 below were done on that machine and use the `Sheng` path.
+| | Desktop (home PC) | Laptop |
+|---|---|---|
+| Windows user | `Sheng` | `toitl` |
+| Monitor | 1440p | 1080p |
+| Working directory | `a:\JKEnhanced\OpenJK` | `C:\Users\toitl\OneDrive\Documents\GitHub\OpenJK` |
+
+**Machine this session is on: Laptop.** Update this line at the start of each
+session to say which physical machine you're on — the Windows username (`whoami`) or
+home directory path is the reliable tell if it's unclear.
+
+**Standing workflow, after every plan's changes are made (not just this one — every
+future plan too):**
+1. Copy every edited *asset* file (data/`.efx`/`.shader`/etc. — not code, code stays in
+   git) into `Drive Mirror\Sheng's JK Enhanced\Staged and changed files\`, mirroring its
+   relative path under whichever content root it came from (`Sheng's Ultimate Weapons
+   Redesign\...` or `Mod Assets (Including Base Files)\...`). Copies, not moves — the
+   real files stay in place and keep working; this folder exists purely so the *specific
+   changed files* can be picked out and moved to the other PC individually, without
+   syncing/duplicating the whole multi-gigabyte asset tree and without risk of dragging
+   along third-party/non-permissioned content that happens to sit nearby.
+2. Update this file (`HANDOFF.md`) with what changed.
+3. Update `README.md` with player-facing patch notes for anything gameplay-visible.
+
+The "Staged and changed files" folder is a running staging area, not cleared between
+plans — check what's already in it before assuming it's empty, and don't assume
+everything in it is from the most recent plan.
+
+**Asset workflow is moving to a Google-Drive-mirrored folder** — old external
+OneDrive workspace paths below are being superseded by
+`C:\Users\toitl\OneDrive\Desktop\Drive Mirror\Sheng's JK Enhanced\` (synced via Google
+Drive to both machines; local junction/copy paths may differ slightly per machine).
+Once the migration is confirmed complete, `Mod Files/`/`Game Assets/` in this repo
+(already `.gitignore`d, never actually tracked) get deleted and this section gets
+trimmed down to just the Drive Mirror folder. Mapping so far:
+- `combined base with jkenhanced` → `Mod Assets (Including Base Files)` (confirmed 1:1)
+- `sheng ultimate weapons` → `Sheng's Ultimate Weapons Redesign` (confirmed 1:1)
+- `big update` → **stale, no mapping** — its contents (`default.cfg`, `ext_data/
+  weapons.dat`, `ui/controls.menu`, `ui/ingamecontrols.menu`, all dated Jul 1, plus an
+  unrelated 2018-dated `st_deathtrooper` asset bundle) predate Track 10's later
+  weapons.dat edits and don't match anything current. Safe to ignore/delete.
+
+Old paths (kept here only until every reference elsewhere in this doc is migrated —
+see the per-Track notes below for what still points at these):
+- `C:\Users\toitl\OneDrive\Desktop\JKA Workspace\combined base with jkenhanced` (also
+  seen as `C:\Users\Sheng\OneDrive\Desktop\JKA Workspace\...` on the desktop — same
+  OneDrive-synced content, different username in the path)
+- `C:\Users\toitl\OneDrive\Desktop\JKA Workspace\sheng ultimate weapons`
+- `C:\Users\toitl\OneDrive\Desktop\JKA Workspace\big update` (stale, see above)
 
 A separate phased implementation plan (saber styles, disarm/surrender AI, companion AI,
 weapon reworks) lives outside the repo at
@@ -86,13 +120,17 @@ Halved pain stagger duration so NPCs recover and seek cover sooner (`legsAnimTim
 - All `_PROJ` cases: `SETANIM_TORSO` + `torsoAnimTimer` + `Q_irand(200,350)` — legs keep moving
 - All saber-on-saber cases: `SETANIM_BOTH` + `legsAnimTimer` + `Q_irand(200,1000)`
 
-**Known issue (found this session, not yet fixed)**: user reports the block "stagger" sometimes removes the ability to block again for a beat, which reads as frustrating. User is considering a proper "parry" system as a future redesign — explicitly deferred, not scheduled yet.
+**Known issue (found this session) — RESOLVED by Track 8.** User reported the block
+"stagger" sometimes removed the ability to block again for a beat, which read as
+frustrating. The proper "parry" system floated here as a future redesign is exactly
+what Track 8's "Saber combat" rework became (perfect parry, HUD cooldown bar, split
+saber/blaster cooldowns) — confirmed fixed by the user's own in-game testing.
 
 ---
 
 ## Track 3: AI Modernization + NPC Variety
 
-### `.npc` File Tuning (`Mod Files/ext_data/npcs/`)
+### `.npc` File Tuning (`Mod Assets (Including Base Files)/ext_data/npcs/`)
 
 `imperials.npc`:
 - `StormPilot`: `reactions 3 → 2` (~160ms think rate, vehicle operator not infantry)
@@ -104,13 +142,13 @@ Halved pain stagger duration so NPCs recover and seek cover sooner (`legsAnimTim
 
 **New classname `NPC_StormtrooperRandom`** — weighted random pool of stormtrooper variants. Existing `NPC_Stormtrooper` spawners in all maps are untouched.
 
-**`Mod Files/ext_data/npcs/stormtrooper_random.npc`** (NEW FILE) — 4 variant blocks:
+**`Mod Assets (Including Base Files)/ext_data/npcs/stormtrooper_random.npc`** (NEW FILE) — 4 variant blocks:
 - `stormtrooper_rifle` — standard blaster, baseline stats
 - `stormtrooper_heavy` — WP_REPEATER, health 55, aim 2, aggression 5
 - `stormtrooper_officer` — `customSkin officer`, health 50, reactions 4, aim 3, intelligence 3, rank ensign, stofficer1 sounds
 - `stormtrooper_grenadier` — WP_THERMAL + WP_BLASTER, aggression 5
 
-**`Mod Files/ext_data/npcs/stormtrooper_random.cfg`** (NEW FILE) — Weight table:
+**`Mod Assets (Including Base Files)/ext_data/npcs/stormtrooper_random.cfg`** (NEW FILE) — Weight table:
 ```
 stormtrooper_rifle      5
 stormtrooper_heavy      2
@@ -123,7 +161,16 @@ Adding a new variant = add a block to the `.npc` + a line to the `.cfg`. No C++ 
 
 **`code/game/g_spawn.cpp`** — Forward declaration + `{"NPC_StormtrooperRandom", SP_NPC_StormtrooperRandom}` in `spawns[]` table.
 
-**Note**: `combined base with jkenhanced` did NOT have this NPC system as of this session's start — `stormtrooper_random.npc`/`.cfg` only existed in the repo's `Mod Files/`. Also confirmed `imperials.npc`/`misc.npc` in `combined base` have *additional* undocumented tuning beyond what's listed here (health cuts, model/skin swaps to `stormie`/`chimaera_rgb`) that never made it into this repo — worth reconciling in a future session if that divergence matters.
+**Note (historical, worth re-checking against the Drive Mirror folder)**: `combined
+base with jkenhanced` did NOT have this NPC system as of the session that added it —
+`stormtrooper_random.npc`/`.cfg` only existed in the repo's (gitignored, local-only)
+`Mod Files/`. Also confirmed `imperials.npc`/`misc.npc` in `combined base` had
+*additional* undocumented tuning beyond what's listed here (health cuts, model/skin
+swaps to `stormie`/`chimaera_rgb`) that never made it into this repo. This is exactly
+the kind of divergence the Drive-Mirror-as-single-source-of-truth move is meant to
+prevent going forward — worth confirming both pieces (the stormtrooper_random files,
+and whatever the undocumented `.npc` tuning was) actually made it into `Mod Assets
+(Including Base Files)` before `Mod Files/` gets deleted.
 
 ---
 
@@ -142,10 +189,10 @@ existing `missileBlock` bool in `WP_SaberBlockNonRandom` (`wp_saber.cpp:7746`) a
 Force-power pool to block so no NPC-side change needed). Saber-vs-saber parry timing is
 completely untouched.
 
-**Status per this session's testing**: "SEEMS to be better, it's still not 100%." No new
-specifics given. Known residual gap: Defense level 0 still shares the 100ms window (2x the
-repeater's 50ms cadence) — that's the likely next lever if the user wants to chase this
-further, but not scheduled.
+**RESOLVED.** Confirmed fixed by the user in a later session — repeater blocking works
+now. (The follow-up bolt-prediction fix in the "bunch of bug fixes" commit and the
+Track 8 saber-combat rework's cooldown retuning likely closed the remaining gap noted
+here previously.)
 
 ---
 
@@ -189,7 +236,7 @@ synthesizing a minimal placeholder into one of 16 reserved `ITM_CUSTOM_N_PICKUP`
   now applies to any `IT_WEAPON` item, and `G_DropClassWeapon` sets `dropped->delay =
   level.time + 500` to use it.
 - `code/game/g_cmds.cpp` — new `dropweapon` command (`Cmd_WeaponDrop_f`), bound to `G` by
-  default (`Mod Files/default.cfg`). Intentionally cannot drop the saber (`WP_SABER` is
+  default (`Mod Assets (Including Base Files)/default.cfg`). Intentionally cannot drop the saber (`WP_SABER` is
   excluded from the loadout-class system, matching "we do not collect sabers" — the
   player's saber is only ever lost/reclaimed via the existing, separately-gated
   saber-throw mechanic, `g_saberPickuppableDroppedSabers` cvar, default off).
@@ -214,8 +261,8 @@ synthesizing a minimal placeholder into one of 16 reserved `ITM_CUSTOM_N_PICKUP`
   is only defined in `code/ui/gameinfo.cpp`, which isn't compiled into this executable
   target, so referencing it directly fails to link) and bumps a same-class slot before
   accepting a new pick, mirroring the in-mission swap behavior.
-- `Mod Files/ui/controls.menu` and `ingamecontrols.menu` (both under `combined base with
-  jkenhanced\ui\`, not the repo) — WEAPON BINDING section consolidated from 13
+- `ui/controls.menu` and `ingamecontrols.menu` (both under `Mod Assets (Including Base
+  Files)\ui\` in the Drive Mirror folder, not the repo) — WEAPON BINDING section consolidated from 13
   individual per-weapon rows down to 8 slot-based rows (saber/pistol/medium/heavy/throwable/
   next/prev/drop). New "Medium Weapon"/"Heavy Weapon"/"Drop Weapon" labels use plain
   literal text (existing pattern in this menu format, e.g. `text "Saber Block and Alt
@@ -225,7 +272,7 @@ synthesizing a minimal placeholder into one of 16 reserved `ITM_CUSTOM_N_PICKUP`
   system resolves commands through this hardcoded array (`BindingIDFromName`); added
   `dropweapon` and `weaponslot 1`-`5` so those rows show a real key and are rebindable
   (previously showed `???` and couldn't be changed).
-- `Mod Files/default.cfg` (and `combined base`'s copy) — keys 1-5 now bind
+- `Mod Assets (Including Base Files)/default.cfg` — keys 1-5 now bind
   `weaponslot 1`-`5` instead of `weapon 1`-`5`; new `bind g dropweapon`.
 
 ### Crashes fixed getting here (chronological, for context if something regresses)
@@ -273,22 +320,25 @@ fire while cloaked (previously could do neither).
   an unconditional per-tick `Saboteur_Decloak(NPC)` call back into the attack-think loop
   (`AI_Stormtrooper.cpp`) — safe to call every tick since the function already no-ops via
   its own internal `TIMER_Done` check until the wait timer actually expires.
-- User note: cloak visibility "might need more adjusting later... will wait until I swap
-  in the model to confirm one way or the other" — model swap is the user's own task
-  (5b, not started).
+- **DONE.** Model swap (Item 5b) is complete — marking this track fully closed. Cloak
+  visibility may get another art pass at some point, but that would be independent
+  work, not a continuation of anything documented here.
 
 ---
 
 ## Track 7: Ultimate Weapons Mod Effects (external workspace only)
 
-**Scope**: this work happens entirely in
-`C:\Users\toitl\OneDrive\Desktop\JKA Workspace\sheng ultimate weapons\` — never in the
-repo or `Mod Files/`. Confirmed early this session that the repo's own
-`Mod Files/effects/blaster/*` and `thermal/explosion.efx` are NOT the real Ultimate
-Weapons Mod content (simplified rewrites, missing the master
-`shaders/UltimateWeapons.shader` and ~194 dependent files) — irrelevant now since this
-track abandoned the repo entirely per the user's direction and works from the real
-extracted pk3 content instead.
+**Scope**: this work happens entirely in `Sheng's Ultimate Weapons Redesign` (the
+Drive Mirror folder — formerly the OneDrive `sheng ultimate weapons` workspace,
+confirmed 1:1 mapped) — never in the repo or `Mod Files/`. Confirmed early in the
+original session that the repo's own `Mod Files/effects/blaster/*` and
+`thermal/explosion.efx` are NOT the real Ultimate Weapons Mod content (simplified
+rewrites, missing the master `shaders/UltimateWeapons.shader` and ~194 dependent
+files) — irrelevant now since this track abandoned the repo entirely per the user's
+direction and works from the real extracted pk3 content instead.
+
+**Overall status: pretty much done.** Thermal detonator tuning below confirmed
+tested and working. Blaster VFX (see below) is the one piece still outstanding.
 
 ### Thermal detonator (`effects/thermal/explosion.efx`) — tuned this session
 User-reported issues from an in-game screenshot: scorch decal visible through terrain,
@@ -305,9 +355,7 @@ effect "over the top" (too much smoke), screen shake too strong. Applied:
 - `CameraShake "Shake"`: `bounce 5 9 → 2 4`, `radius 3000 → 1200`. `life` left alone
   (800-1000ms) — intensity/range were the complaints, not duration.
 
-**Not yet tested in-game** — user said they probably wouldn't get to it the same night
-these changes were made. No deployment path from this working directory into a loadable
-pk3/GameData folder has been set up yet; that's still an open step whenever testing happens.
+**TESTED — confirmed good.**
 
 ### Blaster VFX — not started
 Item 3 from the original checklist (blaster muzzle/bolt/impact effects reading as "awful").
@@ -329,8 +377,9 @@ treatment, boss-tier-only instant guard refill, a guard-intact damage-resistance
 loosening the saber clash/bounce gate for partial Saber Offense investment. All changes are
 in `code/game/wp_saber.cpp`, `code/game/bg_pmove.cpp`, `code/game/g_active.cpp`,
 `code/game/AI_Jedi.cpp`, `code/qcommon/q_shared.h`, `code/client/cl_input.cpp`,
-`code/ui/ui_shared.cpp`, plus `Mod Files/ui/controls.menu` /`ingamecontrols.menu` /
-`MENUS.str`. Iterated through several rounds of in-game testing already — considered stable.
+`code/ui/ui_shared.cpp`, plus `Mod Assets (Including Base Files)/ui/controls.menu` /
+`ingamecontrols.menu` / `MENUS.str`. Iterated through several rounds of in-game testing
+already — considered stable.
 
 ---
 
@@ -366,7 +415,7 @@ Other files touched: `code/game/b_public.h`, `NPC_spawn.cpp`, `wp_saber.cpp`,
 
 ---
 
-## Track 10: Weapon Reworks — Z-6 / Repeater / Disruptor — DONE, one round of in-game fixes applied
+## Track 10: Weapon Reworks — Z-6 / Repeater / Disruptor — DONE, two rounds of in-game fixes applied
 
 Implements Phase 4 of the external plan (done ahead of Phase 3 per user request — Phase 3,
 Companion AI, is still queued/not started).
@@ -420,60 +469,208 @@ reading alone, needs in-game debugging.
 - **All Phase 4 `.efx` visual recolors reverted** per user request — they're going to hand-
   author the visuals themselves instead. Exactly reverted (had originals on record):
   deleted the new `effects/z6/barrel_glow.efx`, restored `effects/z6/shot.efx` and
-  `effects/repeater/alt_projectile.efx` to their exact pre-session colors. **Best-effort
-  only** (exact originals weren't on record, reconstructed via an R/B channel swap of the
-  recolor): `effects/repeater/altmuzzle_flash.efx` and `effects/repeater/concussion.efx` —
-  worth a manual sanity check before building further on them. **Known dangling
-  reference**: `WP_FireZ6Rotary` still calls `G_PlayEffect("z6/barrel_glow", ...)` at high
-  heat; since that file is deleted, the call now silently no-ops until either a new
-  `z6/barrel_glow.efx` is authored at that path or the call is removed from code.
+  `effects/repeater/alt_projectile.efx` to their exact pre-session colors. **Resolved**:
+  `effects/repeater/altmuzzle_flash.efx` and `effects/repeater/concussion.efx` were
+  reconstructed via a best-effort R/B channel swap at the time, but the user has real
+  backup `.efx` files for these that should be workable to revert to properly — no
+  longer a static-reconstruction guess. **Still dangling, but accepted**:
+  `WP_FireZ6Rotary` still calls `G_PlayEffect("z6/barrel_glow", ...)` at high heat, and
+  since that file is deleted, the call still silently no-ops. User's own call: probably
+  fine to just re-implement the asset on their side rather than strip the code call.
 - **Gotcha found this round**: there are three separate `weapons.dat` copies in play —
-  `Mod Files/ext_data/` and `Game Assets/ext_data/` (both in the git repo, both stale/
-  untouched by any of this session's changes) and `ext_data/weapons.dat` inside the
-  OneDrive `combined base with jkenhanced` workspace (the live one, holding all of this
-  session's `firetime`/`missileFuncName`/`damage`/`altchargesound` changes). Make sure
-  it's the OneDrive copy that gets copied into any test/deployment target.
+  the local (gitignored, not actually git-tracked) `Mod Files/ext_data/` and
+  `Game Assets/ext_data/` (both stale/untouched by this session's changes) and
+  `ext_data/weapons.dat` inside `Mod Assets (Including Base Files)` in the Drive Mirror
+  folder (the live one, holding all of this session's `firetime`/`missileFuncName`/
+  `damage`/`altchargesound` changes). Make sure it's the Drive Mirror copy that gets
+  used for any test/deployment target — see the migration plan in "Ready for Next
+  Session" for retiring the other two copies entirely.
 
-**Not yet retested in-game** as of this round of fixes.
+**Not yet retested in-game** as of that round of fixes.
+
+### Second in-game test pass — user feedback + fixes applied
+
+- **Repeater primary fire "still fully auto"** — investigated the burst logic directly
+  (`bg_pmove.cpp:14492-14506`/`13757`+), confirmed it's structurally correct and should
+  produce a 60/60/450ms rhythm. Turned out to be a stale build — hadn't been rebuilt
+  since that code was written. **Confirmed working correctly once rebuilt, no code
+  change needed.**
+- **Repeater alt-fire overshoots, charged and uncharged.** Root cause:
+  `chargeCount` (`wp_repeater.cpp:112-121`) was floored to a minimum of `1`, so even an
+  instant tap got the same `1.0x` scale as a "properly" minimally-charged shot — no
+  weak/uncharged state existed at all. Fixed: floor lowered to `0`, `chargeScale`
+  formula changed to `0.55f + chargeCount * 0.186f` (0.55x instant tap → 1.48x full
+  charge, same top end as before).
+- **Z-6 fires faster than its own effects can render.** `muzzle_flash.efx`/`shot.efx`
+  had `repeatDelay` (122ms/300ms) far exceeding the 50ms `firetime`, so the engine's own
+  repeat-suppression silently skipped most triggers. Fixed: both dropped to
+  `repeatDelay 40` in **both** content copies (Drive Mirror `Sheng's Ultimate Weapons
+  Redesign` and `Mod Assets (Including Base Files)` — confirmed byte-identical bug in
+  both, fixed both rather than gambling on pk3 load order).
+- **Z-6 effect renders through the player.** `CalcMuzzlePoint` (`g_weapon.cpp:533-593`)
+  had no case for `WP_Z6_ROTARY` at all, falling back to the raw entity origin (near the
+  feet) — this fed both the missile spawn point and the `barrel_glow` effect trigger
+  (`wp_repeater.cpp:312-316`), since both read the same `muzzle` global. Fixed: added a
+  real `WP_Z6_ROTARY` case (eye height + forward offset, two-handed-weapon pattern).
+- **Z-6 shader warnings** (`Couldn't find image for shader models/weapons2/
+  saber_plasmaGE/...` — no, unrelated; the real ones were `z6/blastersideflash`/
+  `blasterfrontflash`). Root cause: `.efx` files reference `gfx/effects/z6/
+  blastersideflash`/`blasterfrontflash`, but no `.shader` block exists at that exact
+  path in either content location — only under `clone/` (`cloneblasters.shader`), a
+  copy-paste-without-rename leftover from when Z-6 was cloned from the clone-blaster
+  assets. Checked the base mod files too per a user hint that they might have it
+  independently — they don't (`Mod Assets/shaders/z6.shader` only has the weapon model's
+  own skin materials; `effects.shader` has the un-prefixed vanilla generic version).
+  Fixed: added `z6/blastersideflash`/`blasterfrontflash` shader blocks (mirroring the
+  `clone/` ones exactly) to `cloneblasters.shader` in **both** content locations.
+- **Z-6 dropped weapon shows the repeater's model.** `items.dat`'s `weapon_z6` block had
+  `worldmodel models/weapons2/heavy_repeater/heavy_repeater_w.glm` — a copy-paste
+  leftover from the repeater's own entry. Fixed to `models/weapons2/z6_rotary/model.glm`,
+  matching `weapons.dat`'s own (correct) key.
+- **Z-6 heat spread felt a bit too much at max heat.** `wp_repeater.cpp:279-280`'s cubic
+  curve coefficient (`7.0f`, giving up to 8x baseline spread at full heat) trimmed to
+  `5.0f` (6x max), same gentle-then-steep shape, lower ceiling.
+- **`z6/barrel_glow.efx`** — user found a backup after all (previous note above was
+  wrong, no asset existed at all as of that writing). Restored to `Sheng's Ultimate
+  Weapons Redesign`; copied into `Mod Assets (Including Base Files)` too since it only
+  existed in one location. Re-diagnosed the "renders through the player" complaint
+  properly once the asset existed to actually check: `barrel_glow` triggers via
+  `G_PlayEffect`, a server-broadcast world-space effect (same category as explosions),
+  **not** the viewmodel-only sprite mechanism bowcaster's charge flash uses — no
+  first/third-person split needed for this one, the `CalcMuzzlePoint` position fix
+  above should be sufficient on its own. Verified its shader reference
+  (`gfx/effects/whiteGlow`) is real and already defined — no orphaned-path issue here.
+- **Bowcaster charge effect invisible in third person** (yours or anyone's). Turned out
+  simpler than first diagnosed: there's a working third-person equivalent of the
+  charge-flash code in `code/cgame/cg_players.cpp:9813-9865` (gated on
+  `cent->currentState.number == 0 && cg.renderingThirdPerson` — "render my own weapon
+  while I'm looking at myself in third person," exactly the reported scenario), and it
+  already had a complete, correct bowcaster branch — but the condition gating it in
+  (`:9819`) checked `ps->weaponstate == WEAPON_CHARGING` instead of
+  `WEAPON_CHARGING_ALT` (every other weapon in the same list correctly used `_ALT`).
+  One-word fix. (The original diagnosis assumed the fix would need mirroring
+  `CG_DoMuzzleFlash`'s view-mode-aware pattern — turned out unnecessary; that function's
+  `cg.renderingThirdPerson` branch is actually dead code, since its only caller,
+  `CG_AddViewWeapon`, already returns early whenever that flag is true.)
+
+All of the above staged in `Drive Mirror\Sheng's JK Enhanced\Staged and changed files\`
+per the new standing workflow (see `## Project` header). **Not yet retested in-game**
+as of this round.
 
 ---
 
 ## Ready for Next Session
 
-- **Retest Track 10's follow-up fixes in-game** — repeater burst pacing/charge sound/
-  distance, Z-6 heat curve, disruptor damage. None of this round of fixes has been
-  rebuilt/tested yet.
-- **Sanity-check the two best-effort `.efx` reverts** (`repeater/altmuzzle_flash.efx`,
-  `repeater/concussion.efx`, see Track 10) before building further on them, and decide
-  what to do about the dangling `z6/barrel_glow` effect reference (recreate the asset or
-  strip the call from `WP_FireZ6Rotary`) — user is planning to hand-author the repeater/
-  Z-6 visuals themselves from here.
-- **Bowcaster charge VFX bug** (Track 10 side quest) — charge sound plays, visual doesn't;
-  static analysis couldn't root-cause it, needs live in-game debugging.
+**Resolved since the above tracks were written** (confirmed directly by the user in
+a later session, recorded here so nothing gets re-investigated from scratch):
+- ~~Saber block stagger / possible parry system~~ — **done**. Landed as the "Saber
+  combat" work (perfect-parry retrigger changed to tap-attack-while-holding-block,
+  HUD cooldown bar, saber/blaster cooldowns split 1000ms/150ms, disarm-on-perfect-
+  parry-of-thrown-saber, telegraphed heavy attacks with a slowed windup, Force
+  stagger follow-up lockout, Force economy retune, Force Lightning block fix, gib/
+  corpse physics v2). Two commits, both titled "Saber combat".
+- ~~Test Track 5's swap/drop fixes and Track 6's cloak fixes in-game~~ — user
+  confirmed these are fine/working.
+- ~~Saboteur model swap~~ (Item 5b) — **done**.
+- ~~Data-driven weapon damage (Part 2)~~ — user confirmed this **no longer has a
+  purpose** now that the class-based loadout system exists; fully dead, don't revisit.
+- ~~Ultimate Weapons Mod effects~~ (Track 7) — thermal detonator tuning **tested,
+  confirmed good**. **Blaster VFX tuning (Item 3) is still explicitly outstanding** —
+  user confirmed it's separate and not included in "pretty much done."
+- **Morale system** — user says it's "ironed out as well as we can" for now; not
+  going to get more tuning passes. Open idea for later (not started, no design work):
+  the Stormtrooper AI decision logic (morale tiers, geo-cover fallback, suppression
+  coordination, buddy-pair logic, etc.) has grown into a lot of individually bolted-on
+  flags/timers checked in priority order, with no single place that explains *why* a
+  decision was made. A utility-scoring layer (score a few candidate actions each
+  think using the inputs that already exist, pick the highest, log the scores under a
+  debug cvar) was suggested as a future direction — would also double as
+  instrumentation for the backpedal-fire bug below. Purely a suggestion, not scheduled.
+
+**Fixed this session** (separate from the above — a shorter side session focused on
+one specific bug, not part of Tracks 1-10):
+- **Weapon-select menu wrongly required two bonus weapons.** With the class-based
+  loadout system, the two bonus-weapon slots can never hold the same class, and Heavy
+  is locked out early in the story — so at low `tier_storyinfo`, only one class is
+  ever selectable, and `UI_WeaponsSelectionsComplete` (`code/ui/ui_main.cpp:6858`)
+  requiring *both* slots meant "Begin Mission" could never turn on. Fixed to require
+  *either* slot (plus the throwable) — commit `9ecdc5cd`. **User confirmed working.**
+
+**Still genuinely open:**
+- **Backpedaling repeater troopers won't fire — user wants this one finally solved,
+  bumping priority.** Re-confirmed by the user as being
+  about the *player* backpedaling away from an NPC (not the NPC's own movement), and
+  that it happens **immediately at any range** — this rules out `NPC_EnemyTooFar()`'s
+  weapon-max-range cutoff as the explanation. Two independent static-analysis passes
+  (the original one below, and a second one specifically re-checking for any fire-
+  gating on the *enemy's* velocity/movement) both came up empty in
+  `AI_Stormtrooper.cpp`/`NPC_combat.cpp` — no code path found that reads enemy
+  movement in the fire-decision, aim-cone, or target-leading logic (there is no
+  target-leading logic at all; `NPC_ShotEntity()` only uses the enemy's current
+  position). User declined debug logging for now — needs either that instrumentation
+  or a broader static sweep (other NPC classes' combat files, player-side
+  `hitAlly`/aim-miss code) before resorting to live tracing.
+- **README is now out of date against Track 8/9/10.** It documents the original
+  Saber Guard/Perfect Parry system, class-based loadouts, and the first round of
+  Saber combat retuning, but has nothing yet on: saber style mechanical identity +
+  Kata keybind (Track 8), disarmed-NPC flee/surrender/desperate-melee behavior +
+  weapon re-arm via `FL_NPC_REARM_SOURCE` (Track 9), or the Z-6/repeater/disruptor
+  reworks (Track 10). Needs a pass.
+- **Test Track 9 in-game** — disarmed-NPC flee/surrender/desperate-melee behavior and
+  weapon re-arm via `FL_NPC_REARM_SOURCE`. Confirmed still not tested since it was written.
+- ~~Retest Track 10's *first* round of follow-up fixes~~ — superseded by the second
+  round (see Track 10's "Second in-game test pass").
+- **Retested the second round — three new issues found, not yet fixed:**
+  - **Z-6 blaster bolts still render through the player.** The `CalcMuzzlePoint` fix
+    (adding a `WP_Z6_ROTARY` case) wasn't sufficient — the bolts themselves (not just
+    the `barrel_glow` effect) still clip through the player model. Needs another look;
+    possibly the projectile's own client-side rendering (`FX_Z6ProjectileThink`) has a
+    separate positioning issue from the server-side spawn point, or the muzzle offset
+    added isn't large/correct enough to clear the model on the first visible frame.
+  - **Z-6 running out of ammo mid-fire gets the player stuck trying to auto-switch
+    weapons.** User's probable fix: just stop auto-switching weapons on empty for the
+    Z-6 (or in general). Workaround in the meantime: dropping the Z-6 un-sticks it.
+  - **Repeater burst can be short-circuited by tapping.** The 3-round burst should
+    always fire all 3 no matter how briefly the trigger is held, but right now a quick
+    tap can release after 1-2 shots, and the `weaponShotCount` counter keeps its
+    position across separate trigger pulls — so the *next* tap can immediately land on
+    the 450ms "burst gate" delay instead of starting a fresh burst. Needs either a real
+    burst-lock (commit to firing 3 once started, ignore button release until the burst
+    completes) or resetting the counter properly between separate presses.
+- **NPCs need to fire the repeater and Z-6 like the reworked player versions do.**
+  Stormtroopers etc. still fire the repeater the old way (not the new 3-round burst
+  pattern) — the burst logic added to `bg_pmove.cpp`'s `case WP_REPEATER` is presumably
+  player-path-only, or NPC fire-decision code (`AI_Stormtrooper.cpp`/`NPC_combat.cpp`)
+  has its own separate repeater handling that never got updated to match. For the Z-6,
+  explicitly **not** meant to mirror the player's pattern at all — user wants NPC Z-6
+  use to be all-or-nothing sustained suppression fire, not short bursts. Needs its own
+  NPC-side fire-decision logic, not just reusing whatever the player path ends up doing.
+- `repeater/altmuzzle_flash.efx` / `repeater/concussion.efx` — still the one open item
+  from the *first* round of Track 10 fixes (user has real backup `.efx` files to revert
+  to properly, just not done yet).
+- **Need an actual manual `.efx` tuning pass using EffectsEd** for the visual issues
+  above (and others) rather than pure text/data edits — user flagged EffectsEd itself
+  as painful to use and floated either improving it or finding/building an alternative
+  as a possible side-project. Not scoped or started.
+- ~~Bowcaster charge VFX bug~~ — **fixed**, see Track 10's second pass (one-word typo,
+  `WEAPON_CHARGING` → `WEAPON_CHARGING_ALT`, `cg_players.cpp:9819`).
 - **Phase 3 (Companion AI overhaul)** — queued in the external plan, not started. Was
   deliberately deferred behind Phase 4 (Track 10) per user request; pick up once Track 10
   is confirmed working.
-- **Test Track 5's swap/drop fixes and Track 6's cloak fixes in-game** — none of this
-  session's final bugfix-pass changes (Items A/C/D from the latest plan) have been
-  rebuilt/tested yet as of this writing.
-- **Backpedaling repeater troopers won't fire** — user flagged as a recurring/known issue,
-  not a regression from this session. Investigated `AI_Stormtrooper.cpp`'s fire-decision
-  logic, `NPC_combat.cpp`'s `WeaponThink()`/LOS checks, and the HANDOFF Track 1 additions
-  (`"underFire"` timer, `ST_GetCPFlags`) — no code found that explicitly gates fire on
-  enemy movement direction. Needs live NPC debug tracing (log `shoot`/`enemyLOS`/`enemyCS`
-  frame-by-frame against a backpedaling player), not further static reading.
-- **Saber block stagger / possible parry system** — user's own words: "for later." No
-  design work done yet.
-- **Blaster VFX tuning** (Item 3) — not started, same `sheng ultimate weapons` workspace
-  scope as Track 7's thermal work.
-- **Saboteur model swap** (Item 5b) — user's own task, not started as of this session.
-- **Deployment path** for `sheng ultimate weapons` and `big update` folder content into an
-  actual loadable pk3/GameData location — never set up, needed before any of Track 7's
-  changes or the `big update` data files can actually be tested.
-- The previously-flagged **"Data-driven weapon damage (Part 2)"** idea (moving
-  `*_NPC_DAMAGE_EASY/NORMAL/HARD` macros from `weapons.h` into data) is **deprioritized** —
-  user reconsidered given the class-based loadout system now exists and may want any
-  future data-format work to fold into that instead of being done standalone.
+- **Drive Mirror asset migration** (see `## Project` header) — three steps, in order:
+  1. Reconcile: confirm everything of value in the repo's local (gitignored) `Mod
+     Files/` actually made it into `Mod Assets (Including Base Files)` — see the
+     Track 3 note about `stormtrooper_random.npc`/`.cfg` and undocumented `.npc`
+     tuning that previously only existed in one place or the other.
+  2. Once confirmed, delete `Mod Files/`/`Game Assets/` locally and trim their two
+     lines out of `.gitignore` (they're not git-tracked, so no history/repo surgery —
+     just local cleanup).
+  3. Set up directory junctions (`mklink /J`, no admin needed) from the relevant
+     `GameData` subfolders into the Drive Mirror folder on each machine, so edits are
+     live in-game immediately with no manual copy step. Local junction target paths
+     may differ per machine.
+  `big update` (the old ad-hoc transfer staging folder) is confirmed stale/dead — no
+  mapping into the new structure, safe to ignore or delete whenever.
 
 ---
 
@@ -501,10 +698,17 @@ reading alone, needs in-game debugging.
 - Console command `uimenu <name>` force-opens a named menu directly (e.g.
   `uimenu ingameWpnSelect` for the pre-mission Weapon Select screen) without needing to
   trigger the real mission-transition flow — useful for testing menus in isolation.
-- **Three `weapons.dat` copies exist**: `Mod Files/ext_data/` and `Game Assets/ext_data/`
-  (both in-repo, both stale as of Track 10) vs. `ext_data/weapons.dat` in the OneDrive
-  `combined base with jkenhanced` workspace (the live/deployed one). Always confirm which
-  copy you're editing and which one actually ships.
+- **Three `weapons.dat` copies exist right now, being reduced to one**: the local
+  (gitignored, not actually in the repo) `Mod Files/ext_data/` and `Game Assets/ext_data/`
+  are both stale as of Track 10 and slated for deletion, vs. `ext_data/weapons.dat` in
+  `Mod Assets (Including Base Files)` (the Drive Mirror folder — the live/deployed one).
+  Until the migration (see "Ready for Next Session") is done, always confirm which copy
+  you're editing and which one actually ships.
+- **Drive Mirror is the asset source of truth going forward** — `Mod Files/`/`Game
+  Assets/` are being retired once reconciled (see "Ready for Next Session"). Once
+  directory junctions from `GameData` into the mirror folder are set up on both
+  machines, editing a data/UI/effects file anywhere becomes live in-game immediately on
+  both PCs with no manual copy step — update this note once that's actually done.
 - `PM_DoChargedWeapons` (`code/game/bg_pmove.cpp` ~13420-13470) auto-plays
   `weaponData[weapon].chargeSnd`/`altChargeSnd` when a weapon enters `WEAPON_CHARGING`/
   `WEAPON_CHARGING_ALT` — but only if the corresponding `chargesound`/`altchargesound` key

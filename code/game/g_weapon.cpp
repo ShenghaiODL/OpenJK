@@ -565,6 +565,16 @@ void CalcMuzzlePoint( gentity_t *const ent, vec3_t forwardVec, vec3_t right, vec
 		VectorMA( muzzlePoint,  8, vrightVec,  muzzlePoint );
 		break;
 
+	case WP_Z6_ROTARY:
+		// no case existed for this at all -- fell through to the raw entity-origin fallback above,
+		// putting both the missile spawn and the barrel_glow effect down near the feet instead of
+		// the barrel. Two-handed heavy weapon, so eye height plus a forward nudge to clear the model.
+		ViewHeightFix(ent);
+		muzzlePoint[2] += ent->client->ps.viewheight;//By eyes
+		muzzlePoint[2] -= 2;
+		VectorMA( muzzlePoint, 16, forwardVec, muzzlePoint );
+		break;
+
 	case WP_CYCLER_RIFLE:
 		ViewHeightFix(ent);
 		muzzlePoint[2] += ent->client->ps.viewheight;
