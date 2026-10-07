@@ -1175,7 +1175,23 @@ static void G_Animate ( gentity_t *self )
 	{
 		return;
 	}
-	if ( self->s.frame == self->endFrame )
+
+	int startFrame, endFrame;
+	if ( self->s.eFlags & EF_ANIM_ALLFAST || self->ghoul2.size() )
+	{
+		startFrame = self->startFrame;
+		endFrame = self->endFrame;
+	}
+	else
+	{
+		startFrame = self->startFrame;
+		if (self->startFrame < self->endFrame)
+			endFrame = self->endFrame + 1;
+		else
+			endFrame = self->endFrame - 1;
+	}
+
+	if ( self->s.frame == endFrame)
 	{
 		if ( self->svFlags & SVF_ANIMATING )
 		{
@@ -1190,7 +1206,7 @@ static void G_Animate ( gentity_t *self )
 									(cg.time?cg.time:level.time), &frame, &junk, &junk, &junk, &junk2, NULL );
 
 				// It NEVER seems to get to what you'd think the last frame would be, so I'm doing this to try and catch when the animation has stopped
-				if ( frame + 1 >= self->endFrame )
+				if ( frame + 1 >= endFrame)
 				{
 					self->svFlags &= ~SVF_ANIMATING;
 					Q3_TaskIDComplete( self, TID_ANIM_BOTH );
@@ -1200,7 +1216,7 @@ static void G_Animate ( gentity_t *self )
 			{
 				if ( self->loopAnim )
 				{
-					self->s.frame = self->startFrame;
+					self->s.frame = startFrame;
 				}
 				else
 				{
@@ -1233,9 +1249,9 @@ static void G_Animate ( gentity_t *self )
 
 	if ( self->startFrame < self->endFrame )
 	{
-		if ( self->s.frame < self->startFrame || self->s.frame > self->endFrame )
+		if ( self->s.frame < startFrame || self->s.frame > endFrame)
 		{
-			self->s.frame = self->startFrame;
+			self->s.frame = startFrame;
 		}
 		else
 		{
@@ -1244,9 +1260,9 @@ static void G_Animate ( gentity_t *self )
 	}
 	else if ( self->startFrame > self->endFrame )
 	{
-		if ( self->s.frame > self->startFrame || self->s.frame < self->endFrame )
+		if ( self->s.frame > startFrame || self->s.frame < endFrame)
 		{
-			self->s.frame = self->startFrame;
+			self->s.frame = startFrame;
 		}
 		else
 		{
@@ -2063,7 +2079,7 @@ void G_RunFrame( int levelTime ) {
 				//Or just flag as animating?
 				if ( ent->s.eFlags & EF_ANIM_ONCE )
 				{
-					ent->s.frame++;
+					ent->s.frame++; 
 				}
 				else if ( !(ent->s.eFlags & EF_ANIM_ALLFAST) )
 				{
