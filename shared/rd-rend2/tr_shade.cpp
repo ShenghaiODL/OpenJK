@@ -45,13 +45,13 @@ R_DrawElements
 
 void R_DrawElementsVBO( int numIndexes, glIndex_t firstIndex, glIndex_t minIndex, glIndex_t maxIndex )
 {
-	int offset = firstIndex * sizeof(glIndex_t) +
+	size_t offset = firstIndex * sizeof(glIndex_t) +
 		(tess.useInternalVBO ? backEndData->currentFrame->dynamicIboCommitOffset : 0);
 
 	GL_DrawIndexed(GL_TRIANGLES, numIndexes, GL_INDEX_TYPE, offset, 1, 0);
 }
 
-
+#if 0
 static void R_DrawMultiElementsVBO( int multiDrawPrimitives, glIndex_t *multiDrawMinIndex, glIndex_t *multiDrawMaxIndex,
 	GLsizei *multiDrawNumIndexes, glIndex_t **multiDrawFirstIndex)
 {
@@ -61,7 +61,7 @@ static void R_DrawMultiElementsVBO( int multiDrawPrimitives, glIndex_t *multiDra
 			multiDrawFirstIndex,
 			multiDrawPrimitives);
 }
-
+#endif
 
 /*
 =============================================================
@@ -139,26 +139,25 @@ because a surface may be forced to perform a RB_End due
 to overflow.
 ==============
 */
-void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex ) {
-
-	shader_t *state = (shader->remappedShader) ? shader->remappedShader : shader;
-
+void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex ) 
+{
 	tess.numIndexes = 0;
 	tess.firstIndex = 0;
 	tess.numVertexes = 0;
 	tess.multiDrawPrimitives = 0;
-	tess.shader = state;
+	tess.shader = shader;
 	tess.fogNum = fogNum;
 	tess.cubemapIndex = cubemapIndex;
 	tess.dlightBits = 0;		// will be OR'd in by surface functions
 	tess.pshadowBits = 0;       // will be OR'd in by surface functions
-	tess.xstages = state->stages;
-	tess.numPasses = state->numUnfoggedPasses;
-	tess.currentStageIteratorFunc = state->optimalStageIteratorFunc;
+	tess.xstages = shader->stages;
+	tess.numPasses = shader->numUnfoggedPasses;
+	tess.currentStageIteratorFunc = shader->optimalStageIteratorFunc;
 	tess.externalIBO = nullptr;
 	tess.useInternalVBO = qtrue;
 
 	tess.shaderTime = backEnd.refdef.floatTime - tess.shader->timeOffset;
+	tess.entityMergable = (bool)shader->entityMergable;
 	if (tess.shader->clampTime && tess.shaderTime >= tess.shader->clampTime) {
 		tess.shaderTime = tess.shader->clampTime;
 	}
@@ -442,6 +441,7 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 			break;
 		case AGEN_IDENTITY:
 		case AGEN_LIGHTING_SPECULAR:
+		case AGEN_LIGHTING_SPECULAR_STATIC:
 		case AGEN_PORTAL:
 			// Done entirely in vertex program
 			baseColor[3] = 1.0f;
@@ -466,7 +466,8 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 	 && !((blend & GLS_SRCBLEND_BITS) == GLS_SRCBLEND_DST_COLOR)
 	 && !((blend & GLS_SRCBLEND_BITS) == GLS_SRCBLEND_ONE_MINUS_DST_COLOR)
 	 && !((blend & GLS_DSTBLEND_BITS) == GLS_DSTBLEND_SRC_COLOR)
-	 && !((blend & GLS_DSTBLEND_BITS) == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR))
+	 && !((blend & GLS_DSTBLEND_BITS) == GLS_DSTBLEND_ONE_MINUS_SRC_COLOR)
+	 && (backEnd.framePostProcessed || !tr.world))
 	{
 		float scale = 1 << tr.overbrightBits;
 
@@ -548,7 +549,7 @@ static void CaptureDrawData(const shaderCommands_t *input, shaderStage_t *stage,
 				glState.currentVBO->vertexesVBO,
 				glState.currentIBO->indexesVBO,
 				numIndexes / 3);
-		ri.FS_Write(data, strlen(data), tr.debugFile);
+		ri.FS_Write(data, int(strlen(data)), tr.debugFile);
 	}
 	else
 	{
@@ -564,8 +565,23 @@ static void CaptureDrawData(const shaderCommands_t *input, shaderStage_t *stage,
 				glState.currentVBO->vertexesVBO,
 				glState.currentIBO->indexesVBO,
 				input->numIndexes / 3);
-		ri.FS_Write(data, strlen(data), tr.debugFile);
+		ri.FS_Write(data, int(strlen(data)), tr.debugFile);
 	}
+}
+
+uint32_t RB_CreateSkySortKey(const DrawItem& item, int stage, int skyNumber, int layer)
+{
+	uint32_t key = 0;
+	uintptr_t shaderProgram = (uintptr_t)item.program;
+
+	assert(stage < 16);
+	layer = Q_min(layer, 15);
+
+	key |= (layer & 0xf) << 28;
+	key |= ((255 - skyNumber) & 0xff) << 20;
+	key |= (stage & 0xf) << 16;
+	key |= shaderProgram & 0x0000ffff;
+	return key;
 }
 
 uint32_t RB_CreateSortKey( const DrawItem& item, int stage, int layer )
@@ -678,12 +694,12 @@ void RB_FillDrawCommand(
 	}
 	else
 	{
-		int offset = input->firstIndex * sizeof(glIndex_t) +
+		size_t offset = input->firstIndex * sizeof(glIndex_t) +
 			(input->useInternalVBO ? backEndData->currentFrame->dynamicIboCommitOffset : 0);
 
 		drawCmd.type = DRAW_COMMAND_INDEXED;
 		drawCmd.params.indexed.indexType = GL_INDEX_TYPE;
-		drawCmd.params.indexed.firstIndex = offset;
+		drawCmd.params.indexed.firstIndex = (glIndex_t)offset;
 		drawCmd.params.indexed.numIndices = input->numIndexes;
 		drawCmd.params.indexed.baseVertex = 0;
 	}
@@ -701,11 +717,6 @@ static UniformBlockBinding GetCameraBlockUniformBinding(
 	{
 		binding.ubo = tr.staticUbo;
 		binding.offset = tr.camera2DUboOffset;
-	}
-	else if (refEntity == &backEnd.entityFlare)
-	{
-		binding.ubo = tr.staticUbo;
-		binding.offset = tr.cameraFlareUboOffset;
 	}
 	else
 	{
@@ -755,6 +766,25 @@ static UniformBlockBinding GetSceneBlockUniformBinding()
 	return binding;
 }
 
+static UniformBlockBinding GetTemporalBlockUniformBinding()
+{
+	const byte currentFrameScene = backEndData->currentFrame->currentScene;
+	const GLuint currentFrameUbo = backEndData->currentFrame->ubo[currentFrameScene];
+	UniformBlockBinding binding = {};
+	binding.block = UNIFORM_BLOCK_TEMPORAL_INFO;
+	binding.ubo = currentFrameUbo;
+
+	if (tr.temporalInfoUboOffset == -1)
+	{
+		binding.offset = 0;
+	}
+	else
+	{
+		binding.offset = tr.temporalInfoUboOffset;
+	}
+	return binding;
+}
+
 static UniformBlockBinding GetFogsBlockUniformBinding()
 {
 	const byte currentFrameScene = backEndData->currentFrame->currentScene;
@@ -798,20 +828,59 @@ static UniformBlockBinding GetEntityBlockUniformBinding(
 		binding.ubo = currentFrameUbo;
 		if (!refEntity || refEntity == &tr.worldEntity)
 		{
-			binding.offset = tr.entityUboOffsets[REFENTITYNUM_WORLD];
+			long offset = tr.entityUboOffsets[REFENTITYNUM_WORLD];
+			binding.offset = offset == -1 ? 0 : offset;
 		}
 		else
 		{
 			const int refEntityNum = refEntity - backEnd.refdef.entities;
-			binding.offset = tr.entityUboOffsets[refEntityNum];
+			long offset = tr.entityUboOffsets[refEntityNum];
+			binding.offset = offset == -1 ? 0 : offset;
 		}
 	}
 
 	return binding;
 }
 
-static UniformBlockBinding GetBonesBlockUniformBinding(
+static UniformBlockBinding GetPreviousEntityBlockUniformBinding(
 	const trRefEntity_t *refEntity)
+{
+	const byte currentFrameScene = backEndData->currentFrame->currentScene;
+	const GLuint currentFrameUbo = backEndData->previousFrame->ubo[currentFrameScene];
+	UniformBlockBinding binding = {};
+	binding.block = UNIFORM_BLOCK_PREVIOUS_ENTITY;
+
+	if (refEntity == &backEnd.entity2D)
+	{
+		binding.ubo = tr.staticUbo;
+		binding.offset = tr.entity2DUboOffset;
+	}
+	else if (refEntity == &backEnd.entityFlare)
+	{
+		binding.ubo = tr.staticUbo;
+		binding.offset = tr.entityFlareUboOffset;
+	}
+	else
+	{
+		binding.ubo = currentFrameUbo;
+		if (!refEntity || refEntity == &tr.worldEntity)
+		{
+			binding.ubo = backEndData->currentFrame->ubo[currentFrameScene];
+			long offset = tr.entityUboOffsets[REFENTITYNUM_WORLD];
+			binding.offset = offset == -1 ? 0 :offset;
+		}
+		else
+		{
+			const int refEntityNum = refEntity - backEnd.refdef.entities;
+			long offset = tr.previousEntityUboOffsets[refEntityNum];
+			binding.offset = offset == -1 ? 0 :offset;
+		}
+	}
+
+	return binding;
+}
+
+static UniformBlockBinding GetBonesBlockUniformBinding()
 {
 	const byte currentFrameScene = backEndData->currentFrame->currentScene;
 	const GLuint currentFrameUbo = backEndData->currentFrame->ubo[currentFrameScene];
@@ -819,14 +888,26 @@ static UniformBlockBinding GetBonesBlockUniformBinding(
 	binding.ubo = currentFrameUbo;
 	binding.block = UNIFORM_BLOCK_BONES;
 
-	if (refEntity == &tr.worldEntity)
-		binding.offset = 0;
-	else if (refEntity == &backEnd.entity2D)
-		binding.offset = 0;
-	else
-	{
+	if (glState.skeletalAnimation)
 		binding.offset = tr.animationBoneUboOffset;
-	}
+	else
+		binding.offset = 0;
+
+	return binding;
+}
+
+static UniformBlockBinding GetPreviousBonesBlockUniformBinding()
+{
+	const byte frameScene = backEndData->currentFrame->currentScene;
+	const GLuint frameUbo = backEndData->previousFrame->ubo[frameScene];
+	UniformBlockBinding binding = {};
+	binding.ubo = frameUbo;
+	binding.block = UNIFORM_BLOCK_PREVIOUS_BONES;
+
+	if (glState.skeletalAnimation)
+		binding.offset = tr.previousAnimationBoneUboOffset;
+	else
+		binding.offset = 0;
 
 	return binding;
 }
@@ -834,8 +915,8 @@ static UniformBlockBinding GetBonesBlockUniformBinding(
 static UniformBlockBinding GetShaderInstanceBlockUniformBinding(
 	const trRefEntity_t *refEntity, const shader_t *shader)
 {
-	const byte currentFrameScene = backEndData->currentFrame->currentScene;
-	const GLuint currentFrameUbo = backEndData->currentFrame->ubo[currentFrameScene];
+	//const byte currentFrameScene = backEndData->currentFrame->currentScene;
+	//const GLuint currentFrameUbo = backEndData->currentFrame->ubo[currentFrameScene];
 	UniformBlockBinding binding = {};
 	binding.ubo = tr.shaderInstanceUbo;
 	binding.block = UNIFORM_BLOCK_SHADER_INSTANCE;
@@ -895,7 +976,7 @@ static void DrawTris(shaderCommands_t *input, const VertexArraysProperties *vert
 			GetEntityBlockUniformBinding(backEnd.currentEntity),
 			GetShaderInstanceBlockUniformBinding(
 				backEnd.currentEntity, input->shader),
-			GetBonesBlockUniformBinding(backEnd.currentEntity)
+			GetBonesBlockUniformBinding()
 		};
 
 		samplerBindingsWriter.AddStaticImage(tr.whiteImage, TB_DIFFUSEMAP);
@@ -1069,15 +1150,41 @@ static void RB_FogPass( shaderCommands_t *input, const VertexArraysProperties *v
 	UniformDataWriter uniformDataWriter;
 	uniformDataWriter.Start(sp);
 	uniformDataWriter.SetUniformInt(UNIFORM_FOGINDEX, input->fogNum - 1);
-	if (input->numPasses > 0)
+	if (input->numPasses > 0 && tess.shader->fogPass != FP_EQUAL)
 		uniformDataWriter.SetUniformInt(UNIFORM_ALPHA_TEST_TYPE, input->xstages[0]->alphaTestType);
+	else
+		uniformDataWriter.SetUniformInt(UNIFORM_ALPHA_TEST_TYPE, ALPHA_TEST_NONE);
+
+	if (r_volumetricFog->integer)
+	{
+		if (tr.world)
+		{
+			vec3_t sampleOrigin;
+			VectorMA(tr.world->lightGridOrigin, -0.5f, tr.world->lightGridSize, sampleOrigin);
+			uniformDataWriter.SetUniformVec3(UNIFORM_LIGHTGRIDORIGIN, sampleOrigin);
+			uniformDataWriter.SetUniformVec3(UNIFORM_LIGHTGRIDCELLINVERSESIZE, tr.world->lightGridInverseSize);
+		}
+		else
+		{
+			const vec3_t origin = { 0.0f, 0.0f, 0.0f };
+			const vec3_t size = { 1.0f, 1.0f, 1.0f };
+			uniformDataWriter.SetUniformVec3(UNIFORM_LIGHTGRIDORIGIN, origin);
+			uniformDataWriter.SetUniformVec3(UNIFORM_LIGHTGRIDCELLINVERSESIZE, size);
+		}
+	}
 
 	uint32_t stateBits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
+	if (tr.world && r_volumetricFog->integer)
+		stateBits = GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
+
 	if ( tess.shader->fogPass == FP_EQUAL )
 		stateBits |= GLS_DEPTHFUNC_EQUAL;
 
 	if (input->shader->polygonOffset == qtrue)
 		stateBits |= GLS_POLYGON_OFFSET_FILL;
+
+	if (input->numPasses > 0 && input->xstages[0]->stateBits & GLS_DEPTH_CLAMP)
+		stateBits |= GLS_DEPTH_CLAMP;
 
 	const UniformBlockBinding uniformBlockBindings[] = {
 		GetCameraBlockUniformBinding(backEnd.currentEntity),
@@ -1085,13 +1192,27 @@ static void RB_FogPass( shaderCommands_t *input, const VertexArraysProperties *v
 		GetEntityBlockUniformBinding(backEnd.currentEntity),
 		GetShaderInstanceBlockUniformBinding(
 			backEnd.currentEntity, input->shader),
-		GetBonesBlockUniformBinding(backEnd.currentEntity)
+		GetBonesBlockUniformBinding(),
+		GetSceneBlockUniformBinding()
 	};
 
 	SamplerBindingsWriter samplerBindingsWriter;
 	if (input->numPasses > 0)
-		if (input->xstages[0]->alphaTestType != ALPHA_TEST_NONE)
+	{
+		if (input->xstages[0]->alphaTestType != ALPHA_TEST_NONE && tess.shader->fogPass != FP_EQUAL)
 			samplerBindingsWriter.AddStaticImage(input->xstages[0]->bundle[0].image[0], 0);
+		else
+			samplerBindingsWriter.AddStaticImage(tr.whiteImage, 0);
+
+		if (tr.world && r_volumetricFog->integer && tr.world->lightGridData && !tr.refdef.doLAGoggles)
+		{
+			samplerBindingsWriter.AddStaticImage(tr.world->volumetricLightMaps[0], 2);
+		}
+		else if (r_volumetricFog->integer)
+		{
+			samplerBindingsWriter.AddStaticImage(tr.whiteImage3D, 2);
+		}
+	}
 
 	Allocator& frameAllocator = *backEndData->perFrameMemory;
 	DrawItem item = {};
@@ -1111,7 +1232,12 @@ static void RB_FogPass( shaderCommands_t *input, const VertexArraysProperties *v
 
 	RB_FillDrawCommand(item.draw, GL_TRIANGLES, 1, input);
 
-	const uint32_t key = RB_CreateSortKey(item, 14, input->shader->sort);
+	uint32_t key;
+	if (input->shader->sort == SS_ENVIRONMENT)
+		key = RB_CreateSkySortKey(item, 14, input->shader->isSky ? backEnd.skyNumber : 0, input->shader->sort);
+	else
+		key = RB_CreateSortKey(item, 14, input->shader->sort);
+
 	RB_AddDrawItem(backEndData->currentPass, key, item);
 
 	// invert fog planes and render global fog into them
@@ -1132,12 +1258,22 @@ static void RB_FogPass( shaderCommands_t *input, const VertexArraysProperties *v
 		UniformDataWriter uniformDataWriterBack;
 		uniformDataWriterBack.Start(sp);
 		uniformDataWriterBack.SetUniformInt(UNIFORM_FOGINDEX, tr.world->globalFogIndex - 1);
-		if (input->numPasses > 0)
+
+		// Fog planes shouldn't have any form of blending or alpha testing
+		if (r_volumetricFog->integer)
 		{
-			uniformDataWriterBack.SetUniformInt(UNIFORM_ALPHA_TEST_TYPE, input->xstages[0]->alphaTestType);
+			uniformDataWriterBack.SetUniformInt(UNIFORM_ALPHA_TEST_TYPE, ALPHA_TEST_NONE);
 			SamplerBindingsWriter samplerBindingsWriter;
-			if (input->xstages[0]->alphaTestType != ALPHA_TEST_NONE)
-				samplerBindingsWriter.AddStaticImage(input->xstages[0]->bundle[0].image[0], 0);
+			samplerBindingsWriter.AddStaticImage(tr.whiteImage, 0);
+
+			if (tr.world && tr.world->lightGridData)
+			{
+				samplerBindingsWriter.AddStaticImage(tr.world->volumetricLightMaps[0], 2);
+			}
+			else
+			{
+				samplerBindingsWriter.AddStaticImage(tr.whiteImage3D, 2);
+			}
 		}
 
 		DrawItem backItem = {};
@@ -1228,7 +1364,29 @@ static shaderProgram_t *SelectShaderProgram( int stageIndex, shaderStage_t *stag
 
 	if (backEnd.depthFill)
 	{
-		if (glslShaderGroup == tr.lightallShader)
+		if (tr.depthVelocityFbo != nullptr && glState.currentFBO == tr.depthVelocityFbo)
+		{
+			index = 0;
+			if (glState.skeletalAnimation)
+				index |= VELOCITYDEF_USE_SKELETAL_ANIMATION;
+			if (tess.shader->numDeforms && !ShaderRequiresCPUDeforms(tess.shader))
+				index |= VELOCITYDEF_USE_DEFORM_VERTEXES;
+			if (stage->bundle[0].tcGen != TCGEN_TEXTURE || (stage->bundle[0].numTexMods))
+				index |= VELOCITYDEF_USE_TCGEN_AND_TCMOD;
+			if (backEnd.currentEntity->e.renderfx & (RF_DISINTEGRATE1 | RF_DISINTEGRATE2))
+				index |= VELOCITYDEF_USE_RGBAGEN;
+			if (backEnd.currentEntity->e.renderfx & RF_DISINTEGRATE2)
+				index |= VELOCITYDEF_USE_DEFORM_VERTEXES;
+			if (r_parallaxMapping->integer &&
+				glslShaderGroup == tr.lightallShader &&
+				stage->glslShaderIndex & LIGHTDEF_USE_PARALLAXMAP &&
+				stage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK && // TODO: remove light requirement
+				!(backEnd.viewParms.flags & VPF_DEPTHSHADOW)) // Don't use expensive parallax shaders in shadows
+				index |= VELOCITYDEF_USE_PARALLAXMAP;
+			result = &tr.velocityShader[index];
+		}
+		else 
+			if (glslShaderGroup == tr.lightallShader)
 		{
 			index = 0;
 
@@ -1261,8 +1419,10 @@ static shaderProgram_t *SelectShaderProgram( int stageIndex, shaderStage_t *stag
 				index |= LIGHTDEF_USE_TCGEN_AND_TCMOD;
 			
 			// TODO: remove light vertex def and fix parallax usage on unlit stages like glow stages
-			if (stage->glslShaderIndex & LIGHTDEF_USE_PARALLAXMAP &&
-				stage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK)
+			if (r_parallaxMapping->integer &&
+				stage->glslShaderIndex & LIGHTDEF_USE_PARALLAXMAP &&
+				stage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK && // TODO: remove light requirement
+				!(backEnd.viewParms.flags & VPF_DEPTHSHADOW)) // Don't use expensive parallax shaders in shadows
 				index |= LIGHTDEF_USE_PARALLAXMAP | LIGHTDEF_USE_LIGHT_VERTEX;
 
 			result = &stage->glslShaderGroup[index];
@@ -1311,6 +1471,12 @@ static shaderProgram_t *SelectShaderProgram( int stageIndex, shaderStage_t *stag
 	else if (stage->glslShaderGroup == tr.lightallShader)
 	{
 		index = stage->glslShaderIndex;
+
+		if (!r_parallaxMapping->integer &&
+			stage->glslShaderIndex & LIGHTDEF_USE_PARALLAXMAP)
+		{
+			index &= ~LIGHTDEF_USE_PARALLAXMAP;
+		}
 
 		if (r_lightmap->integer && (index & LIGHTDEF_USE_LIGHTMAP) && !(index & LIGHTDEF_USE_LIGHT_VERTEX))
 		{
@@ -1385,7 +1551,7 @@ void RB_ShadowTessEnd(shaderCommands_t *input, const VertexArraysProperties *ver
 	const UniformBlockBinding uniformBlockBindings[] = {
 		GetCameraBlockUniformBinding(backEnd.currentEntity),
 		GetEntityBlockUniformBinding(backEnd.currentEntity),
-		GetBonesBlockUniformBinding(backEnd.currentEntity)
+		GetBonesBlockUniformBinding()
 	};
 
 	DrawItem item = {};
@@ -1494,6 +1660,22 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 				}
 #endif
 			}
+
+			if ( backEnd.currentEntity == &backEnd.entityFlare )
+			{
+				// Disable depth test for flares, looks better and makes more sense
+				// slightly diverges from vanilla like that
+				stateBits |= GLS_DEPTHTEST_DISABLE;
+				// also remove all depth writes on flares
+				stateBits &= ~GLS_DEPTHMASK_TRUE;
+			}
+
+			if (pStage->alphaGen == AGEN_LIGHTING_SPECULAR 
+				&& backEnd.currentEntity 
+				&& (backEnd.currentEntity->e.hModel||backEnd.currentEntity->e.ghoul2))	//this is a model so we can use world lights instead fake light
+			{
+				forceAlphaGen = AGEN_LIGHTING_SPECULAR_STATIC;
+			}
 #ifdef REND2_SP
 			if (backEnd.currentEntity->e.renderfx & RF_ALPHA_FADE)
 			{
@@ -1514,19 +1696,36 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 
 		uniformDataWriter.Start(sp);
 
-		if ( input->fogNum ) {
+		if ( input->fogNum
+			 && pStage->glslShaderGroup != tr.lightallShader
+			 && !backEnd.depthFill 
+			 && !input->shader->fogPass) {
 			vec4_t fogColorMask;
 			ComputeFogColorMask(pStage, fogColorMask);
 			uniformDataWriter.SetUniformVec4(UNIFORM_FOGCOLORMASK, fogColorMask);
 			uniformDataWriter.SetUniformInt(UNIFORM_FOGINDEX, input->fogNum - 1);
+			if (r_volumetricFog->integer)
+			{
+				if (tr.world  && tr.world->lightGridData && !tr.refdef.doLAGoggles)
+				{
+					vec3_t sampleOrigin;
+					VectorMA(tr.world->lightGridOrigin, -0.5f, tr.world->lightGridSize, sampleOrigin);
+					uniformDataWriter.SetUniformVec3(UNIFORM_LIGHTGRIDORIGIN, sampleOrigin);
+					uniformDataWriter.SetUniformVec3(UNIFORM_LIGHTGRIDCELLINVERSESIZE, tr.world->lightGridInverseSize);
+					samplerBindingsWriter.AddStaticImage(tr.world->volumetricLightMaps[0], 2);
+				}
+				else
+				{
+					const vec3_t origin = { 0.0f, 0.0f, 0.0f };
+					const vec3_t size = { 1.0f, 1.0f, 1.0f };
+					uniformDataWriter.SetUniformVec3(UNIFORM_LIGHTGRIDORIGIN, origin);
+					uniformDataWriter.SetUniformVec3(UNIFORM_LIGHTGRIDCELLINVERSESIZE, size);
+					samplerBindingsWriter.AddStaticImage(tr.whiteImage3D, 2);
+				}
+			}
 		}
 
-		float volumetricBaseValue = -1.0f;
-		if ( backEnd.currentEntity->e.renderfx & RF_VOLUMETRIC )
-		{
-			volumetricBaseValue = backEnd.currentEntity->e.shaderRGBA[0] / 255.0f;
-		}
-		else
+		if ( !(backEnd.currentEntity->e.renderfx & RF_VOLUMETRIC) )
 		{
 			vec4_t baseColor;
 			vec4_t vertColor;
@@ -1556,33 +1755,6 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 				vertColor[3] = 0.0f;
 			}
 
-			if (backEnd.currentEntity->e.hModel != NULL_HANDLE)
-			{
-				model_t *model = R_GetModelByHandle(backEnd.currentEntity->e.hModel);
-				if (model->type != MOD_BRUSH)
-				{
-					switch (forceRGBGen)
-					{
-					case CGEN_EXACT_VERTEX:
-					case CGEN_EXACT_VERTEX_LIT:
-					case CGEN_VERTEX:
-					case CGEN_VERTEX_LIT:
-						baseColor[0] =
-							baseColor[1] =
-							baseColor[2] =
-							baseColor[3] = 0.0f;
-
-						vertColor[0] =
-							vertColor[1] =
-							vertColor[2] =
-							vertColor[3] = tr.identityLight;
-						break;
-					default:
-						break;
-					}
-				}
-			}
-
 			uniformDataWriter.SetUniformVec4(UNIFORM_BASECOLOR, baseColor);
 			uniformDataWriter.SetUniformVec4(UNIFORM_VERTCOLOR, vertColor);
 		}
@@ -1598,6 +1770,19 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 
 		if (backEnd.currentEntity->e.renderfx & (RF_DISINTEGRATE1 | RF_DISINTEGRATE2))
 			uniformDataWriter.SetUniformVec4(UNIFORM_DISINTEGRATION, disintegrationInfo);
+
+		if ( backEnd.currentEntity == &backEnd.entityFlare )
+		{
+			samplerBindingsWriter.AddStaticImage(tr.renderDepthImage, TB_SHADOWMAP);
+			vec4_t center;
+			VectorAdd(center, tess.xyz[0], center);
+			VectorAdd(center, tess.xyz[1], center);
+			VectorAdd(center, tess.xyz[2], center);
+			VectorAdd(center, tess.xyz[3], center);
+			VectorScale(center, 1.f / 4.f, center);
+			center[3] = 1.f;
+			uniformDataWriter.SetUniformVec4(UNIFORM_LIGHTORIGIN, center);
+		}
 
 		if (forceRefraction)
 		{
@@ -1658,18 +1843,6 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 			useAlphaTestGE192 ? ALPHA_TEST_GE192 : pStage->alphaTestType;
 		uniformDataWriter.SetUniformInt(UNIFORM_ALPHA_TEST_TYPE, alphaTestType);
 
-		//
-		// do multitexture
-		//
-		bool enableCubeMaps = (	r_cubeMapping->integer
-								&& !(tr.viewParms.flags & VPF_NOCUBEMAPS)
-								&& input->cubemapIndex > 0
-								&& pStage->rgbGen != CGEN_LIGHTMAPSTYLE );
-		bool enableDLights = (	tess.dlightBits
-								&& (pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK)
-								&& !(tess.shader->surfaceFlags & (SURF_NODLIGHT | SURF_SKY))
-								&& pStage->rgbGen != CGEN_LIGHTMAPSTYLE );
-
 		if (forceRefraction)
 		{
 			FBO_t *srcFbo = tr.renderFbo;
@@ -1679,6 +1852,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 			samplerBindingsWriter.AddStaticImage(srcFbo->colorImage[0], TB_COLORMAP);
 			samplerBindingsWriter.AddStaticImage(tr.renderDepthImage, TB_SHADOWMAP);
 			qboolean autoExposure = (qboolean)(r_autoExposure->integer || r_forceAutoExposure->integer);
+			uniformDataWriter.SetUniformFloat(UNIFORM_CHROMATICABERRATIONDELTA, r_refractionChromaticAberration->value);
 
 			if (autoExposure)
 				samplerBindingsWriter.AddStaticImage(tr.calcLevelsImage, TB_LEVELSMAP);
@@ -1693,14 +1867,16 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 				samplerBindingsWriter.AddAnimatedImage(&pStage->bundle[TB_COLORMAP], TB_COLORMAP);
 
 			// TODO: remove light requirement
-			if (pStage->glslShaderIndex & LIGHTDEF_USE_PARALLAXMAP &&
-				pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK)
+			if (r_parallaxMapping->integer &&
+				pStage->glslShaderGroup == tr.lightallShader &&
+				pStage->glslShaderIndex & LIGHTDEF_USE_PARALLAXMAP &&
+				pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK &&
+				!(backEnd.viewParms.flags & VPF_DEPTHSHADOW))
 			{
 				vec4_t enableTextures = {};
 				if (pStage->bundle[TB_NORMALMAP].image[0])
 				{
 					samplerBindingsWriter.AddAnimatedImage(&pStage->bundle[TB_NORMALMAP], TB_NORMALMAP);
-					enableTextures[0] = 1.0f;
 				}
 				else if (r_normalMapping->integer)
 				{
@@ -1715,15 +1891,33 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 			vec4_t enableTextures = {};
 			enableTextures[0] = (float)pStage->glow;
 
-			if (r_sunlightMode->integer &&
-					(backEnd.viewParms.flags & VPF_USESUNLIGHT) &&
-					(pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK))
+			bool enableCubeMaps = (r_cubeMapping->integer
+				&& !(tr.viewParms.flags & VPF_NOCUBEMAPS)
+				&& input->cubemapIndex > 0
+				&& pStage->rgbGen != CGEN_LIGHTMAPSTYLE);
+			bool enableDLights = (tess.dlightBits
+				&& (pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK)
+				&& !(tess.shader->surfaceFlags & (SURF_NODLIGHT | SURF_SKY))
+				&& pStage->rgbGen != CGEN_LIGHTMAPSTYLE);
+
+			if (pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK &&
+				r_sunlightMode->integer)
 			{
 				samplerBindingsWriter.AddStaticImage(tr.sunShadowArrayImage, TB_SHADOWMAP);
-				enableTextures[2] = 1.0f;
+				if (backEnd.viewParms.flags & VPF_USESUNLIGHT)
+				{
+					enableTextures[2] = 1.0f;
+				}
 			}
+
+			if (pStage->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK &&
+				r_dlightMode->integer > 1)
+				samplerBindingsWriter.AddStaticImage(tr.pointShadowArrayImage, TB_SHADOWMAPARRAY);
+
+			if (enableDLights)
+				uniformDataWriter.SetUniformInt(UNIFORM_LIGHTMASK, tess.dlightBits);
 			else
-				samplerBindingsWriter.AddStaticImage(tr.whiteImage, TB_SHADOWMAP);
+				uniformDataWriter.SetUniformInt(UNIFORM_LIGHTMASK, 0);
 
 			if ((r_lightmap->integer == 1 || r_lightmap->integer == 2) &&
 				(pStage->bundle[0].isLightmap || pStage->bundle[1].isLightmap))
@@ -1798,16 +1992,28 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 						samplerBindingsWriter.AddStaticImage(tr.whiteImage, TB_SPECULARMAP);
 					}
 
+					if (enableCubeMaps)
+					{
+						vec4_t vec;
+						cubemap_t *cubemap = &tr.cubemaps[input->cubemapIndex - 1];
+
+						samplerBindingsWriter.AddStaticImage(cubemap->image, TB_CUBEMAP);
+						samplerBindingsWriter.AddStaticImage(tr.envBrdfImage, TB_ENVBRDFMAP);
+						enableTextures[3] = 1.0f;
+
+						VectorSubtract(cubemap->origin, backEnd.viewParms.ori.origin, vec);
+						vec[3] = 1.0f;
+
+						VectorScale4(vec, 1.0f / cubemap->parallaxRadius, vec);
+
+						uniformDataWriter.SetUniformVec4(UNIFORM_CUBEMAPINFO, vec);
+					}
+
 					if (r_ssao->integer && tr.world && backEnd.framePostProcessed == qfalse)
 						samplerBindingsWriter.AddStaticImage(tr.screenSsaoImage, TB_SSAOMAP);
 					else if (r_ssao->integer)
 						samplerBindingsWriter.AddStaticImage(tr.whiteImage, TB_SSAOMAP);
 
-				}
-
-				if ( enableCubeMaps )
-				{
-					enableTextures[3] =  1.0f;
 				}
 			}
 
@@ -1833,34 +2039,6 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 			uniformDataWriter.SetUniformVec4(UNIFORM_ENABLETEXTURES, enableTextures);
 		}
 
-		//
-		// testing cube map
-		//
-		if ( enableCubeMaps )
-		{
-			vec4_t vec;
-			cubemap_t *cubemap = &tr.cubemaps[input->cubemapIndex - 1];
-
-			samplerBindingsWriter.AddStaticImage(cubemap->image, TB_CUBEMAP);
-			samplerBindingsWriter.AddStaticImage(tr.envBrdfImage, TB_ENVBRDFMAP);
-
-			VectorSubtract(cubemap->origin, backEnd.viewParms.ori.origin, vec);
-			vec[3] = 1.0f;
-
-			VectorScale4(vec, 1.0f / cubemap->parallaxRadius, vec);
-
-			uniformDataWriter.SetUniformVec4(UNIFORM_CUBEMAPINFO, vec);
-		}
-
-		if (enableDLights)
-		{
-			uniformDataWriter.SetUniformInt(UNIFORM_LIGHTMASK, tess.dlightBits);
-			if (r_dlightMode->integer > 1)
-				samplerBindingsWriter.AddStaticImage(tr.pointShadowArrayImage, TB_SHADOWMAPARRAY);
-		}
-		else
-			uniformDataWriter.SetUniformInt(UNIFORM_LIGHTMASK, 0);
-
 		CaptureDrawData(input, pStage, index, stage);
 
 		const UniformBlockBinding uniformBlockBindings[] = {
@@ -1869,9 +2047,12 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 			GetSceneBlockUniformBinding(),
 			GetFogsBlockUniformBinding(),
 			GetEntityBlockUniformBinding(backEnd.currentEntity),
+			GetPreviousEntityBlockUniformBinding(backEnd.currentEntity),
 			GetShaderInstanceBlockUniformBinding(
 				backEnd.currentEntity, input->shader),
-			GetBonesBlockUniformBinding(backEnd.currentEntity)
+			GetBonesBlockUniformBinding(),
+			GetPreviousBonesBlockUniformBinding(),
+			GetTemporalBlockUniformBinding()
 		};
 
 		DrawItem item = {};
@@ -1891,7 +2072,11 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 
 		RB_FillDrawCommand(item.draw, GL_TRIANGLES, 1, input);
 
-		uint32_t key = RB_CreateSortKey(item, stage, input->shader->sort);
+		uint32_t key;
+		if (input->shader->sort == SS_ENVIRONMENT)
+			key = RB_CreateSkySortKey(item, stage + 1, input->shader->isSky ? backEnd.skyNumber : 0, input->shader->sort);
+		else
+			key = RB_CreateSortKey(item, stage, input->shader->sort);
 
 		RB_AddDrawItem(backEndData->currentPass, key, item);
 
@@ -1965,15 +2150,19 @@ void RB_StageIteratorGeneric( void )
 	}
 	else
 	{
-		RB_IterateStagesGeneric( input, &vertexArrays );
+		if (input->shader != tr.volumetricFogCapShader)
+		{
+			RB_IterateStagesGeneric(input, &vertexArrays);
+		}
 
 		//
 		// pshadows!
 		//
 		if (r_shadows->integer == 4 &&
-				tess.pshadowBits &&
-				tess.shader->sort <= SS_OPAQUE &&
-				!(tess.shader->surfaceFlags & (SURF_NODLIGHT | SURF_SKY)))
+			tess.pshadowBits &&
+			tess.shader->sort <= SS_OPAQUE &&
+			!(tess.shader->surfaceFlags & (SURF_NODLIGHT | SURF_SKY)) &&
+			tr.pshadowArrayImage)
 		{
 			ProjectPshadowVBOGLSL( input, &vertexArrays );
 		}

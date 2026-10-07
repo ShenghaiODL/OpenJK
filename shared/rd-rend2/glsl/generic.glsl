@@ -93,6 +93,11 @@ uniform int u_AlphaGen;
 uniform vec4 u_Disintegration; // origin, threshhold
 #endif
 
+#if defined(USE_FLARE_TEST)
+uniform sampler2D u_ScreenDepthMap;
+uniform vec4 u_LightOrigin;
+#endif
+
 out vec2 var_DiffuseTex;
 out vec4 var_Color;
 #if defined(USE_FOG)
@@ -386,9 +391,16 @@ vec4 CalcColor(vec3 position, vec3 normal)
 
 	if (u_AlphaGen == AGEN_LIGHTING_SPECULAR)
 	{
-		// TODO: Handle specular on player models and misc_model_statics correctly
 		vec3 lightDir = normalize(vec3(-960.0, 1980.0, 96.0) - position);
 		vec3 reflected = -reflect(lightDir, normal);
+
+		color.a = clamp(dot(reflected, normalize(viewer)), 0.0, 1.0);
+		color.a *= color.a;
+		color.a *= color.a;
+	}
+	else if (u_AlphaGen == AGEN_LIGHTING_SPECULAR_STATIC)
+	{
+		vec3 reflected = -reflect(u_ModelLightDir, normal);
 
 		color.a = clamp(dot(reflected, normalize(viewer)), 0.0, 1.0);
 		color.a *= color.a;
@@ -472,6 +484,13 @@ void main()
 		var_Color = u_VertColor * attr_Color + u_BaseColor;
 #endif
 	}
+	
+#if defined(USE_FLARE_TEST)
+	vec4 samplePosition = u_viewProjectionMatrix * u_LightOrigin;
+	vec3 depthPosition = samplePosition.xyz / samplePosition.w * 0.5 + 0.5;
+	float depthSample = texture(u_ScreenDepthMap, depthPosition.xy).r;
+	gl_Position *= float(depthPosition.z < depthSample);
+#endif
 
 #if defined(USE_FOG)
 	var_WSPosition = wsPosition.xyz;
@@ -480,6 +499,7 @@ void main()
 
 
 /*[Fragment]*/
+#if defined(USE_FOG)
 struct Fog
 {
 	vec4 plane;
@@ -494,7 +514,15 @@ layout(std140) uniform Fogs
 	Fog u_Fogs[MAX_GPU_FOGS];
 };
 
+uniform int u_FogIndex;
 uniform vec4 u_FogColorMask;
+
+#if defined(USE_VOLUMETRIC_FOG)
+uniform sampler3D u_VolumetricLightMap;
+
+uniform vec3 u_LightGridOrigin;
+uniform vec3 u_LightGridCellInverseSize;
+#endif
 
 layout(std140) uniform Camera
 {
@@ -505,6 +533,7 @@ layout(std140) uniform Camera
 	vec3 u_ViewLeft;
 	vec3 u_ViewUp;
 };
+#endif
 
 layout(std140) uniform Entity
 {
@@ -522,7 +551,7 @@ uniform sampler2D u_DiffuseMap;
 #if defined(USE_ALPHA_TEST)
 uniform int u_AlphaTestType;
 #endif
-uniform int u_FogIndex;
+
 // x = glow out, y = deluxe, z = screen shadow, w = cube
 uniform vec4 u_EnableTextures;
 
@@ -537,7 +566,35 @@ out vec4 out_Glow;
 
 
 #if defined(USE_FOG)
-float CalcFog(in vec3 viewOrigin, in vec3 position, in Fog fog)
+#if defined(USE_VOLUMETRIC_FOG)
+vec3 CalcVolumetricFogColor(in vec3 startPosition, in vec3 endPosition, in Fog fog)
+{
+	ivec3 gridSize = textureSize(u_VolumetricLightMap, 0);
+	vec3 invGridSize = u_LightGridCellInverseSize / vec3(gridSize);
+	
+	const int steps = r_volumetricFogSamples;
+	vec3 step = (endPosition - startPosition) / steps;
+	float z = fog.depthToOpaque * length(step);
+
+	vec3 position = startPosition;
+	float transmittance  = 1.0;
+	vec3 color = vec3(0.0);
+	for (int i = 0; i < steps; i++)
+	{
+		float currentTransmittance = exp(-z);
+		float currentOpacity = 1.0 - currentTransmittance;
+
+		vec3 gridCell = (position - u_LightGridOrigin) * invGridSize;
+		color += texture(u_VolumetricLightMap, gridCell).rgb * transmittance * currentOpacity;
+		transmittance *= currentTransmittance;
+		
+		position += step;
+	}
+	return color;
+}
+#endif
+
+vec4 CalcFog(in vec3 viewOrigin, in vec3 position, in Fog fog)
 {
 	bool inFog = dot(viewOrigin, fog.plane.xyz) - fog.plane.w >= 0.0 || !fog.hasPlane;
 
@@ -554,7 +611,7 @@ float CalcFog(in vec3 viewOrigin, in vec3 position, in Fog fog)
 
 	bool intersects = (t > 0.0 && t < 0.995);
 	if (inFog == intersects)
-		return 0.0;
+		return vec4(0.0);
 
 	float distToVertexFromViewOrigin = length(V);
 	float distToIntersectionFromViewOrigin = t * distToVertexFromViewOrigin;
@@ -563,7 +620,14 @@ float CalcFog(in vec3 viewOrigin, in vec3 position, in Fog fog)
 	float distThroughFog = mix(distOutsideFog, distToVertexFromViewOrigin, inFog);
 
 	float z = fog.depthToOpaque * distThroughFog;
-	return 1.0 - clamp(exp(-(z * z)), 0.0, 1.0);
+#if defined(USE_VOLUMETRIC_FOG)
+	vec3 startPosition = mix((V * t) + viewOrigin, viewOrigin, vec3(inFog));
+	vec3 endPosition = (normalize(V) * distThroughFog) + startPosition;
+	vec3 color = CalcVolumetricFogColor(startPosition, endPosition, fog);
+	return vec4(color * fog.color.rgb, 1.0 - clamp(exp(-z), 0.0, 1.0));
+#else
+	return vec4(fog.color.rgb, 1.0 - clamp(exp(-(z * z)), 0.0, 1.0));
+#endif
 }
 #endif
 
@@ -592,12 +656,23 @@ void main()
 		if (color.a < 0.75)
 			discard;
 	}
+	else if (u_AlphaTestType == ALPHA_TEST_E255)
+	{
+		if (color.a < 1.00)
+			discard;
+	}
 #endif
 
 #if defined(USE_FOG)
 	Fog fog = u_Fogs[u_FogIndex];
-	float fogFactor = CalcFog(u_ViewOrigin, var_WSPosition, fog);
-	color *= vec4(1.0) - u_FogColorMask * fogFactor;
+	vec4 fogColorOpacity = CalcFog(u_ViewOrigin, var_WSPosition, fog);
+#if defined(USE_VOLUMETRIC_FOG)
+	color.rgb *= 1.0 - u_FogColorMask.a * fogColorOpacity.a;
+	color.rgb += u_FogColorMask.a * fogColorOpacity.rgb;
+	color.rgb *= vec3(1.0) - u_FogColorMask.rgb * fogColorOpacity.a;
+#else
+	color *= vec4(1.0) - u_FogColorMask * fogColorOpacity.a;
+#endif
 #endif
 
 	out_Color = color;

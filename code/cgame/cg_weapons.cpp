@@ -1505,9 +1505,11 @@ void CG_AddViewWeapon( playerState_t *ps )
 	AnglesToAxis( angles, hand.axis );
 
 
+	// scale by the set fov vs. wanted viewmodel fov, so zoom/force-speed fov changes and
+	// cg_fovAspectAdjust don't distort the viewmodel (SomaZ 8735bb41)
 	if ( cg_fovViewmodel.integer ) {
-		float fracDistFOV = tanf( cg.refdef.fov_x * ( M_PI/180 ) * 0.5f );
-		float fracWeapFOV = (1.0f / fracDistFOV) * tanf( actualFOV * (M_PI / 180) * 0.5f );
+		float fracDistFOV = tanf( cg_fov.value * ( M_PI/180 ) * 0.5f );
+		float fracWeapFOV = (1.0f / fracDistFOV) * tanf( cg_fovViewmodel.value * (M_PI / 180) * 0.5f );
 		VectorScale( hand.axis[0], fracWeapFOV, hand.axis[0] );
 	}
 
@@ -1700,8 +1702,8 @@ void CG_AddViewWeapon( playerState_t *ps )
 			
 			// The effect position gets broken with differences in FOV. This should (hopefully) fix that.
 			if(cg_fovViewmodel.integer) {
-				float fracDistFOV = tanf(cg.refdef.fov_x * (M_PI / 180) * 0.5f);
-				float fracWeapFOV = (1.0f / fracDistFOV) * tanf(actualFOV * (M_PI / 180) * 0.5f);
+				float fracDistFOV = tanf(cg_fov.value * (M_PI / 180) * 0.5f);
+				float fracWeapFOV = (1.0f / fracDistFOV) * tanf(cg_fovViewmodel.value * (M_PI / 180) * 0.5f);
 				VectorScale(flash.axis[0], fracWeapFOV, flash.axis[0]);
 			}
 

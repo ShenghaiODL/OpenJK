@@ -80,6 +80,10 @@ uniform vec4 u_VertColor;
 uniform vec4 u_Disintegration;
 uniform int u_ColorGen;
 
+#if defined(PER_PIXEL_LIGHTING) && defined(USE_NORMALMAP) && defined(USE_PARALLAXMAP)
+uniform sampler2D u_NormalMap;
+#endif
+
 out vec4 var_TexCoords;
 out vec4 var_Color;
 
@@ -87,11 +91,10 @@ out vec4 var_Color;
 out vec4 var_Normal;
 out vec4 var_Tangent;
 out vec4 var_ViewDir;
-out vec4 var_TangentViewDir;
-#endif
-
-#if defined(PER_PIXEL_LIGHTING)
 out vec4 var_LightDir;
+#else
+out vec3 var_Position;
+out vec3 var_Normal;
 #endif
 
 vec4 CalcColor(vec3 position)
@@ -310,8 +313,7 @@ void main()
 		#if defined(USE_LIGHT_VECTOR) && defined(USE_FAST_LIGHT)
 			float sqrLightDist = dot(L, L);
 			float NL = clamp(dot(normal, L) / sqrt(sqrLightDist), 0.0, 1.0);
-
-			var_Color.rgb *= mix(u_DirectedLight, u_AmbientLight, NL);
+			var_Color.rgb *= u_DirectedLight * NL + u_AmbientLight;
 		#endif
 	}
 	var_Color *= disintegration;
@@ -325,15 +327,33 @@ void main()
 
 #if defined(PER_PIXEL_LIGHTING)
 	vec3 viewDir = u_ViewOrigin.xyz - position;
-
-	// store view direction in tangent space to save on outs
-	var_Normal  = vec4(normal,    0.0);
 	var_Tangent = vec4(tangent,   (attr_Tangent.w * 2.0 - 1.0));
-	var_ViewDir = vec4(viewDir.xyz, 0.0);
 
-	vec3 bitangent = cross(normal, tangent) * var_Tangent.w;
-	mat3 TBN = mat3(tangent, bitangent, normal);
-	var_TangentViewDir = vec4(var_ViewDir.xyz * TBN, 0.0);
+	#if defined(USE_NORMALMAP) && defined(USE_PARALLAXMAP)
+	  vec3 bitangent = cross(normal, tangent) * var_Tangent.w;
+	  mat3 TBN = mat3(tangent, bitangent, normal);
+	  vec3 tangentViewDir = viewDir * TBN;
+
+	  // normal map aspect correction for parallax mapping
+	  vec2 normalSize = vec2(textureSize(u_NormalMap, 0));
+	  float normalMapAspect = normalSize.y / normalSize.x;
+
+	  tangentViewDir *= vec3(
+	  	max(1.0, normalMapAspect),
+	  	max(1.0, 1.0 / normalMapAspect),
+	  	1.0
+	  );
+	#else
+	  vec3 tangentViewDir = vec3(0.0);
+	#endif
+
+	// store tangent view direction in other outs to save space
+	var_LightDir.w = tangentViewDir.x;
+	var_Normal  = vec4(normal,    tangentViewDir.y);
+	var_ViewDir = vec4(viewDir,   tangentViewDir.z);
+#else
+	var_Normal = normal;
+	var_Position = position;
 #endif
 }
 
@@ -398,6 +418,7 @@ uniform sampler2D u_DiffuseMap;
 uniform sampler2D u_LightMap;
 #endif
 
+#if defined(PER_PIXEL_LIGHTING)
 #if defined(USE_NORMALMAP)
 uniform sampler2D u_NormalMap;
 #endif
@@ -426,6 +447,7 @@ uniform sampler2DArrayShadow u_ShadowMap2;
 uniform samplerCube u_CubeMap;
 uniform sampler2D u_EnvBrdfMap;
 #endif
+#endif
 
 // x = glow out, y = deluxe, z = screen shadow, w = cube
 uniform vec4 u_EnableTextures;
@@ -442,7 +464,6 @@ uniform vec4 u_CubeMapInfo;
 uniform int u_AlphaTestType;
 #endif
 
-
 in vec4 var_TexCoords;
 in vec4 var_Color;
 
@@ -450,8 +471,10 @@ in vec4 var_Color;
 in vec4 var_Normal;
 in vec4 var_Tangent;
 in vec4 var_ViewDir;
-in vec4 var_TangentViewDir;
 in vec4 var_LightDir;
+#else
+in vec3 var_Position;
+in vec3 var_Normal;
 #endif
 
 out vec4 out_Color;
@@ -542,7 +565,7 @@ float PCF(const sampler2DArrayShadow shadowmap, const float layer, const vec2 st
 	return mult;
 }
 
-float sunShadow(in vec3 viewOrigin, in vec3 viewDir, in vec3 biasOffset)
+float sunShadow(in vec3 viewOrigin, in vec3 viewDir, in vec3 biasOffset, in sampler2DArrayShadow shadowMapCascades)
 {
 	vec4 biasPos = vec4(viewOrigin - viewDir + biasOffset, 1.0);
 	float cameraDistance = length(viewDir);
@@ -559,7 +582,7 @@ float sunShadow(in vec3 viewOrigin, in vec3 viewDir, in vec3 biasOffset)
 	{
 		vec3 dCoords = smoothstep(0.3, 0.45, abs(shadowpos.xyz - vec3(0.5)));
 		edgefactor = 2.0 * PCFScale * clamp(dCoords.x + dCoords.y + dCoords.z, 0.0, 1.0);
-		result = PCF(u_ShadowMap,
+		result = PCF(shadowMapCascades,
 					 0.0,
 					 shadowpos.xy,
 					 shadowpos.z,
@@ -573,7 +596,7 @@ float sunShadow(in vec3 viewOrigin, in vec3 viewDir, in vec3 biasOffset)
 		{
 			vec3 dCoords = smoothstep(0.3, 0.45, abs(shadowpos.xyz - vec3(0.5)));
 			edgefactor = 0.5 * PCFScale * clamp(dCoords.x + dCoords.y + dCoords.z, 0.0, 1.0);
-			result = PCF(u_ShadowMap,
+			result = PCF(shadowMapCascades,
 						 1.0,
 						 shadowpos.xy,
 						 shadowpos.z,
@@ -585,7 +608,7 @@ float sunShadow(in vec3 viewOrigin, in vec3 viewDir, in vec3 biasOffset)
 			shadowpos.xyz = shadowpos.xyz / shadowpos.w * 0.5 + 0.5;
 			if (all(lessThanEqual(abs(shadowpos.xyz - vec3(0.5)), vec3(1.0))))
 			{
-				result = PCF(u_ShadowMap,
+				result = PCF(shadowMapCascades,
 							 2.0,
 							 shadowpos.xy,
 							 shadowpos.z,
@@ -606,7 +629,7 @@ float RayIntersectDisplaceMap(in vec2 inDp, in vec2 ds, in sampler2D normalMap, 
 	const int linearSearchSteps = 16;
 	const int binarySearchSteps = 8;
 
-	vec2 dp = inDp - parallaxBias * ds;
+	vec2 dp = fract(inDp - parallaxBias * ds);
 
 	// current size of search window
 	float size = 1.0 / float(linearSearchSteps);
@@ -620,8 +643,16 @@ float RayIntersectDisplaceMap(in vec2 inDp, in vec2 ds, in sampler2D normalMap, 
 	vec2 dx = dFdx(inDp);
 	vec2 dy = dFdy(inDp);
 
+	// try sampling at least one border pixel
+	vec2 tMin = (vec2(0.0) - dp) / ds;
+	vec2 tMax = (vec2(1.0) - dp) / ds;
+	vec2 t = max(tMin, tMax);
+	float tExit  = min(t.x, t.y);
+	float stepFraction = fract(tExit / size) * size;
+	depth -= size-stepFraction;
+
 	// search front to back for first point inside object
-	for(int i = 0; i < linearSearchSteps - 1; ++i)
+	for(int i = 0; i < linearSearchSteps; ++i)
 	{
 		depth += size;
 
@@ -667,9 +698,7 @@ float RayIntersectDisplaceMap(in vec2 inDp, in vec2 ds, in sampler2D normalMap, 
 vec2 GetParallaxOffset(in vec2 texCoords, in vec3 tangentDir)
 {
 #if defined(USE_PARALLAXMAP)
-	ivec2 normalSize = textureSize(u_NormalMap, 0);
-	vec3 nonSquareScale = mix(vec3(normalSize.y / normalSize.x, 1.0, 1.0), vec3(1.0, normalSize.x / normalSize.y, 1.0), float(normalSize.y <= normalSize.x));
-	vec3 offsetDir = normalize(tangentDir * nonSquareScale);
+	vec3 offsetDir = normalize(tangentDir);
 	offsetDir.xy *= -u_NormalScale.a / offsetDir.z;
 
 	return offsetDir.xy * RayIntersectDisplaceMap(texCoords, offsetDir.xy, u_NormalMap, u_ParallaxBias);
@@ -905,6 +934,7 @@ float getLightDepth(in vec3 Vec, in float f)
 }
 #endif
 
+#if defined(PER_PIXEL_LIGHTING)
 vec3 CalcDynamicLightContribution(
 	in float roughness,
 	in vec3 N,
@@ -914,8 +944,7 @@ vec3 CalcDynamicLightContribution(
 	in float NE,
 	in vec3 diffuse,
 	in vec3 specular,
-	in vec3 vertexNormal
-)
+	in vec3 vertexNormal)
 {
 	vec3 outColor = vec3(0.0);
 	vec3 position = viewOrigin - viewDir;
@@ -942,17 +971,47 @@ vec3 CalcDynamicLightContribution(
 			L /= sqrt(sqrLightDist);
 		#endif
 
-		vec3  H  = normalize(L + E);
 		float NL = clamp(dot(N, L), 0.0, 1.0);
+		#if defined(USE_SPECULARMAP)
+		vec3  H  = normalize(L + E);
 		float LH = clamp(dot(L, H), 0.0, 1.0);
 		float NH = clamp(dot(N, H), 0.0, 1.0);
 		float VH = clamp(dot(E, H), 0.0, 1.0);
-
 		vec3 reflectance = diffuse + CalcSpecular(specular, NH, NL, NE, LH, VH, roughness);
-
+		#else
+		vec3 reflectance = diffuse;
+		#endif
 		outColor += light.color * reflectance * attenuation * NL;
 	}
 	return outColor;
+}
+#else
+vec3 CalcDynamicLightContribution(
+	in vec3 position,
+	in vec3 N )
+{
+	vec3 outLight = vec3(0.0);
+	for ( int i = 0; i < min(u_NumLights, MAX_DLIGHTS); i++ )
+	{
+		if ( ( u_LightMask & ( 1 << i ) ) == 0 ) {
+			continue;
+		}
+		Light light = u_Lights[i];
+		vec3 L = light.origin.xyz - position;
+		float sqrLightDist = dot(L, L);
+		float attenuation = CalcLightAttenuation(light.radius * light.radius / sqrLightDist);
+		L /= sqrt(sqrLightDist);
+		float NL = clamp(dot(N, L), 0.0, 1.0);
+		outLight += light.color * attenuation * NL;
+	}
+	return outLight;
+}
+#endif
+
+float luma(vec3 color)
+{
+	const vec3 weight = vec3(0.2126, 0.7152, 0.0722);
+	return dot(color, weight);
 }
 
 vec3 CalcIBLContribution(
@@ -962,25 +1021,29 @@ vec3 CalcIBLContribution(
 	in vec3 viewOrigin,
 	in vec3 viewDir,
 	in float NE,
-	in vec3 specular
+	in vec3 specular,
+	in vec3 lighting
 )
 {
-#if defined(PER_PIXEL_LIGHTING) && defined(USE_CUBEMAP)
-	vec3 R = reflect(-E, N);
-
+#if defined(PER_PIXEL_LIGHTING) && defined(USE_CUBEMAP) && defined(USE_SPECULARMAP)
 	// parallax corrected cubemap (cheaper trick)
 	// from http://seblagarde.wordpress.com/2012/09/29/image-based-lighting-approaches-and-parallax-corrected-cubemap/
 	vec3 parallax = u_CubeMapInfo.xyz + u_CubeMapInfo.w * viewDir;
-	vec3 cubeLightColor = textureLod(u_CubeMap, R - parallax, roughness * ROUGHNESS_MIPS).rgb * u_EnableTextures.w;
+
+	vec3 R = reflect(-E, N) - parallax;
+	vec4 cubeLightColor = textureLod(u_CubeMap, R, roughness * ROUGHNESS_MIPS) * u_EnableTextures.w;
+
+	// Scale reflection based on current light luminance / max luminance of the cubemap 
+	cubeLightColor.rgb *= clamp(luma(lighting) / cubeLightColor.a, 0.0, 1.0);
 
 	// Base BRDF
 	#if !defined(USE_CLOTH_BRDF)
 		vec2 EnvBRDF = texture(u_EnvBrdfMap, vec2(roughness, NE)).rg;
-		return cubeLightColor * (specular.rgb * EnvBRDF.x + EnvBRDF.y);
+		return cubeLightColor.rgb * (specular.rgb * EnvBRDF.x + EnvBRDF.y);
 	// Cloth BRDF
 	#else
 		float EnvBRDF = texture(u_EnvBrdfMap, vec2(roughness, NE)).b;
-		return cubeLightColor * EnvBRDF;
+		return cubeLightColor.rgb * EnvBRDF;
 	#endif
 #else
 	return vec3(0.0);
@@ -1009,7 +1072,9 @@ void main()
 	vec2 texCoords = var_TexCoords.xy;
 	vec2 lmCoords = var_TexCoords.zw;
 #if defined(PER_PIXEL_LIGHTING)
-	vec2 tex_offset = GetParallaxOffset(texCoords, var_TangentViewDir.xyz);
+	// Unpack tangent view direction
+	vec3 tangentViewDir = vec3(var_LightDir.w, var_Normal.w, var_ViewDir.w);
+	vec2 tex_offset = GetParallaxOffset(texCoords, tangentViewDir);
 	texCoords += tex_offset;
 #endif
 
@@ -1034,6 +1099,11 @@ void main()
 	else if (u_AlphaTestType == ALPHA_TEST_GE192)
 	{
 		if (diffuse.a < 0.75)
+			discard;
+	}
+	else if (u_AlphaTestType == ALPHA_TEST_E255)
+	{
+		if (diffuse.a < 1.00)
 			discard;
 	}
 #endif
@@ -1075,13 +1145,9 @@ void main()
 
   #if defined(USE_SHADOWMAP)
 	vec3 primaryLightDir = normalize(u_PrimaryLightOrigin.xyz);
-	float NPL = clamp(dot(N, primaryLightDir), -1.0, 1.0);
+	float NPL = clamp(dot(N, primaryLightDir), 0.0, 1.0);
 	vec3 normalBias = vertexNormal * (1.0 - NPL);
-	float shadowValue = sunShadow(u_ViewOrigin, viewDir, normalBias) * NPL;
-
-	// surfaces not facing the light are always shadowed
-
-	//shadowValue = mix(0.0, shadowValue, dot(N, primaryLightDir) > 0.0);
+	float shadowValue = sunShadow(u_ViewOrigin, viewDir, normalBias, u_ShadowMap) * NPL;
 
     #if defined(SHADOWMAP_MODULATE)
 	vec3 ambientScale = mix(vec3(1.0), u_PrimaryLightAmbient, u_EnableTextures.z);
@@ -1146,6 +1212,7 @@ void main()
 	vec3  Fd = CalcDiffuse(diffuse.rgb, NE, NL, LH, roughness);
 	vec3  Fs = vec3(0.0);
 
+  #if defined(USE_SPECULARMAP)
   #if defined(USE_LIGHT_VECTOR)
 	float NH = clamp(dot(N, H), 0.0, 1.0);
 	float VH = clamp(dot(E, H), 0.0, 1.0);
@@ -1157,11 +1224,15 @@ void main()
 	float VH = clamp(dot(E, H), 0.0, 1.0);
 	Fs = CalcSpecular(specular.rgb, NH, NL, NE, LH, VH, roughness) * r_deluxeSpecular;
   #endif
+  #endif
 
 	vec3 reflectance = Fd + Fs;
 
 	out_Color.rgb  = lightColor * reflectance * (attenuation * NL);
 	out_Color.rgb += ambientColor * diffuse.rgb;
+
+	out_Color.rgb += CalcDynamicLightContribution(roughness, N, E, u_ViewOrigin, viewDir, NE, diffuse.rgb, specular.rgb, vertexNormal);
+	out_Color.rgb += CalcIBLContribution(roughness, N, E, u_ViewOrigin, viewDir, NE, specular.rgb * AO, lightColor + ambientColor);
 
   #if defined(USE_PRIMARY_LIGHT)
 	vec3  L2   = normalize(u_PrimaryLightOrigin.xyz);
@@ -1180,14 +1251,12 @@ void main()
 
 	out_Color.rgb += lightColor * reflectance * NL2;
   #endif
-
-	out_Color.rgb += CalcDynamicLightContribution(roughness, N, E, u_ViewOrigin, viewDir, NE, diffuse.rgb, specular.rgb, vertexNormal);
-	out_Color.rgb += CalcIBLContribution(roughness, N, E, u_ViewOrigin, viewDir, NE, specular.rgb * AO);
 #else
 	lightColor = var_Color.rgb;
   #if defined(USE_LIGHTMAP)
 	lightColor *= lightmapColor.rgb;
   #endif
+	lightColor += CalcDynamicLightContribution(var_Position, var_Normal);
 
     out_Color.rgb = diffuse.rgb * lightColor;
 #endif

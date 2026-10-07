@@ -27,7 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 void RE_GetScreenShot(byte *buffer, int w, int h)
 {
-	byte		*source, *allsource;
+	byte		*source;
 	byte		*src, *dst;
 	size_t offset = 0, memcount;
 	int padlen;
@@ -37,10 +37,13 @@ void RE_GetScreenShot(byte *buffer, int w, int h)
 	float		xScale, yScale;
 	int			xx, yy;
 
-	allsource = RB_ReadPixels(0, 0, glConfig.vidWidth, glConfig.vidHeight, &offset, &padlen);
-	source = allsource + offset;
 
+	source = RB_ReadPixels(0, 0, glConfig.vidWidth, glConfig.vidHeight, &offset, &padlen);
 	memcount = (glConfig.vidWidth * 3 + padlen) * glConfig.vidHeight;
+
+	// gamma correct
+	if (glConfig.deviceSupportsGamma)
+		R_GammaCorrect(source + offset, memcount);
 
 	// resample from source
 	xScale = glConfig.vidWidth / (4.0*w);
@@ -50,24 +53,21 @@ void RE_GetScreenShot(byte *buffer, int w, int h)
 			r = g = b = 0;
 			for (yy = 0; yy < 3; yy++) {
 				for (xx = 0; xx < 4; xx++) {
-					src = source + 3 * (glConfig.vidWidth * (int)((y * 3 + yy)*yScale) + (int)((x * 4 + xx)*xScale));
+					src = source + offset + 3 * (glConfig.vidWidth * (int)((y * 3 + yy)*yScale) + (int)((x * 4 + xx)*xScale));
 					r += src[0];
 					g += src[1];
 					b += src[2];
 				}
 			}
-			dst = buffer + 4 * (h * w - y * w + x);
+			dst = buffer + 4 * ((h-y-1) * w + x);
 			dst[0] = r / 12;
 			dst[1] = g / 12;
 			dst[2] = b / 12;
+			dst[3] = 255;
 		}
 	}
 
-	// gamma correct
-	if (glConfig.deviceSupportsGamma)
-		R_GammaCorrect(buffer, w * h * 4);
-
-	Hunk_FreeTempMemory(allsource);
+	Z_Free(source);
 }
 
 // this is just a chunk of code from RE_TempRawImage_ReadFromFile() below, subroutinised so I can call it
@@ -292,11 +292,9 @@ static void RE_Blit(float fX0, float fY0, float fX1, float fY1, float fX2, float
 	RB_BindUniformBlock(tr.staticUbo, UNIFORM_BLOCK_CAMERA, tr.camera2DUboOffset);
 	RB_BindUniformBlock(tr.staticUbo, UNIFORM_BLOCK_ENTITY, tr.entity2DUboOffset);
 
-	vec4_t color = { 1.0f, 1.0f, 1.0f, 1.0f };
-	vec4_t vcolor = { 0.0f, 0.0f, 0.0f, 1.0f };
-	GLSL_SetUniformVec4(shaderProgram, UNIFORM_BASECOLOR, color);
-	GLSL_SetUniformVec4(shaderProgram, UNIFORM_VERTCOLOR, vcolor);
-	GLSL_SetUniformInt(shaderProgram, UNIFORM_ALPHA_TEST_TYPE, ALPHA_TEST_LT128);
+	GLSL_SetUniformVec4(shaderProgram, UNIFORM_BASECOLOR, colorWhite);
+	GLSL_SetUniformVec4(shaderProgram, UNIFORM_VERTCOLOR, colorBlack);
+	GLSL_SetUniformInt(shaderProgram, UNIFORM_ALPHA_TEST_TYPE, atest ? ALPHA_TEST_LT128 : ALPHA_TEST_NONE);
 
 	vec4_t quadVerts[4] = {
 		{fX0, fY0, 0.f},
@@ -635,6 +633,7 @@ qboolean RE_InitDissolve(qboolean bForceCircularExtroWipe)
 		{
 			// read current screen image...  (GL_RGBA should work even on 3DFX in that the RGB parts will be valid at least)
 			//
+			qglReadBuffer (GL_FRONT_LEFT);
 			qglReadPixels (0, 0, glConfig.vidWidth, glConfig.vidHeight, GL_RGBA, GL_UNSIGNED_BYTE, pBuffer );
 			//
 			// now expand the pic over the top of itself so that it has a stride value of {PowerOf2(glConfig.vidWidth)}
@@ -803,7 +802,7 @@ qboolean RE_InitDissolve(qboolean bForceCircularExtroWipe)
 				//
 				
 				Dissolve.pDissolve = R_FindImageFile(	"gfx/2d/iris_mono", type, flags);
-				Dissolve.pDissolve = R_FindImageFile(	"textures/common/dissolve", type, flags);
+				Dissolve.pDissolve = R_FindImageFile(	"textures/common/dissolve", type, IMGFLAG_NONE);
 			}
 
 			switch (Dissolve.eDissolveType)

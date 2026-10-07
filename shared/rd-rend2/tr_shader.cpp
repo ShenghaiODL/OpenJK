@@ -264,6 +264,8 @@ static void ParseAlphaTestFunc( shaderStage_t *stage, const char *funcname )
 		stage->alphaTestType = ALPHA_TEST_GE128;
 	else if ( !Q_stricmp( funcname, "GE192" ) )
 		stage->alphaTestType = ALPHA_TEST_GE192;
+	else if (!Q_stricmp(funcname, "E255"))
+		stage->alphaTestType = ALPHA_TEST_E255;
 	else
 		ri.Printf( PRINT_WARNING,
 				"WARNING: invalid alphaFunc name '%s' in shader '%s'\n",
@@ -1549,6 +1551,7 @@ static qboolean ParseStage( shaderStage_t *stage, const char **text )
 			else if ( !Q_stricmp( token, "equal" ) )
 			{
 				depthFuncBits = GLS_DEPTHFUNC_EQUAL;
+				depthMaskBits = 0;
 			}
 			else if ( !Q_stricmp( token, "disable" ) )
 			{
@@ -3130,9 +3133,10 @@ static void CollapseStagesToLightall(shaderStage_t *stage, shaderStage_t *lightm
 		if (stage->bundle[TB_NORMALMAP].image[0])
 		{
 			if (stage->bundle[TB_NORMALMAP].image[0]->type == IMGTYPE_NORMALHEIGHT &&
-				r_parallaxMapping->integer &&
 				defs & LIGHTDEF_LIGHTTYPE_MASK)
+			{
 				defs |= LIGHTDEF_USE_PARALLAXMAP;
+			}
 			//ri.Printf(PRINT_ALL, ", normalmap %s", stage->bundle[TB_NORMALMAP].image[0]->imgName);
 		}
 		else if ((lightmap || useLightVector || useLightVertex) && (diffuseImg = stage->bundle[TB_DIFFUSEMAP].image[0]) != NULL)
@@ -3140,18 +3144,13 @@ static void CollapseStagesToLightall(shaderStage_t *stage, shaderStage_t *lightm
 			char normalName[MAX_QPATH];
 			image_t *normalImg;
 			int normalFlags = (diffuseImg->flags & ~(IMGFLAG_GENNORMALMAP | IMGFLAG_SRGB)) | IMGFLAG_NOLIGHTSCALE;
-			qboolean parallax = qfalse;
 			// try a normalheight image first
 			COM_StripExtension(diffuseImg->imgName, normalName, sizeof(normalName));
 			Q_strcat(normalName, sizeof(normalName), "_nh");
 
 			normalImg = R_FindImageFile(normalName, IMGTYPE_NORMALHEIGHT, normalFlags);
 
-			if (normalImg)
-			{
-				parallax = qtrue;
-			}
-			else
+			if (!normalImg)
 			{
 				// try a normal image ("_n" suffix)
 				normalName[strlen(normalName) - 1] = '\0';
@@ -3164,7 +3163,7 @@ static void CollapseStagesToLightall(shaderStage_t *stage, shaderStage_t *lightm
 				stage->bundle[TB_NORMALMAP].numImageAnimations = 0;
 				stage->bundle[TB_NORMALMAP].image[0] = normalImg;
 
-				if (parallax && r_parallaxMapping->integer)
+				if (normalImg->type == IMGTYPE_NORMALHEIGHT)
 					defs |= LIGHTDEF_USE_PARALLAXMAP;
 
 				VectorSet4(stage->normalScale, r_baseNormalX->value, r_baseNormalY->value, 1.0f, r_baseParallax->value);
@@ -3359,7 +3358,7 @@ static qboolean CollapseStagesToGLSL(void)
 		{
 			shaderStage_t *pStage = &stages[i];
 			shaderStage_t *diffuse, *lightmap;
-			qboolean parallax, tcgen, diffuselit, vertexlit;
+			qboolean tcgen, diffuselit, vertexlit;
 
 			if (!pStage->active)
 				continue;
@@ -3380,8 +3379,34 @@ static qboolean CollapseStagesToGLSL(void)
 					continue;
 			}
 
+			// Convert glow stages with parallax depth to a lightall stage
+			if (pStage->glow)
+			{
+				if (pStage->bundle[TB_NORMALMAP].image[0])
+				{
+					if (pStage->bundle[TB_NORMALMAP].image[0]->type == IMGTYPE_NORMALHEIGHT)
+					{
+						int defs = LIGHTDEF_USE_LIGHT_VERTEX | LIGHTDEF_USE_PARALLAXMAP;
+						pStage->normalScale[0] =
+							pStage->normalScale[1] = 0.f;
+						pStage->specularScale[0] = 0.f;
+						pStage->specularScale[1] = 0.f;
+						pStage->specularScale[2] = 1.f;
+						pStage->specularScale[3] = 1.f;
+
+						if (pStage->bundle[0].numTexMods)
+						{
+							defs |= LIGHTDEF_USE_TCGEN_AND_TCMOD;
+						}
+
+						pStage->glslShaderGroup = tr.lightallShader;
+						pStage->glslShaderIndex = defs;
+					}
+				}
+				continue;
+			}
+
 			diffuse  = pStage;
-			parallax = qfalse;
 			lightmap = NULL;
 			vertexlit = qfalse;
 
@@ -3495,6 +3520,52 @@ static qboolean CollapseStagesToGLSL(void)
 
 	if (skip)
 	{
+		// In rend2 diffuse and lightmaps are already swapped to
+		// find the diffuse earlier and lightstyle stages are 
+		// correctly added after the first lightmap.
+		// Move diffuse after the lightmap stages now.
+		if (stages[1].active &&
+			stages[1].bundle[0].isLightmap &&
+			(stages[1].stateBits & (GLS_DEPTHFUNC_BITS)) != GLS_DEPTHFUNC_EQUAL &&
+			stages[0].active &&
+			shader.numDeforms != 1)
+		{
+			int blendBits = stages[1].stateBits & (GLS_DSTBLEND_BITS | GLS_SRCBLEND_BITS);
+
+			if (blendBits == (GLS_DSTBLEND_SRC_COLOR | GLS_SRCBLEND_ZERO)
+				|| blendBits == (GLS_DSTBLEND_ZERO | GLS_SRCBLEND_DST_COLOR))
+			{
+				for (i = 1; i < MAX_SHADER_STAGES; i++)
+				{
+					if (!stages[i+1].active)
+						break;
+
+					if (stages[i+1].bundle[0].tcGen < TCGEN_LIGHTMAP1 ||
+						stages[i+1].bundle[0].tcGen > TCGEN_LIGHTMAP3 ||
+						stages[i+1].rgbGen != CGEN_LIGHTMAPSTYLE)
+					{
+						break;
+					}
+				}
+
+				int stateBits0 = stages[0].stateBits;
+				int stateBits1 = stages[1].stateBits;
+				shaderStage_t swapStage;
+
+				swapStage = stages[0];
+
+				for (j = 1; j <= i; j++)
+				{
+					stages[j-1] = stages[j];
+				}
+					
+				stages[i] = swapStage;
+
+				stages[0].stateBits = stateBits0;
+				stages[i].stateBits = stateBits1;
+			}
+		}
+
 		// set default specular scale for skipped shaders that will use metalness workflow by default
 		for (i = 0; i < MAX_SHADER_STAGES; i++)
 		{
@@ -3524,35 +3595,8 @@ static qboolean CollapseStagesToGLSL(void)
 		numStages++;
 	}
 
-	// convert any remaining lightmap stages to a lighting pass with a white texture
-	// only do this with r_sunlightMode non-zero, as it's only for correct shadows.
-	if (r_sunlightMode->integer && shader.numDeforms != 1)
-	{
-		for (i = 0; i < MAX_SHADER_STAGES; i++)
-		{
-			shaderStage_t *pStage = &stages[i];
-
-			if (!pStage->active)
-				continue;
-
-			if (pStage->adjustColorsForFog)
-				continue;
-
-			if (pStage->bundle[TB_DIFFUSEMAP].tcGen >= TCGEN_LIGHTMAP
-				&& pStage->bundle[TB_DIFFUSEMAP].tcGen <= TCGEN_LIGHTMAP3
-				&& pStage->rgbGen != CGEN_LIGHTMAPSTYLE) //don't convert lightstyled lightmap stages
-			{
-				pStage->glslShaderGroup = tr.lightallShader;
-				pStage->glslShaderIndex = LIGHTDEF_USE_LIGHTMAP;
-				pStage->bundle[TB_LIGHTMAP] = pStage->bundle[TB_DIFFUSEMAP];
-				pStage->bundle[TB_DIFFUSEMAP].image[0] = tr.whiteImage;
-				pStage->bundle[TB_DIFFUSEMAP].isLightmap = qfalse;
-				pStage->bundle[TB_DIFFUSEMAP].tcGen = TCGEN_TEXTURE;
-			}
-		}
-	}
-
-	// convert any remaining lightingdiffuse stages to a lighting pass
+	// convert any remaining lightmap, lightingdiffuse and vert lit stages to a lighting pass
+	// always do this, so dynamic lights work properly
 	if (shader.numDeforms != 1)
 	{
 		for (i = 0; i < MAX_SHADER_STAGES; i++)
@@ -3565,6 +3609,35 @@ static qboolean CollapseStagesToGLSL(void)
 			if (pStage->adjustColorsForFog)
 				continue;
 
+			switch(pStage->alphaGen)
+			{
+				case AGEN_PORTAL:
+				case AGEN_LIGHTING_SPECULAR:
+					continue;
+				default:
+					break;
+			}
+
+			if (pStage->bundle[TB_DIFFUSEMAP].tcGen >= TCGEN_LIGHTMAP
+				&& pStage->bundle[TB_DIFFUSEMAP].tcGen <= TCGEN_LIGHTMAP3
+				&& pStage->rgbGen != CGEN_LIGHTMAPSTYLE) //don't convert lightstyled lightmap stages
+			{
+				pStage->glslShaderGroup = tr.lightallShader;
+				pStage->glslShaderIndex = LIGHTDEF_USE_LIGHTMAP;
+				pStage->bundle[TB_LIGHTMAP] = pStage->bundle[TB_DIFFUSEMAP];
+				pStage->bundle[TB_DIFFUSEMAP].image[0] = tr.whiteImage;
+				pStage->bundle[TB_DIFFUSEMAP].isLightmap = qfalse;
+				pStage->bundle[TB_DIFFUSEMAP].tcGen = TCGEN_TEXTURE;
+			}
+			else if (pStage->rgbGen == CGEN_VERTEX_LIT
+				|| pStage->rgbGen == CGEN_EXACT_VERTEX_LIT
+				|| pStage->rgbGen == CGEN_VERTEX
+				|| pStage->rgbGen == CGEN_EXACT_VERTEX)
+			{
+				pStage->glslShaderGroup = tr.lightallShader;
+				pStage->glslShaderIndex = LIGHTDEF_USE_LIGHT_VERTEX;
+			}
+			
 			if (pStage->rgbGen == CGEN_LIGHTING_DIFFUSE ||
 				pStage->rgbGen == CGEN_LIGHTING_DIFFUSE_ENTITY)
 			{
@@ -3771,7 +3844,7 @@ static shader_t *GeneratePermanentShader( void ) {
 	if (newShader->fogPass == FP_EQUAL)
 	{
 		newShader->fogPass = FP_LE;
-		bool allPassesAlpha = true;
+		bool allPassesModulate = true;
 		for (int stage = 0; stage < MAX_SHADER_STAGES; stage++) {
 			shaderStage_t *pStage = &stages[stage];
 
@@ -3781,8 +3854,8 @@ static shader_t *GeneratePermanentShader( void ) {
 			if (pStage->glow && stage > 0)
 				continue;
 
-			if (pStage->adjustColorsForFog != ACFF_MODULATE_ALPHA)
-				allPassesAlpha = false;
+			if (pStage->adjustColorsForFog == ACFF_NONE)
+				allPassesModulate = false;
 
 			if (pStage->stateBits & GLS_DEPTHMASK_TRUE)
 			{
@@ -3791,7 +3864,7 @@ static shader_t *GeneratePermanentShader( void ) {
 			}
 		}
 
-		if (allPassesAlpha)
+		if (allPassesModulate)
 			newShader->fogPass = FP_NONE;
 	}
 
@@ -4243,6 +4316,7 @@ static shader_t *FinishShader( void ) {
 	if (stage == 0 && !shader.isSky)
 		shader.sort = SS_FOG;
 
+	shader.depthPrepass = DEPTHPREPASS_ALPHATESTED;
 	// determain if the shader can be simplified when beeing rendered to depth
 	if (shader.sort == SS_OPAQUE &&
 		shader.numDeforms == 0)
@@ -4254,10 +4328,13 @@ static shader_t *FinishShader( void ) {
 				continue;
 
 			if (pStage->stateBits & (GLS_DSTBLEND_BITS | GLS_SRCBLEND_BITS))
+			{
+				shader.depthPrepass = DEPTHPREPASS_SKIP;
 				break;
+			}
 
 			if (pStage->alphaTestType == ALPHA_TEST_NONE)
-				shader.useSimpleDepthShader = qtrue;
+				shader.depthPrepass = DEPTHPREPASS_SIMPLE;
 			break;
 		}
 	}
@@ -4557,7 +4634,7 @@ shader_t *R_FindShader( const char *name, const int *lightmapIndexes, const byte
 		flags |= IMGFLAG_CLAMPTOEDGE;
 	}
 
-	image = R_FindImageFile( name, IMGTYPE_COLORALPHA, flags );
+	image = R_FindImageFile( strippedName, IMGTYPE_COLORALPHA, flags );
 	if ( !image ) {
 		ri.Printf( PRINT_DEVELOPER, "Couldn't find image file for shader %s\n", name );
 		shader.defaultShader = qtrue;
@@ -5189,6 +5266,15 @@ static void CreateInternalShaders( void ) {
 	Q_strncpyz(shader.name, "<weather>", sizeof(shader.name));
 	shader.sort = SS_SEE_THROUGH;
 	tr.weatherInternalShader = FinishShader();
+
+	// volumetric fog cap shader
+	Q_strncpyz(shader.name, "<volumetric fog cap>", sizeof(shader.name));
+	shader.sort = SS_ENVIRONMENT;
+	shader.isSky = qfalse;
+	shader.fogPass = FP_LE;
+	stages[0].bundle[0].image[0] = tr.whiteImage;
+	stages[0].stateBits = GLS_DEPTH_CLAMP;
+	tr.volumetricFogCapShader = FinishShader();
 }
 
 static void CreateExternalShaders( void ) {
@@ -5196,8 +5282,10 @@ static void CreateExternalShaders( void ) {
 	tr.flareShader = R_FindShader( "gfx/misc/flare", lightmapsNone, stylesDefault, qtrue );
 
 	tr.sunShader = R_FindShader( "sun", lightmapsNone, stylesDefault, qtrue );
+	tr.sunShader->isSky = qtrue;
 
 	tr.sunFlareShader = R_FindShader( "gfx/2d/sunflare", lightmapsNone, stylesDefault, qtrue);
+	tr.sunFlareShader->isSky = qtrue;
 
 	// HACK: if sunflare is missing, make one using the flare image or dlight image
 	if (tr.sunFlareShader->defaultShader)

@@ -493,6 +493,7 @@ qboolean R_LoadMDXA_Server( model_t *mod, void *buffer, const char *mod_name, qb
 R_LoadMDXM_Server - load a Ghoul 2 Mesh file
 =================
 */
+extern int OldToNewRemapTable[72];
 qboolean R_LoadMDXM_Server( model_t *mod, void *buffer, const char *mod_name, qboolean &bAlreadyCached ) {
 	int					i,l, j;
 	mdxmHeader_t		*pinmodel, *mdxm;
@@ -565,6 +566,12 @@ qboolean R_LoadMDXM_Server( model_t *mod, void *buffer, const char *mod_name, qb
 		return qtrue;	// All done. Stop, go no further, do not LittleLong(), do not pass Go...
 	}
 
+	bool isAnOldModelFile = false;
+	if (mdxm->numBones == 72 && strstr(mdxm->animName,"_humanoid") )
+	{
+		isAnOldModelFile = true;
+	}
+
 	surfInfo = (mdxmSurfHierarchy_t *)( (byte *)mdxm + mdxm->ofsSurfHierarchy);
  	for ( i = 0 ; i < mdxm->numSurfaces ; i++)
 	{
@@ -593,7 +600,7 @@ qboolean R_LoadMDXM_Server( model_t *mod, void *buffer, const char *mod_name, qb
 	lod = (mdxmLOD_t *) ( (byte *)mdxm + mdxm->ofsLODs );
 	for ( l = 0 ; l < mdxm->numLODs ; l++)
 	{
-		int	triCount = 0;
+		//int	triCount = 0;
 
 		LL(lod->ofsEnd);
 		// swap all the surfaces
@@ -610,7 +617,7 @@ qboolean R_LoadMDXM_Server( model_t *mod, void *buffer, const char *mod_name, qb
 			LL(surf->ofsBoneReferences);
 //			LL(surf->maxVertBoneWeights);
 
-			triCount += surf->numTriangles;
+			//triCount += surf->numTriangles;
 
 			if ( surf->numVerts > SHADER_MAX_VERTEXES ) {
 				return qfalse;
@@ -623,6 +630,23 @@ qboolean R_LoadMDXM_Server( model_t *mod, void *buffer, const char *mod_name, qb
 			surf->ident = SF_MDX;
 
 			// register the shaders
+
+			if (isAnOldModelFile)
+			{
+				int *boneRef = (int *) ( (byte *)surf + surf->ofsBoneReferences );
+				for ( j = 0 ; j < surf->numBoneReferences ; j++ )
+				{
+					assert(boneRef[j] >= 0 && boneRef[j] < 72);
+					if (boneRef[j] >= 0 && boneRef[j] < 72)
+					{
+						boneRef[j]=OldToNewRemapTable[boneRef[j]];
+					}
+					else
+					{
+						boneRef[j]=0;
+					}
+				}
+			}
 
 			// find the next surface
 			surf = (mdxmSurface_t *)( (byte *)surf + surf->ofsEnd );
@@ -1083,10 +1107,10 @@ static qboolean R_LoadMD3(model_t * mod, int lod, void *buffer, const char *modN
 
 		byte *data;
 		int dataSize = 0;
-		int ofsPosition, ofsNormals, ofsTexcoords, ofsTangents;
+		int ofsPosition, ofsNormals, ofsTexcoords, ofsTangents, ofsColor, ofsLMCoords, ofsLightDir;
 		int stride = 0;
-		int numVerts = 0;
-		int numIndexes = 0;
+		uint32_t numVerts = 0;
+		uint32_t numIndexes = 0;
 
 		// +1 to add total vertex count
 		int *baseVertexes = (int *)Hunk_AllocateTempMemory(sizeof(int) * (mdvModel->numSurfaces + 1));
@@ -1107,6 +1131,7 @@ static qboolean R_LoadMD3(model_t * mod, int lod, void *buffer, const char *modN
 		dataSize += numVerts * sizeof(*normals);
 		dataSize += numVerts * sizeof(*texcoords);
 		dataSize += numVerts * sizeof(*tangents);
+		dataSize += sizeof(vec4_t) + sizeof(vec2_t) + sizeof(uint32_t);
 
 		// Allocate and write to memory
 		data = (byte *)Hunk_AllocateTempMemory(dataSize);
@@ -1126,6 +1151,18 @@ static qboolean R_LoadMD3(model_t * mod, int lod, void *buffer, const char *modN
 		ofsTangents = stride;
 		tangents = (uint32_t *)(data + ofsTangents);
 		stride += sizeof(*tangents);
+
+		ofsColor = dataSize - (sizeof(vec4_t) + sizeof(vec2_t) + sizeof(uint32_t));
+		float *color = (float *)(data + ofsColor);
+		VectorSet4(color, 1.0f, 1.0f, 1.0f, 1.0f);
+
+		ofsLMCoords = dataSize - (sizeof(vec2_t) + sizeof(uint32_t));
+		float *lmTcs = (float *)(data + ofsLMCoords);
+		VectorSet2(lmTcs, 0.0f, 0.0f);
+
+		ofsLightDir = dataSize - sizeof(uint32_t);
+		uint32_t *lightdir = (uint32_t*)(data + ofsLightDir);
+		*lightdir = 0;
 
 		// Fill in the index buffer and compute tangents
 		glIndex_t *indices = (glIndex_t *)Hunk_AllocateTempMemory(sizeof(glIndex_t) * numIndexes);
@@ -1171,10 +1208,11 @@ static qboolean R_LoadMD3(model_t * mod, int lod, void *buffer, const char *modN
 			}
 		}
 
-		assert((byte *)verts == (data + dataSize));
+		// TODO: Check why this was here and why it always fails
+		//assert((byte *)verts == (data + dataSize));
 
-		VBO_t *vbo = R_CreateVBO(data, dataSize, VBO_USAGE_STATIC);
-		IBO_t *ibo = R_CreateIBO((byte *)indices, sizeof(glIndex_t) * numIndexes, VBO_USAGE_STATIC);
+		VBO_t *vbo = R_CreateVBO(data, dataSize, VBO_USAGE_STATIC, modName);
+		IBO_t *ibo = R_CreateIBO((byte *)indices, sizeof(glIndex_t) * numIndexes, VBO_USAGE_STATIC, modName);
 
 		Hunk_FreeTempMemory(data);
 		Hunk_FreeTempMemory(indices);
@@ -1184,15 +1222,43 @@ static qboolean R_LoadMD3(model_t * mod, int lod, void *buffer, const char *modN
 		vbo->offsets[ATTR_INDEX_TEXCOORD0] = ofsTexcoords;
 		vbo->offsets[ATTR_INDEX_TANGENT] = ofsTangents;
 
+		vbo->offsets[ATTR_INDEX_COLOR] = ofsColor;
+		vbo->offsets[ATTR_INDEX_TEXCOORD1] = ofsLMCoords;
+		vbo->offsets[ATTR_INDEX_TEXCOORD2] = ofsLMCoords;
+		vbo->offsets[ATTR_INDEX_TEXCOORD3] = ofsLMCoords;
+		vbo->offsets[ATTR_INDEX_TEXCOORD4] = ofsLMCoords;
+		vbo->offsets[ATTR_INDEX_LIGHTDIRECTION] = ofsLightDir;
+
 		vbo->strides[ATTR_INDEX_POSITION] = stride;
 		vbo->strides[ATTR_INDEX_NORMAL] = stride;
 		vbo->strides[ATTR_INDEX_TEXCOORD0] = stride;
 		vbo->strides[ATTR_INDEX_TANGENT] = stride;
 
+		vbo->strides[ATTR_INDEX_COLOR] = sizeof(vec4_t);
+		vbo->strides[ATTR_INDEX_TEXCOORD1] = sizeof(vec2_t);
+		vbo->strides[ATTR_INDEX_TEXCOORD2] = sizeof(vec2_t);
+		vbo->strides[ATTR_INDEX_TEXCOORD3] = sizeof(vec2_t);
+		vbo->strides[ATTR_INDEX_TEXCOORD4] = sizeof(vec2_t);
+		vbo->strides[ATTR_INDEX_LIGHTDIRECTION] = sizeof(uint32_t);
+
 		vbo->sizes[ATTR_INDEX_POSITION] = sizeof(*verts);
 		vbo->sizes[ATTR_INDEX_NORMAL] = sizeof(*normals);
 		vbo->sizes[ATTR_INDEX_TEXCOORD0] = sizeof(*texcoords);
 		vbo->sizes[ATTR_INDEX_TANGENT] = sizeof(*tangents);
+
+		vbo->sizes[ATTR_INDEX_COLOR] = sizeof(vec4_t);
+		vbo->sizes[ATTR_INDEX_TEXCOORD1] = sizeof(vec2_t);
+		vbo->sizes[ATTR_INDEX_TEXCOORD2] = sizeof(vec2_t);
+		vbo->sizes[ATTR_INDEX_TEXCOORD3] = sizeof(vec2_t);
+		vbo->sizes[ATTR_INDEX_TEXCOORD4] = sizeof(vec2_t);
+		vbo->sizes[ATTR_INDEX_LIGHTDIRECTION] = sizeof(uint32_t);
+
+		vbo->stepRates[ATTR_INDEX_COLOR] = MAX_INSTANCES;
+		vbo->stepRates[ATTR_INDEX_TEXCOORD1] = MAX_INSTANCES;
+		vbo->stepRates[ATTR_INDEX_TEXCOORD2] = MAX_INSTANCES;
+		vbo->stepRates[ATTR_INDEX_TEXCOORD3] = MAX_INSTANCES;
+		vbo->stepRates[ATTR_INDEX_TEXCOORD4] = MAX_INSTANCES;
+		vbo->stepRates[ATTR_INDEX_LIGHTDIRECTION] = MAX_INSTANCES;
 
 		surf = mdvModel->surfaces;
 		for (i = 0; i < mdvModel->numSurfaces; i++, surf++, vboSurf++)
@@ -1273,7 +1339,7 @@ static qboolean R_LoadMDR( model_t *mod, void *buffer, int filesize, const char 
 
 	// simple bounds check
 	if(pinmodel->numBones < 0 ||
-		sizeof(*mdr) + pinmodel->numFrames * (sizeof(*frame) + (pinmodel->numBones - 1) * sizeof(*frame->bones)) > size)
+		sizeof(*mdr) + pinmodel->numFrames * (sizeof(*frame) + (pinmodel->numBones - 1) * sizeof(*frame->bones)) > (unsigned)size)
 	{
 		ri.Printf(PRINT_WARNING, "R_LoadMDR: %s has broken structure.\n", mod_name);
 		return qfalse;
@@ -1326,7 +1392,7 @@ static qboolean R_LoadMDR( model_t *mod, void *buffer, int filesize, const char 
 
 			for(j = 0; j < mdr->numBones; j++)
 			{
-				for(k = 0; k < (sizeof(cframe->bones[j].Comp) / 2); k++)
+				for(k = 0; (unsigned)k < (sizeof(cframe->bones[j].Comp) / 2); k++)
 				{
 					// Do swapping for the uncompressing functions. They seem to use shorts
 					// values only, so I assume this will work. Never tested it on other

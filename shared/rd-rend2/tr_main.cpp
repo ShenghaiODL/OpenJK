@@ -1408,7 +1408,7 @@ static qboolean SurfIsOffscreen( const msurface_t *surface, int entityNum, vec4_
 	int numTriangles;
 	vec4_t clip, eye;
 	int i;
-	unsigned int pointOr = 0;
+	//unsigned int pointOr = 0;
 	unsigned int pointAnd = (unsigned int)~0;
 
 	// TODO: Check if set properly here already
@@ -1446,7 +1446,7 @@ static qboolean SurfIsOffscreen( const msurface_t *surface, int entityNum, vec4_
 			}
 		}
 		pointAnd &= pointFlags;
-		pointOr |= pointFlags;
+		//pointOr |= pointFlags;
 	}
 
 	// trivially reject
@@ -1549,12 +1549,12 @@ qboolean R_MirrorViewBySurface (msurface_t *surface, int entityNum) {
 		newParms.flags |= VPF_NOVIEWMODEL;
 
 	// Calculate window coordinates of this surface to get tight fitting scissor rectangle
-	int viewportWidth = oldParms.viewportWidth;
+	/*int viewportWidth = oldParms.viewportWidth;
 	int viewportHeight = oldParms.viewportHeight;
 	float viewportCenterX = oldParms.viewportX + 0.5f * viewportWidth;
 	float viewportCenterY = oldParms.viewportY + 0.5f * viewportHeight;
 
-	/*int minRectX = INT_MAX;
+	int minRectX = INT_MAX;
 	int minRectY = INT_MAX;
 	int maxRectX = 0;
 	int maxRectY = 0;
@@ -1828,24 +1828,23 @@ void R_AddDrawSurf(
 {
 	int index;
 	drawSurf_t *surf;
-#ifndef REND2_SP
+	shader_t *drawShader = (shader->remappedShader) ? shader->remappedShader : shader;
+
 	if (tr.refdef.rdflags & RDF_NOFOG)
 	{
 		fogIndex = 0;
 	}
-#else
-	if (tr.refdef.doLAGoggles)
+	else if (tr.refdef.doLAGoggles)
 	{
 		fogIndex = tr.world->numfogs;
 	}
-#endif
-	if ( (shader->surfaceFlags & SURF_FORCESIGHT) && !(tr.refdef.rdflags & RDF_ForceSightOn) )
+	if ( (drawShader->surfaceFlags & SURF_FORCESIGHT) && !(tr.refdef.rdflags & RDF_ForceSightOn) )
 	{	//if shader is only seen with ForceSight and we don't have ForceSight on, then don't draw
 		return;
 	}
 
 	if (tr.viewParms.flags & VPF_DEPTHSHADOW &&
-		(postRender == qtrue || shader->sort != SS_OPAQUE))
+		(postRender == qtrue || drawShader->sort != SS_OPAQUE))
 	{
 		return;
 	}
@@ -1857,7 +1856,7 @@ void R_AddDrawSurf(
 	surf->surface = surface;
 
 	if (tr.viewParms.flags & VPF_DEPTHSHADOW &&
-		shader->useSimpleDepthShader == qtrue)
+		drawShader->depthPrepass == DEPTHPREPASS_SIMPLE)
 	{
 		surf->sort = R_CreateSortKey(entityNum, tr.defaultShader->sortedIndex, 0, 0);
 		surf->dlightBits = 0;
@@ -1865,7 +1864,7 @@ void R_AddDrawSurf(
 	}
 	else
 	{
-		surf->sort = R_CreateSortKey(entityNum, shader->sortedIndex, cubemap, postRender);
+		surf->sort = R_CreateSortKey(entityNum, drawShader->sortedIndex, cubemap, postRender);
 		surf->dlightBits = dlightMap;
 		surf->fogIndex = fogIndex;
 	}
@@ -2075,7 +2074,9 @@ void R_GenerateDrawSurfs( viewParms_t *viewParms, trRefdef_t *refdef ) {
 
 	R_AddPolygonSurfaces(refdef);
 
-	if ( tr.viewParms.viewParmType > VPT_POINT_SHADOWS && tr.world )
+	if ( tr.viewParms.viewParmType > VPT_POINT_SHADOWS &&
+		 tr.world &&
+		 backEndData->currentFrame->currentScene == 0 )
 	{
 		R_AddWeatherSurfaces();
 	}
@@ -2311,25 +2312,19 @@ void R_SetupPshadowMaps(trRefdef_t *refdef)
 		if((ent->e.renderfx & (RF_FIRST_PERSON | RF_NOSHADOW | RF_DEPTHHACK)))
 			continue;
 
-		//if((ent->e.renderfx & RF_THIRD_PERSON))
-			//continue;
+		if((ent->e.renderfx & RF_THIRD_PERSON))
+			continue;
 
 		if (ent->e.reType == RT_MODEL)
 		{
 			model_t *model = R_GetModelByHandle( ent->e.hModel );
 			pshadow_t shadow;
 			float radius = 0.0f;
-			float scale = 1.0f;
 			vec3_t diff;
 			int j;
 
 			if (!model)
 				continue;
-
-			if (ent->e.nonNormalizedAxes)
-			{
-				scale = VectorLength( ent->e.axis[0] );
-			}
 
 			switch (model->type)
 			{
@@ -2460,7 +2455,6 @@ void R_SetupPshadowMaps(trRefdef_t *refdef)
 void R_RenderCubemapSide(int cubemapIndex, int cubemapSide, bool bounce)
 {
 	refdef_t refdef = {};
-	float oldColorScale = tr.refdef.colorScale;
 
 	VectorCopy(tr.cubemaps[cubemapIndex].origin, refdef.vieworg);
 	refdef.fov_x = 90;
@@ -2526,6 +2520,7 @@ void R_RenderCubemapSide(int cubemapIndex, int cubemapSide, bool bounce)
 			if (!bounce)
 				tr.cachedViewParms[i].flags |= VPF_NOCUBEMAPS;
 		}
+		R_PushDebugGroup(AL_VIEW, va("Cubemap %i, side %i", cubemapIndex, cubemapSide));
 		R_RenderView(&tr.cachedViewParms[i]);
 		R_IssuePendingRenderCommands();
 		tr.refdef.numDrawSurfs = 0;
@@ -3088,6 +3083,18 @@ void R_GatherFrameViews(trRefdef_t *refdef)
 
 		tr.viewParms.currentViewParm = tr.numCachedViewParms;
 		tr.viewParms.viewParmType = VPT_MAIN;
+
+		if (r_smaa->integer == 2)
+		{
+			const vec2_t jitterPos[2] =
+			{
+				{-.25f, 0.25f},
+				{0.25f, -.25f},
+			};
+			tr.viewParms.projectionMatrix[2] = 2.0 * jitterPos[backEndData->realFrameNumber % 2][0] / glConfig.vidWidth;
+			tr.viewParms.projectionMatrix[6] = 2.0 * jitterPos[backEndData->realFrameNumber % 2][1] / glConfig.vidHeight;
+		}
+
 		Com_Memcpy(&tr.cachedViewParms[tr.numCachedViewParms], &tr.viewParms, sizeof(viewParms_t));
 		tr.numCachedViewParms++;
 	}

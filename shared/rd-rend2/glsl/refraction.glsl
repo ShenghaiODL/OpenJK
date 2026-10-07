@@ -13,10 +13,6 @@ in vec4 attr_BoneWeights;
 in vec4 attr_Color;
 in vec2 attr_TexCoord0;
 
-#if defined(USE_TCGEN)
-in vec2 attr_TexCoord1;
-#endif
-
 layout(std140) uniform Scene
 {
 	vec4 u_PrimaryLightOrigin;
@@ -83,6 +79,7 @@ uniform vec3 u_TCGen0Vector1;
 uniform vec4 u_BaseColor;
 uniform vec4 u_VertColor;
 uniform vec4 u_Color;
+uniform float u_chromaticAberrationDelta;
 
 #if defined(USE_RGBAGEN)
 uniform int u_ColorGen;
@@ -223,11 +220,7 @@ vec2 GenTexCoords(int TCGen, vec3 position, vec3 normal, vec3 TCGenVector0, vec3
 {
 	vec2 tex = attr_TexCoord0.st;
 
-	if (TCGen >= TCGEN_LIGHTMAP && TCGen <= TCGEN_LIGHTMAP3)
-	{
-		tex = attr_TexCoord1.st;
-	}
-	else if (TCGen == TCGEN_ENVIRONMENT_MAPPED)
+	if (TCGen == TCGEN_ENVIRONMENT_MAPPED)
 	{
 		vec3 viewer = normalize(u_ViewOrigin - position);
 		vec2 ref = reflect(viewer, normal).yz;
@@ -297,6 +290,14 @@ vec4 CalcColor(vec3 position, vec3 normal)
 		color.a *= color.a;
 		color.a *= color.a;
 	}
+	else if (u_AlphaGen == AGEN_LIGHTING_SPECULAR_STATIC)
+	{
+		vec3 reflected = -reflect(u_ModelLightDir, normal);
+
+		color.a = clamp(dot(reflected, normalize(viewer)), 0.0, 1.0);
+		color.a *= color.a;
+		color.a *= color.a;
+	}
 	else if (u_AlphaGen == AGEN_PORTAL)
 	{
 		color.a = clamp(length(viewer) / u_PortalRange, 0.0, 1.0);
@@ -318,9 +319,7 @@ mat4x3 GetBoneMatrix(uint index)
 }
 #endif
 
-const float etaR = 1.0 / 1.35;
-const float etaG = 1.0 / 1.20;
-const float etaB = 1.0 / 1.05;
+const float etaG = 1.0 / 1.30;
 
 void main()
 {
@@ -382,7 +381,7 @@ void main()
 	}
 
 	vec3 ws_Normal		= normalize(mat3(u_ModelMatrix) * normal);
-	vec3 ws_ViewDir		= (u_ViewForward + u_ViewLeft * -gl_Position.x) + u_ViewUp * gl_Position.y;
+	vec3 ws_ViewDir		= normalize((u_ViewForward + u_ViewLeft * -gl_Position.x) + u_ViewUp * gl_Position.y);
 
 	#if defined(USE_TCMOD)
 	float distance = u_Color.a * clamp(1.0 - distance(tex, var_DiffuseTex), 0.0, 1.0);
@@ -392,20 +391,32 @@ void main()
 
 	mat3 inverseModel = inverse(mat3(u_ModelMatrix));
 
-	vec3 refraction_vec = normalize(refract(ws_ViewDir, ws_Normal, etaR));
-	vec3 new_pos = (distance * refraction_vec) + wsPosition.xyz;
-	var_RefractPosR = vec4(inverseModel * new_pos, 1.0);
-	var_RefractPosR = MVP * var_RefractPosR;
+	if (u_chromaticAberrationDelta > 0.0)
+	{
+		vec3 refraction_vec = refract(ws_ViewDir, ws_Normal, etaG + u_chromaticAberrationDelta);
+		vec3 new_pos = (distance * refraction_vec) + wsPosition.xyz;
+		var_RefractPosR = vec4(inverseModel * new_pos, 1.0);
+		var_RefractPosR = MVP * var_RefractPosR;
 
-	refraction_vec = normalize(refract(ws_ViewDir, ws_Normal, etaG));
-	new_pos = (distance * refraction_vec) + wsPosition.xyz;
-	var_RefractPosG = vec4(inverseModel * new_pos, 1.0);
-	var_RefractPosG = MVP * var_RefractPosG;
+		refraction_vec = refract(ws_ViewDir, ws_Normal, etaG);
+		new_pos = (distance * refraction_vec) + wsPosition.xyz;
+		var_RefractPosG = vec4(inverseModel * new_pos, 1.0);
+		var_RefractPosG = MVP * var_RefractPosG;
 
-	refraction_vec = normalize(refract(ws_ViewDir, ws_Normal, etaB));
-	new_pos = (distance * refraction_vec) + wsPosition.xyz;
-	var_RefractPosB = vec4(inverseModel * new_pos, 1.0);
-	var_RefractPosB = MVP * var_RefractPosB;
+		refraction_vec = refract(ws_ViewDir, ws_Normal, etaG - u_chromaticAberrationDelta);
+		new_pos = (distance * refraction_vec) + wsPosition.xyz;
+		var_RefractPosB = vec4(inverseModel * new_pos, 1.0);
+		var_RefractPosB = MVP * var_RefractPosB;
+	}
+	else
+	{
+		vec3 refraction_vec = refract(ws_ViewDir, ws_Normal, etaG);
+		vec3 new_pos = (distance * refraction_vec) + wsPosition.xyz;
+		var_RefractPosG = vec4(inverseModel * new_pos, 1.0);
+		var_RefractPosG = MVP * var_RefractPosG;
+		var_RefractPosB = var_RefractPosG;
+		var_RefractPosR = var_RefractPosG;
+	}
 }
 
 
@@ -508,6 +519,11 @@ void main()
 	else if (u_AlphaTestType == ALPHA_TEST_GE192)
 	{
 		if (color.a < 0.75)
+			discard;
+	}
+	else if (u_AlphaTestType == ALPHA_TEST_E255)
+	{
+		if (color.a < 1.00)
 			discard;
 	}
 #endif
