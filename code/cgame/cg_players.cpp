@@ -9817,13 +9817,20 @@ Ghoul2 Insert End
 		if (( ps->weaponstate == WEAPON_CHARGING_ALT && ps->weapon == WP_BRYAR_PISTOL )
 			|| ( ps->weaponstate == WEAPON_CHARGING_ALT && ps->weapon == WP_BLASTER_PISTOL )
 			|| ( ps->weapon == WP_BOWCASTER && ps->weaponstate == WEAPON_CHARGING_ALT )
-			|| ( ps->weapon == WP_DEMP2 && ps->weaponstate == WEAPON_CHARGING_ALT ))
+			|| ( ps->weapon == WP_DEMP2 && ps->weaponstate == WEAPON_CHARGING_ALT )
+			|| ( ps->weapon == WP_REPEATER && ps->weaponstate == WEAPON_CHARGING_ALT ))
 		{
 			int		shader = 0;
 			float	val = 0.0f, scale = 1.0f;
 			vec3_t	WHITE	= {1.0f,1.0f,1.0f};
 
-			if ( ps->weapon == WP_BRYAR_PISTOL
+			if ( ps->weapon == WP_REPEATER )
+			{
+				// full charge at 5 x REPEATER_ALT_CHARGE_UNIT (250ms) -- see wp_repeater.cpp
+				val = ( cg.time - ps->weaponChargeTime ) / 1250.0f;
+				shader = cgi_R_RegisterShader( "gfx/effects/blueFrontFlash" );
+			}
+			else if ( ps->weapon == WP_BRYAR_PISTOL
 				|| ps->weapon == WP_BLASTER_PISTOL )
 			{
 				// Hardcoded max charge time of 1 second

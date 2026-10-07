@@ -1181,7 +1181,13 @@ static void CG_DoMuzzleFlash( centity_t *cent, vec3_t org, vec3_t dir, weaponDat
 		{
 			if (( cent->gent && cent->gent->NPC ) || cg.renderingThirdPerson )
 			{
-				theFxScheduler.PlayEffect( effect, org, dir );
+				// Build the axes from the aim direction (no roll), the same way first-person
+				// muzzle flashes do, instead of the arbitrary perpendiculars the fwd-only
+				// PlayEffect overload makes up -- so up/down offsets in the .efx hold here too.
+				vec3_t	ang, axis[3];
+				vectoangles( dir, ang );
+				AngleVectors( ang, axis[0], axis[1], axis[2] );
+				theFxScheduler.PlayEffect( effect, org, axis, -1, -1 );
 			}
 			else
 			{
@@ -1699,7 +1705,7 @@ void CG_AddViewWeapon( playerState_t *ps )
 				VectorScale(flash.axis[0], fracWeapFOV, flash.axis[0]);
 			}
 
-			CG_DoMuzzleFlash( cent, flash.origin, flash.angles, wData );
+			CG_DoMuzzleFlash( cent, flash.origin, flash.axis[0], wData );
 		}
 		
 		if ( cent->gent && cent->gent->client )
@@ -1722,13 +1728,20 @@ void CG_AddViewWeapon( playerState_t *ps )
 	if (( ps->weaponstate == WEAPON_CHARGING_ALT && ps->weapon == WP_BRYAR_PISTOL )
 			|| ( ps->weaponstate == WEAPON_CHARGING_ALT && ps->weapon == WP_BLASTER_PISTOL )
 			|| ( ps->weapon == WP_BOWCASTER && ps->weaponstate == WEAPON_CHARGING_ALT )
-			|| ( ps->weapon == WP_DEMP2 && ps->weaponstate == WEAPON_CHARGING_ALT ))
+			|| ( ps->weapon == WP_DEMP2 && ps->weaponstate == WEAPON_CHARGING_ALT )
+			|| ( ps->weapon == WP_REPEATER && ps->weaponstate == WEAPON_CHARGING_ALT ))
 	{
 		int		shader = 0;
 		float	val = 0.0f, scale = 1.0f;
 		vec3_t	WHITE	= {1.0f,1.0f,1.0f};
 
-		if ( ps->weapon == WP_BRYAR_PISTOL
+		if ( ps->weapon == WP_REPEATER )
+		{
+			// full charge at 5 x REPEATER_ALT_CHARGE_UNIT (250ms) -- see wp_repeater.cpp
+			val = ( cg.time - ps->weaponChargeTime ) / 1250.0f;
+			shader = cgi_R_RegisterShader( "gfx/effects/blueFrontFlash" );
+		}
+		else if ( ps->weapon == WP_BRYAR_PISTOL
 			|| ps->weapon == WP_BLASTER_PISTOL )
 		{
 			// Hardcoded max charge time of 1 second

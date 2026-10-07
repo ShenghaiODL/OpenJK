@@ -260,21 +260,22 @@ bool WP_MissileTargetHint(gentity_t* shooter, vec3_t start, vec3_t out)
 	if ( shooter->s.number >= MAX_CLIENTS )
 		return false;
 
-	// Trace from the crosshair's exact origin (= cg.refdef.vieworg, stored in renderInfo.eyePoint)
-	// to find the world aim target, then redirect the shot from the muzzle toward it.
-	// In third person the camera is behind the player; this corrects the parallax so the
-	// shot lands exactly where the screen-center crosshair shows.
+	// Trace from the crosshair's exact origin (= cg.refdef.vieworg, stored in
+	// renderInfo.crosshairOrigin) to find the world aim target, then redirect the shot from the
+	// muzzle toward it. In third person the camera is behind the player; this corrects the
+	// parallax so the shot lands exactly where the screen-center crosshair shows.
 	vec3_t fwd;
 	AngleVectors( shooter->client->ps.viewangles, fwd, NULL, NULL );
 
 	vec3_t traceOrg;
-	VectorCopy( shooter->client->renderInfo.eyePoint, traceOrg );
+	VectorCopy( shooter->client->renderInfo.crosshairOrigin, traceOrg );
 
-	// If the camera is clipped into geometry (third-person wall clip), fall back to player's eye.
+	// Not written yet (first frame after a load), or the camera is clipped into geometry
+	// (third-person wall clip): fall back to the player's eye.
 	trace_t tr;
 	gi.trace( &tr, traceOrg, vec3_origin, vec3_origin, traceOrg,
 	          shooter->s.number, MASK_SOLID, G2_NOCOLLIDE, 0 );
-	if ( tr.startsolid )
+	if ( VectorCompare( traceOrg, vec3_origin ) || tr.startsolid )
 	{
 		ViewHeightFix( shooter );
 		VectorCopy( shooter->currentOrigin, traceOrg );

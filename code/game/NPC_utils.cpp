@@ -47,6 +47,24 @@ Added: Uses shootAngles if a NPC has them
 extern void ViewHeightFix(const gentity_t *const ent);
 extern void AddLeanOfs(const gentity_t *const ent, vec3_t point);
 extern void SubtractLeanOfs(const gentity_t *const ent, vec3_t point);
+
+// The player's eyePoint comes from cgame and has been the third-person camera position before
+// (~92 units behind the player), which made NPC clear-shot traces miss and NPCs stop firing.
+// Pin the player's head/chest spot to their own bbox like NPC targets already are.
+static void KeepPlayerSpotOnBody( const gentity_t *ent, vec3_t point )
+{
+	point[0] = ent->currentOrigin[0];
+	point[1] = ent->currentOrigin[1];
+	if ( point[2] > ent->currentOrigin[2] + ent->maxs[2] )
+	{
+		point[2] = ent->currentOrigin[2] + ent->maxs[2];
+	}
+	else if ( point[2] < ent->currentOrigin[2] + ent->mins[2] )
+	{
+		point[2] = ent->currentOrigin[2] + ent->mins[2];
+	}
+}
+
 void CalcEntitySpot ( const gentity_t *ent, const spot_t spot, vec3_t point )
 {
 	vec3_t	forward, up, right;
@@ -90,6 +108,7 @@ void CalcEntitySpot ( const gentity_t *ent, const spot_t spot, vec3_t point )
 			else if ( !ent->s.number )
 			{
 				SubtractLeanOfs( ent, point );
+				KeepPlayerSpotOnBody( ent, point );
 			}
 		}
 		else
@@ -126,6 +145,7 @@ void CalcEntitySpot ( const gentity_t *ent, const spot_t spot, vec3_t point )
 			else if ( !ent->s.number )
 			{
 				SubtractLeanOfs( ent, point );
+				KeepPlayerSpotOnBody( ent, point );
 			}
 			//NOTE: automatically takes leaning into account!
 		}

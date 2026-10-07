@@ -1903,6 +1903,7 @@ public:
 	int			heavyAttackDebounce;	//no new heavy attack from this NPC until this passes
 	int			z6Heat;					//0-100, builds per Z-6 shot, decays when not firing; degrades accuracy as it rises
 	int			z6HeatDecayTime;		//no heat decay until level.time passes this (brief hold after firing before cooldown starts)
+	int			repeaterBurstLeft;		//repeater shots still owed in the current 3-round burst; forces fire even if the trigger is released
 	int			saberAnimLevel;
 	int			saberAttackChainCount;
 	int			saberLockTime;
@@ -2100,6 +2101,7 @@ public:
 		saved_game.write<int32_t>(heavyAttackDebounce);
 		saved_game.write<int32_t>(z6Heat);
 		saved_game.write<int32_t>(z6HeatDecayTime);
+		saved_game.write<int32_t>(repeaterBurstLeft);
 		saved_game.write<int32_t>(saberAnimLevel);
 		saved_game.write<int32_t>(saberAttackChainCount);
 		saved_game.write<int32_t>(saberLockTime);
@@ -2289,6 +2291,7 @@ public:
 		saved_game.read<int32_t>(heavyAttackDebounce);
 		saved_game.read<int32_t>(z6Heat);
 		saved_game.read<int32_t>(z6HeatDecayTime);
+		saved_game.read<int32_t>(repeaterBurstLeft);
 		saved_game.read<int32_t>(saberAnimLevel);
 		saved_game.read<int32_t>(saberAttackChainCount);
 		saved_game.read<int32_t>(saberLockTime);

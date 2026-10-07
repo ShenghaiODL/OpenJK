@@ -280,6 +280,7 @@ public:
 	vec3_t		torsoAngles;//Where the chest is pointing
 	vec3_t		eyePoint;//Where your eyes are
 	vec3_t		eyeAngles;//Where your eyes face
+	vec3_t		crosshairOrigin;//player only: view/camera origin, for crosshair-correct aiming. Rewritten every cgame frame, not saved. Never put this in eyePoint -- NPCs target eyePoint as your body.
 	int			lookTarget;//Which ent to look at with lookAngles
 	lookMode_t	lookMode;
 	int			lookTargetClearTime;//Time to clear the lookTarget

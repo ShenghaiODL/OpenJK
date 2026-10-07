@@ -1904,12 +1904,14 @@ static qboolean CG_CalcViewValues( void ) {
 			}
 		}*/
 		CG_OffsetThirdPersonView();
-		// Update eye info so game code (WP_MissileTargetHint) aims correctly in third person
+		// Camera origin for WP_MissileTargetHint's crosshair correction. Kept out of eyePoint on
+		// purpose: NPCs use the player's eyePoint as where the body is, and the camera sits ~92
+		// units behind it, which made them think every shot was blocked.
 		{
 			centity_t *playerCent = &cg_entities[0];
 			if ( playerCent && playerCent->gent && playerCent->gent->client )
 			{
-				VectorCopy( cg.refdef.vieworg, playerCent->gent->client->renderInfo.eyePoint );
+				VectorCopy( cg.refdef.vieworg, playerCent->gent->client->renderInfo.crosshairOrigin );
 				VectorCopy( cg.refdefViewAngles, playerCent->gent->client->renderInfo.eyeAngles );
 			}
 		}
@@ -1923,6 +1925,7 @@ static qboolean CG_CalcViewValues( void ) {
 		if ( playerCent && playerCent->gent && playerCent->gent->client )
 		{
 			VectorCopy( cg.refdef.vieworg, playerCent->gent->client->renderInfo.eyePoint );
+			VectorCopy( cg.refdef.vieworg, playerCent->gent->client->renderInfo.crosshairOrigin );
 			VectorCopy( cg.refdefViewAngles, playerCent->gent->client->renderInfo.eyeAngles );
 			if ( cg.snap->ps.viewEntity > 0 && cg.snap->ps.viewEntity < ENTITYNUM_WORLD )
 			{//in an entity camera view
@@ -2352,20 +2355,6 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 		inwater = CG_CalcViewValues();
 	}
 
-	// Save camera position for shooter mode — CG_Player will overwrite renderInfo.eyePoint
-	// with the player body origin, but WP_MissileTargetHint needs the actual camera position.
-	qboolean restoreShooterCam = qfalse;
-	vec3_t shooterCamPos = {0,0,0};
-	if ( cg.renderingThirdPerson && cg.snap )
-	{
-		int w = cg.snap->ps.weapon;
-		if ( w != WP_SABER && w != WP_MELEE && w != WP_NONE )
-		{
-			restoreShooterCam = qtrue;
-			VectorCopy( cg.refdef.vieworg, shooterCamPos );
-		}
-	}
-
 	if (cg.zoomMode)
 	{ //zooming with binoculars or sniper, set the fog range based on the zoom level -rww
 		cg_rangedFogging = qtrue;
@@ -2395,15 +2384,6 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 		CG_AddPacketEntities(qfalse);			// adter calcViewValues, so predicted player state is correct
 		CG_AddMarks();
 		CG_DrawMiscEnts();
-	}
-
-	// CG_Player just overwrote renderInfo.eyePoint with the player body origin.
-	// Restore it to the camera position so WP_MissileTargetHint traces from the right spot.
-	if ( restoreShooterCam )
-	{
-		centity_t *playerCent = &cg_entities[0];
-		if ( playerCent && playerCent->gent && playerCent->gent->client )
-			VectorCopy( shooterCamPos, playerCent->gent->client->renderInfo.eyePoint );
 	}
 
 	//check for opaque water

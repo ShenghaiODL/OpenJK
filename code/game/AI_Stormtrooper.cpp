@@ -77,6 +77,8 @@ static qboolean faceEnemy;
 static qboolean doMove;
 static qboolean shoot;
 static float	enemyDist;
+static int		dbgShotHit = -1;//g_debugNPCFire: NPC_ShotEntity result this think, -1 if not checked
+extern cvar_t	*g_debugNPCFire;
 static vec3_t	impactPos;
 
 int groupSpeechDebounceTime[TEAM_NUM_TEAMS];//used to stop several group AI from speaking all at once
@@ -1539,7 +1541,14 @@ void ST_ResolveBlockedShot( int hit )
 	TIMER_Set( NPC, "roamTime", -1 );
 	TIMER_Set( NPC, "stick", -1 );
 	TIMER_Set( NPC, "duck", -1 );
-	TIMER_Set( NPC, "attackDelay", Q_irand( 1000, 3000 ) );
+	if ( TIMER_Done( NPC, "blockedShotDebounce" ) )
+	{//re-rolling attackDelay every think starved a blocked NPC of even its suppression fire
+	//forever. This runs before the fire gate in the same think, so leave a 1s window after
+	//each delay where it can actually shoot.
+		int delay = Q_irand( 1000, 3000 );
+		TIMER_Set( NPC, "attackDelay", delay );
+		TIMER_Set( NPC, "blockedShotDebounce", delay + 1000 );
+	}
 }
 
 /*
@@ -2625,6 +2634,7 @@ void NPC_BSST_Attack( void )
 			else if ( enemyInFOV )
 			{//if enemy is FOV, go ahead and check for shooting
 				int hit = NPC_ShotEntity( NPC->enemy, impactPos );
+				dbgShotHit = hit;
 				gentity_t *hitEnt = &g_entities[hit];
 
 				if ( hit == NPC->enemy->s.number
@@ -2990,6 +3000,20 @@ void NPC_BSST_Attack( void )
 		}
 		Saboteur_Decloak( NPC );
 	}
+
+	if ( g_debugNPCFire->integer && NPC->enemy && !NPC->enemy->s.number && NPC->enemy->client )
+	{//one line per think: which gate is stopping this NPC from shooting the player
+		const gentity_t *pl = NPC->enemy;
+		vec3_t tgt;
+		CalcEntitySpot( pl, SPOT_CHEST, tgt );
+		const float *eye = pl->client->renderInfo.eyePoint;
+		float eyeXY = sqrtf( (eye[0]-pl->currentOrigin[0])*(eye[0]-pl->currentOrigin[0]) + (eye[1]-pl->currentOrigin[1])*(eye[1]-pl->currentOrigin[1]) );
+		int delayLeft = TIMER_Get( NPC, "attackDelay" ) - level.time;
+		gi.Printf( "NPC %d: LOS %d FOV %d CS %d hit %d ally %d eyeXY %.1f tgtZ %.1f delay %d shoot %d dist %.0f\n",
+			NPC->s.number, enemyLOS, enemyInFOV, enemyCS, dbgShotHit, hitAlly,
+			eyeXY, tgt[2] - pl->currentOrigin[2], delayLeft > 0 ? delayLeft : 0, shoot, sqrtf( enemyDist ) );
+	}
+	dbgShotHit = -1;
 
 	//FIXME: don't shoot right away!
 	if ( NPC->client->fireDelay )

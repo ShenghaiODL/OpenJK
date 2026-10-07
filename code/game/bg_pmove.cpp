@@ -8935,6 +8935,8 @@ static void PM_BeginWeaponChange( int weapon ) {
 		return;
 	}
 
+	pm->ps->repeaterBurstLeft = 0;
+
 	if ( cg.time > 0 )
 	{//this way we don't get that annoying change weapon sound every time a map starts
 		PM_AddEvent( EV_CHANGE_WEAPON );
@@ -13249,6 +13251,21 @@ static bool PM_DoChargedWeapons( void )
 			charging = qtrue;
 			altFire = qtrue;
 		}
+		if ( pm->gent && (pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer()) )
+		{//charge hum while alt is held. This also runs inside the weapon-change check, so a
+		//switch clears the loop before it completes (same as the Z-6 spin loop).
+			if ( (pm->cmd.buttons & BUTTON_ALT_ATTACK)
+				&& pm->ps->weaponstate != WEAPON_DROPPING
+				&& pm->ps->weaponstate != WEAPON_RAISING
+				&& pm->cmd.weapon == pm->ps->weapon )
+			{
+				pm->gent->s.loopSound = G_SoundIndex( "sound/weapons/repeater/alt_projectileloop.wav" );
+			}
+			else
+			{
+				pm->gent->s.loopSound = 0;
+			}
+		}
 		break;
 
 	//------------------
@@ -13373,16 +13390,30 @@ static bool PM_DoChargedWeapons( void )
 			}
 			return false;
 		}
+		// Switching away, or empty: spin down and leave weaponstate alone. Writing CHARGING_ALT
+		// here would clobber WEAPON_DROPPING every frame (this runs inside the weapon-change check
+		// too), so the switch would restart forever. When empty, the normal fire path's ammo check
+		// raises EV_NOAMMO and the auto-switch goes through.
+		if ( pm->ps->weaponstate == WEAPON_DROPPING
+			|| pm->ps->weaponstate == WEAPON_RAISING
+			|| pm->cmd.weapon != pm->ps->weapon
+			|| pm->ps->ammo[weaponData[WP_Z6_ROTARY].ammoIndex] <= 0 )
+		{
+			if ( pm->ps->weaponChargeTime != 0 )
+			{
+				G_SoundOnEnt( pm->gent, CHAN_WEAPON, "sound/weapons/z6/chaingun_spindown.wav" );
+				pm->ps->weaponChargeTime = 0;
+			}
+			if ( pm->gent )
+			{
+				pm->gent->s.loopSound = 0;
+			}
+			return false;
+		}
 		if ( pm->cmd.buttons & BUTTON_ALT_ATTACK )
 		{
 			if ( pm->ps->weaponChargeTime == 0 )
 			{
-				if ( pm->ps->ammo[weaponData[pm->ps->weapon].ammoIndex] <= 0 )
-				{
-					PM_AddEvent( EV_NOAMMO );
-					pm->ps->weaponTime += 500;
-					return true;
-				}
 				pm->ps->weaponChargeTime = level.time;
 				G_SoundOnEnt( pm->gent, CHAN_WEAPON, "sound/weapons/z6/chaingun_spinup.wav" );
 			}
@@ -13957,6 +13988,18 @@ static void PM_Weapon( void )
 		}
 	}
 
+	if ( pm->ps->weapon == WP_REPEATER
+		&& pm->ps->repeaterBurstLeft > 0
+		&& (pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer()) )
+	{//mid-burst: finish all 3 rounds even if the trigger was released. Alt is stripped so the
+	//blob-charge path can't hijack it; EF_FIRING has to be re-set because PM_AdjustAttackStates
+	//already cleared it from the raw buttons this frame.
+		pm->cmd.buttons |= BUTTON_ATTACK;
+		pm->cmd.buttons &= ~BUTTON_ALT_ATTACK;
+		pm->ps->eFlags |= EF_FIRING;
+		pm->ps->eFlags &= ~EF_ALT_FIRING;
+	}
+
 	if ( !delayed_fire )
 	{//didn't just finish a fire delay
 		if ( PM_DoChargedWeapons())
@@ -14408,6 +14451,7 @@ static void PM_Weapon( void )
 		}
 		else	// Not enough energy
 		{
+			pm->ps->repeaterBurstLeft = 0;
 			if ( !( pm->ps->eFlags & EF_LOCKED_TO_WEAPON ))
 			{
 				// Switch weapons
@@ -14492,16 +14536,19 @@ static void PM_Weapon( void )
 		case WP_REPEATER:
 			// repeater is supposed to do smoke after sustained bursts
 			pm->ps->weaponShotCount++;
-			// 3-round burst: fast sub-interval between the first two shots of each burst, then a
-			// real cooldown pause on the third shot -- without this the "burst" just runs at the
-			// weapon's base 50ms firetime between bursts and reads as full auto with a stutter
-			if ( pm->ps->weaponShotCount % 3 != 0 )
-			{
-				addTime = 60;
-			}
-			else
-			{
-				addTime = 450;
+			if ( pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer() )
+			{// 3-round burst, tracked by its own counter so a tap always fires all 3 (the forced
+			//re-press near PM_DoChargedWeapons finishes it) and a new burst always starts clean.
+			//NPC burst cadence lives in NPC_combat.cpp's ChangeWeapon instead.
+				if ( pm->ps->repeaterBurstLeft <= 0 )
+				{
+					pm->ps->repeaterBurstLeft = 2;
+				}
+				else
+				{
+					pm->ps->repeaterBurstLeft--;
+				}
+				addTime = ( pm->ps->repeaterBurstLeft > 0 ) ? 60 : 450;
 			}
 			break;
 		case WP_THERMAL:

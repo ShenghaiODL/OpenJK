@@ -1532,3 +1532,6 @@ xcode
 .tmp.driveupload/422997
 .tmp.driveupload/423001
 .tmp.driveupload/365025
+
+# session handoff doc -- shared via Drive Mirror instead, see HANDOFF.md itself
+HANDOFF.md

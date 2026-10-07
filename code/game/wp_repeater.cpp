@@ -257,7 +257,7 @@ static void WP_Z6MainFire( gentity_t *ent, vec3_t dir )
 //---------------------------------------------------------
 // Z-6 identity: a real heat/spread mechanic (instead of the old FP_LEVITATION drain hack), its own
 // projectile visuals, and Force Push interruption -- meant to suppress rather than just be a bigger
-// repeater. AI-controlled burst-fire pacing already exists (NPC_combat.cpp's WP_Z6_ROTARY case).
+// repeater. NPCs fire it as long sustained streams via attackHold (NPC_combat.cpp's WP_Z6_ROTARY case).
 //---------------------------------------------------------
 void WP_FireZ6Rotary( gentity_t *ent )
 //---------------------------------------------------------

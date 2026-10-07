@@ -849,11 +849,12 @@ void ChangeWeapon( gentity_t *ent, int newWeapon )
 		else
 		{
 			ent->NPC->aiFlags |= NPCAI_BURST_WEAPON;
-			ent->NPC->burstMin = 3;
+			// 3-round bursts to match the player repeater; ShootThink fires burstCount+1 shots
+			ent->NPC->burstMin = 2;
 #ifdef BASE_SAVE_COMPAT
-			ent->NPC->burstMean = 6;
+			ent->NPC->burstMean = 2;
 #endif
-			ent->NPC->burstMax = 10;
+			ent->NPC->burstMax = 2;
 			if ( g_spskill->integer == 0 )
 				ent->NPC->burstSpacing = 1500;//attack debounce
 			else if ( g_spskill->integer == 1 )
@@ -1066,18 +1067,25 @@ void ChangeWeapon( gentity_t *ent, int newWeapon )
 		break;
 			
 	case WP_Z6_ROTARY:
-		ent->NPC->aiFlags |= NPCAI_BURST_WEAPON;
-		ent->NPC->burstMin = 3;
-#ifdef BASE_SAVE_COMPAT
-		ent->NPC->burstMean = 6;
-#endif
-		ent->NPC->burstMax = 10;
+		// Sustained suppression, not bursts: once ShootThink fires, NPC_CheckAttackHold keeps the
+		// trigger down for attackHold ms (even without LOS). burstSpacing is measured from the
+		// first shot, so the pause after each stream is burstSpacing - attackHold.
+		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
 		if ( g_spskill->integer == 0 )
-			ent->NPC->burstSpacing = 1500;//attack debounce
+		{
+			ent->NPC->attackHold = 3000;
+			ent->NPC->burstSpacing = 3000 + 2500;
+		}
 		else if ( g_spskill->integer == 1 )
-			ent->NPC->burstSpacing = 1000;//attack debounce
+		{
+			ent->NPC->attackHold = 3500;
+			ent->NPC->burstSpacing = 3500 + 2000;
+		}
 		else
-			ent->NPC->burstSpacing = 500;//attack debounce
+		{
+			ent->NPC->attackHold = 4000;
+			ent->NPC->burstSpacing = 4000 + 1500;
+		}
 		break;
 
 	case WP_SONIC_BLASTER:
