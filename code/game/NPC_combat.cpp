@@ -28,6 +28,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "wp_saber.h"
 #include "g_functions.h"
 
+extern qboolean WP_UsesWeaponProfile( int weapon );
+extern int WP_NPCWeaponSkill( const gentity_t *ent );
+
 extern void G_AddVoiceEvent( gentity_t *self, int event, int speakDebounceTime );
 extern void G_SetEnemy( gentity_t *self, gentity_t *enemy );
 extern qboolean NPC_CheckLookTarget( gentity_t *self );
@@ -495,6 +498,11 @@ void G_SetEnemy( gentity_t *self, gentity_t *enemy )
 		//FIXME: Have to do this to prevent alert cascading
 		G_ClearEnemy( self );
 		self->enemy = enemy;
+		if ( self->client && WP_UsesWeaponProfile( self->client->ps.weapon ) )
+		{// reaction time before the first shot at a new enemy: 900ms at weapon skill 1 .. 200ms at skill 5
+			const int reaction = 900 - ( WP_NPCWeaponSkill( self ) - 1 ) * 175;
+			self->NPC->shotTime = Q_max( self->NPC->shotTime, level.time + reaction );
+		}
 		if (self->client && self->client->NPC_class == CLASS_SABOTEUR)
 		{
 			Saboteur_Cloak(NPC);					// Cloak
@@ -700,6 +708,72 @@ int ChooseBestWeapon( void )
 }
 */
 
+
+// Blaster pass: trigger discipline for profile weapons. The gun itself fires at its weapons.dat
+// fireTime (bg_pmove.cpp, same as the player); this only decides how long the NPC holds the
+// trigger and how long it waits in between, from the weapon profile scaled by weapon skill:
+//   pauses x1.6 at skill 1 .. x0.4 at skill 5, strings x0.5 .. x1.5 (skill 3 = profile values).
+static void NPC_SetWeaponProfileTiming( gentity_t *ent, int weapon )
+{
+	const weaponData_t	*wd = &weaponData[weapon];
+	const qboolean		alt = (ent->NPC->scriptFlags & SCF_ALT_FIRE) ? qtrue : qfalse;
+	const int			skill = WP_NPCWeaponSkill( ent );
+	const int			fireTime = Q_max( 50, alt ? wd->altFireTime : wd->fireTime );
+	int					shotsMin = wd->npcBurstMin;
+	int					shotsMax = wd->npcBurstMax;
+	int					pause = wd->npcPause;
+
+	if ( alt )
+	{// alt fire: single shots at a slower pace (the E-11 keeps its classic 3-round alt spray)
+		shotsMin = shotsMax = ( weapon == WP_BLASTER ) ? 3 : 1;
+		pause = (int)( pause * 1.5f );
+	}
+	else if ( weapon == WP_BLASTER_PISTOL && ent->weaponModel[1] > 0 )
+	{// commando dual pistols: long strings
+		shotsMin = 4;
+		shotsMax = 12;
+	}
+
+	if ( shotsMax > 1 )
+	{
+		const float stringScale = 1.0f + ( skill - 3 ) * 0.25f;
+		shotsMin = Q_max( 1, (int)( shotsMin * stringScale + 0.5f ) );
+		shotsMax = Q_max( shotsMin, (int)( shotsMax * stringScale + 0.5f ) );
+	}
+	pause = (int)( pause * ( 1.0f + ( 3 - skill ) * 0.3f ) );
+
+	// a burst weapon (repeater) fires its whole burst from one trigger pull in pmove
+	int pullTime = fireTime;
+	if ( !alt && wd->burstCount > 1 )
+	{
+		pullTime = wd->burstGap * ( wd->burstCount - 1 ) + fireTime;
+	}
+
+	ent->NPC->attackHold = 0;
+	if ( weapon == WP_Z6_ROTARY && !alt )
+	{// sustained stream: hold the trigger for the whole string (NPC_CheckAttackHold); burstSpacing
+	//is measured from the first shot, so add the hold time to the pause
+		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
+		ent->NPC->attackHold = Q_irand( shotsMin, shotsMax ) * fireTime;
+		ent->NPC->burstSpacing = ent->NPC->attackHold + pause;
+	}
+	else if ( shotsMax > 1 )
+	{// strings of single shots, fireTime apart (ShootThink fires burstCount+1 shots)
+		ent->NPC->aiFlags |= NPCAI_BURST_WEAPON;
+		ent->NPC->burstMin = shotsMin - 1;
+		ent->NPC->burstMax = shotsMax - 1;
+#ifdef BASE_SAVE_COMPAT
+		ent->NPC->burstMean = ( shotsMin + shotsMax ) / 2 - 1;
+#endif
+		ent->NPC->burstSpacing = Q_max( pause, fireTime );
+	}
+	else
+	{
+		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
+		ent->NPC->burstSpacing = Q_max( pause, pullTime );
+	}
+}
+
 void ChangeWeapon( gentity_t *ent, int newWeapon )
 {
 	if ( !ent || !ent->client || !ent->NPC )
@@ -713,51 +787,14 @@ void ChangeWeapon( gentity_t *ent, int newWeapon )
 	ent->NPC->attackHold = 0;
 	ent->NPC->currentAmmo = ent->client->ps.ammo[weaponData[newWeapon].ammoIndex];
 
+	if ( WP_UsesWeaponProfile( newWeapon ) )
+	{// blaster-family guns and custom slots: weapons.dat profile + weapon skill
+		NPC_SetWeaponProfileTiming( ent, newWeapon );
+		return;
+	}
+
 	switch ( newWeapon )
 	{
-	case WP_BRYAR_PISTOL://prifle
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		ent->NPC->burstSpacing = 1000;//attackdebounce
-		break;
-
-	case WP_BLASTER_PISTOL:
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		if ( ent->weaponModel[1] > 0 )
-		{//commando
-			ent->NPC->aiFlags |= NPCAI_BURST_WEAPON;
-			ent->NPC->burstMin = 4;
-#ifdef BASE_SAVE_COMPAT
-			ent->NPC->burstMean = 8;
-#endif
-			ent->NPC->burstMax = 12;
-			if ( g_spskill->integer == 0 )
-				ent->NPC->burstSpacing = 600;//attack debounce
-			else if ( g_spskill->integer == 1 )
-				ent->NPC->burstSpacing = 400;//attack debounce
-			else
-				ent->NPC->burstSpacing = 250;//attack debounce
-		}
-		else if ( ent->client->NPC_class == CLASS_SABOTEUR )
-		{
-			if ( g_spskill->integer == 0 )
-				ent->NPC->burstSpacing = 900;//attack debounce
-			else if ( g_spskill->integer == 1 )
-				ent->NPC->burstSpacing = 600;//attack debounce
-			else
-				ent->NPC->burstSpacing = 400;//attack debounce
-		}
-		else
-		{
-		//	ent->NPC->burstSpacing = 1000;//attackdebounce
-			if ( g_spskill->integer == 0 )
-				ent->NPC->burstSpacing = 1000;//attack debounce
-			else if ( g_spskill->integer == 1 )
-				ent->NPC->burstSpacing = 750;//attack debounce
-			else
-				ent->NPC->burstSpacing = 500;//attack debounce
-		}
-		break;
-
 	case WP_BOT_LASER://probe attack
 		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
 	//	ent->NPC->burstSpacing = 600;//attackdebounce
@@ -772,29 +809,6 @@ void ChangeWeapon( gentity_t *ent, int newWeapon )
 	case WP_SABER:
 		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
 		ent->NPC->burstSpacing = 0;//attackdebounce
-		break;
-
-	case WP_DISRUPTOR:
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		if ( ent->NPC->scriptFlags & SCF_ALT_FIRE )
-		{
-			switch( g_spskill->integer )
-			{
-			case 0:
-				ent->NPC->burstSpacing = 2500;//attackdebounce
-				break;
-			case 1:
-				ent->NPC->burstSpacing = 2000;//attackdebounce
-				break;
-			case 2:
-				ent->NPC->burstSpacing = 1500;//attackdebounce
-				break;
-			}
-		}
-		else
-		{
-			ent->NPC->burstSpacing = 1000;//attackdebounce
-		}
 		break;
 
 	case WP_TUSKEN_RIFLE:
@@ -820,95 +834,6 @@ void ChangeWeapon( gentity_t *ent, int newWeapon )
 		}
 		break;
 
-	case WP_CYCLER_RIFLE:
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		if ( g_spskill->integer == 0 )
-			ent->NPC->burstSpacing = 1500;//attackdebounce
-		else if ( g_spskill->integer == 1 )
-			ent->NPC->burstSpacing = 1100;//attackdebounce
-		else
-			ent->NPC->burstSpacing = 750;//attackdebounce
-		break;
-
-	case WP_BOWCASTER:
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		if ( g_spskill->integer == 0 )
-			ent->NPC->burstSpacing = 2500;//attack debounce
-		else if ( g_spskill->integer == 1 )
-			ent->NPC->burstSpacing = 1875;//attack debounce
-		else
-			ent->NPC->burstSpacing = 1250;//attack debounce
-		break;
-
-	case WP_REPEATER:
-		if ( ent->NPC->scriptFlags & SCF_ALT_FIRE )
-		{
-			ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-			ent->NPC->burstSpacing = 2000;//attackdebounce
-		}
-		else
-		{
-			ent->NPC->aiFlags |= NPCAI_BURST_WEAPON;
-			// 3-round bursts to match the player repeater; ShootThink fires burstCount+1 shots
-			ent->NPC->burstMin = 2;
-#ifdef BASE_SAVE_COMPAT
-			ent->NPC->burstMean = 2;
-#endif
-			ent->NPC->burstMax = 2;
-			if ( g_spskill->integer == 0 )
-				ent->NPC->burstSpacing = 1500;//attack debounce
-			else if ( g_spskill->integer == 1 )
-				ent->NPC->burstSpacing = 1000;//attack debounce
-			else
-				ent->NPC->burstSpacing = 500;//attack debounce
-		}
-		break;
-
-	case WP_DEMP2:
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		ent->NPC->burstSpacing = 1000;//attackdebounce
-		break;
-
-	case WP_FLECHETTE:
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		if ( ent->NPC->scriptFlags & SCF_ALT_FIRE )
-		{
-			ent->NPC->burstSpacing = 2000;//attackdebounce
-		}
-		else
-		{
-			ent->NPC->burstSpacing = 1000;//attackdebounce
-		}
-		break;
-
-	case WP_ROCKET_LAUNCHER:
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-	//	ent->NPC->burstSpacing = 2500;//attackdebounce
-		if ( g_spskill->integer == 0 )
-			ent->NPC->burstSpacing = 2500;//attack debounce
-		else if ( g_spskill->integer == 1 )
-			ent->NPC->burstSpacing = 2000;//attack debounce
-		else
-			ent->NPC->burstSpacing = 1500;//attack debounce
-		break;
-
-	case WP_CONCUSSION:
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		if ( ent->NPC->scriptFlags & SCF_ALT_FIRE )
-		{//beam
-			ent->NPC->burstSpacing = 1200;//attackdebounce
-		}
-		else
-		{//rocket
-			if ( g_spskill->integer == 0 )
-				ent->NPC->burstSpacing = 2300;//attack debounce
-			else if ( g_spskill->integer == 1 )
-				ent->NPC->burstSpacing = 1800;//attack debounce
-			else
-				ent->NPC->burstSpacing = 1200;//attack debounce
-		}
-		break;
-
 	case WP_THERMAL:
 		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
 	//	ent->NPC->burstSpacing = 3000;//attackdebounce
@@ -931,35 +856,6 @@ void ChangeWeapon( gentity_t *ent, int newWeapon )
 		ent->NPC->attackHold = 1000;//Hold attack button for a 1-second burst
 		break;
 	*/
-
-	case WP_BLASTER:
-		if ( ent->NPC->scriptFlags & SCF_ALT_FIRE )
-		{
-			ent->NPC->aiFlags |= NPCAI_BURST_WEAPON;
-			ent->NPC->burstMin = 3;
-#ifdef BASE_SAVE_COMPAT
-			ent->NPC->burstMean = 3;
-#endif
-			ent->NPC->burstMax = 3;
-			if ( g_spskill->integer == 0 )
-				ent->NPC->burstSpacing = 1500;//attack debounce
-			else if ( g_spskill->integer == 1 )
-				ent->NPC->burstSpacing = 1000;//attack debounce
-			else
-				ent->NPC->burstSpacing = 500;//attack debounce
-		}
-		else
-		{
-			ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-			if ( g_spskill->integer == 0 )
-				ent->NPC->burstSpacing = 1000;//attack debounce
-			else if ( g_spskill->integer == 1 )
-				ent->NPC->burstSpacing = 750;//attack debounce
-			else
-				ent->NPC->burstSpacing = 500;//attack debounce
-		//	ent->NPC->burstSpacing = 1000;//attackdebounce
-		}
-		break;
 
 	case WP_MELEE:
 	case WP_TUSKEN_STAFF:
@@ -1046,63 +942,10 @@ void ChangeWeapon( gentity_t *ent, int newWeapon )
 			ent->NPC->burstSpacing = 750;//attack debounce
 		break;
 			
-	case WP_E5_CARBINE:
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		if ( g_spskill->integer == 0 )
-			ent->NPC->burstSpacing = 1000;//attack debounce
-		else if ( g_spskill->integer == 1 )
-			ent->NPC->burstSpacing = 750;//attack debounce
-		else
-			ent->NPC->burstSpacing = 500;//attack debounce
-		break;
-			
-	case WP_DC15S_CARBINE:
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		if ( g_spskill->integer == 0 )
-			ent->NPC->burstSpacing = 1000;//attack debounce
-		else if ( g_spskill->integer == 1 )
-			ent->NPC->burstSpacing = 750;//attack debounce
-		else
-			ent->NPC->burstSpacing = 500;//attack debounce
-		break;
-			
-	case WP_Z6_ROTARY:
-		// Sustained suppression, not bursts: once ShootThink fires, NPC_CheckAttackHold keeps the
-		// trigger down for attackHold ms (even without LOS). burstSpacing is measured from the
-		// first shot, so the pause after each stream is burstSpacing - attackHold.
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		if ( g_spskill->integer == 0 )
-		{
-			ent->NPC->attackHold = 3000;
-			ent->NPC->burstSpacing = 3000 + 2500;
-		}
-		else if ( g_spskill->integer == 1 )
-		{
-			ent->NPC->attackHold = 3500;
-			ent->NPC->burstSpacing = 3500 + 2000;
-		}
-		else
-		{
-			ent->NPC->attackHold = 4000;
-			ent->NPC->burstSpacing = 4000 + 1500;
-		}
-		break;
-
 	case WP_SONIC_BLASTER:
 		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
 		ent->NPC->burstSpacing = 1000;//attackdebounce
 		break;
-
-	case WP_DC15A_RIFLE:
-		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
-		if ( g_spskill->integer == 0 )
-			ent->NPC->burstSpacing = 1000;//attack debounce
-		else if ( g_spskill->integer == 1 )
-			ent->NPC->burstSpacing = 750;//attack debounce
-		else
-			ent->NPC->burstSpacing = 500;//attack debounce
-		break;
-
 
 	default:
 		ent->NPC->aiFlags &= ~NPCAI_BURST_WEAPON;
@@ -1228,8 +1071,14 @@ void ShootThink( void )
 
 		if ( !delay )
 		{
+			if ( WP_UsesWeaponProfile( client->ps.weapon ) )
+			{// next shot of the string comes at the weapon's own fire rate, same as the player's
+				delay = ( NPCInfo->scriptFlags & SCF_ALT_FIRE )
+					? weaponData[client->ps.weapon].altFireTime
+					: weaponData[client->ps.weapon].fireTime;
+			}
 			// HACK: dirty little emplaced bits, but is done because it would otherwise require some sort of new variable...
-			if ( client->ps.weapon == WP_EMPLACED_GUN )
+			else if ( client->ps.weapon == WP_EMPLACED_GUN )
 			{
 				if ( NPC->owner ) // try and get the debounce values from the chair if we can
 				{

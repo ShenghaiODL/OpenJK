@@ -35,57 +35,25 @@ void WP_FireBryarPistol( gentity_t *ent, qboolean alt_fire )
 //---------------------------------------------------------
 {
 	vec3_t	start;
-	int		damage = !alt_fire ? weaponData[WP_BRYAR_PISTOL].damage : weaponData[WP_BRYAR_PISTOL].altDamage;
+	// Bryar, DL-44 (WP_BLASTER_PISTOL), Jawa and DC-15A share this function; each now uses its
+	// own weapons.dat profile (the DL-44 used to read the Bryar's damage).
+	int		weapon = ( ent->s.weapon == WP_DC15A_RIFLE || ent->s.weapon == WP_BLASTER_PISTOL || ent->s.weapon == WP_JAWA )
+					? ent->s.weapon : WP_BRYAR_PISTOL;
+	int		damage = !alt_fire ? weaponData[weapon].damage : weaponData[weapon].altDamage;
 
 	VectorCopy( muzzle, start );
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );//make sure our start point isn't on the other side of a wall
 
-	if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
-		|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
-	{//force sight 2+ gives perfect aim
-		//FIXME: maybe force sight level 3 autoaims some?
-		if ( ent->NPC && ent->NPC->currentAim < 5 )
-		{
-			vec3_t	angs;
-
-			vectoangles( forwardVec, angs );
-
-			if ( ent->client->NPC_class == CLASS_IMPWORKER )
-			{//*sigh*, hack to make impworkers less accurate without affecteing imperial officer accuracy
-				angs[PITCH] += ( Q_flrand(-1.0f, 1.0f) * (BLASTER_NPC_SPREAD+(6-ent->NPC->currentAim)*0.25f));//was 0.5f
-				angs[YAW]	+= ( Q_flrand(-1.0f, 1.0f) * (BLASTER_NPC_SPREAD+(6-ent->NPC->currentAim)*0.25f));//was 0.5f
-			}
-			else
-			{
-				angs[PITCH] += ( Q_flrand(-1.0f, 1.0f) * ((5-ent->NPC->currentAim)*0.25f) );
-				angs[YAW]	+= ( Q_flrand(-1.0f, 1.0f) * ((5-ent->NPC->currentAim)*0.25f) );
-			}
-
-			AngleVectors( angs, forwardVec, NULL, NULL );
-		}
-	}
+	WP_ApplyWeaponSpread( ent, weapon, alt_fire, 1.0f, forwardVec );
 
 	WP_MissileTargetHint(ent, start, forwardVec);
 
-	gentity_t	*missile = CreateMissile( start, forwardVec, BRYAR_PISTOL_VEL, 10000, ent, alt_fire );
+	float	velocity = WP_ShooterVelocity( ent, alt_fire ? weaponData[weapon].altVelocity : weaponData[weapon].velocity );
+	gentity_t	*missile = CreateMissile( start, forwardVec, velocity, 10000, ent, alt_fire );
 
 	missile->classname = "bryar_proj";
-	
-	if ( ent->s.weapon == WP_DC15A_RIFLE )
-	{
-		missile->s.weapon = WP_DC15A_RIFLE;
-		damage = weaponData[WP_DC15A_RIFLE].damage;
-	}
-	else if ( ent->s.weapon == WP_BLASTER_PISTOL
-		|| ent->s.weapon == WP_JAWA )
-	{//*SIGH*... I hate our weapon system...
-		missile->s.weapon = ent->s.weapon;
-	}
-	else
-	{
-		missile->s.weapon = WP_BRYAR_PISTOL;
-	}
-	
+	missile->s.weapon = weapon;
+
 
 	if ( alt_fire )
 	{
@@ -111,7 +79,7 @@ void WP_FireBryarPistol( gentity_t *ent, qboolean alt_fire )
 //		damage *= 2;
 //	}
 
-	missile->damage = damage;
+	missile->damage = WP_ShooterDamage( ent, damage );
 	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
 
 	if ( alt_fire )

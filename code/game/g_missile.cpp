@@ -28,6 +28,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../cgame/cg_local.h"
 #include "b_local.h"
 
+extern cvar_t	*g_debugDamage;
+
 #ifdef _DEBUG
 	#include <float.h>
 #endif //_DEBUG
@@ -1497,7 +1499,13 @@ void G_RunMissile( gentity_t *ent )
 			{
 				if (trHitLoc==HL_NONE)
 				{
-					G_GetHitLocFromSurfName( &g_entities[coll.mEntityNum], gi.G2API_GetSurfaceName( &g_entities[coll.mEntityNum].ghoul2[coll.mModelIndex], coll.mSurfaceIndex ), &trHitLoc, coll.mCollisionPosition, NULL, NULL, ent->methodOfDeath );
+					const char *surfName = gi.G2API_GetSurfaceName( &g_entities[coll.mEntityNum].ghoul2[coll.mModelIndex], coll.mSurfaceIndex );
+					G_GetHitLocFromSurfName( &g_entities[coll.mEntityNum], surfName, &trHitLoc, coll.mCollisionPosition, NULL, NULL, ent->methodOfDeath );
+					if ( g_debugDamage->integer )
+					{// which mesh surface the bolt actually struck, to diagnose odd hit locations
+						gi.Printf( "missile hit ent %d surface \"%s\" (model %d) -> hitloc %d\n",
+							coll.mEntityNum, surfName ? surfName : "", coll.mModelIndex, trHitLoc );
+					}
 				}
 
 				break; // NOTE: the way this whole section was working, it would only get inside of this IF once anyway, might as well break out now

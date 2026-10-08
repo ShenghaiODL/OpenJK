@@ -42,33 +42,13 @@ static void WP_RepeaterMainFire( gentity_t *ent, vec3_t dir )
 
 	WP_MissileTargetHint(ent, start, dir);
 
-	gentity_t *missile = CreateMissile( start, dir, REPEATER_VELOCITY, 10000, ent );
+	gentity_t *missile = CreateMissile( start, dir, WP_ShooterVelocity( ent, weaponData[WP_REPEATER].velocity ), 10000, ent );
 
 	missile->classname = "repeater_proj";
 	missile->s.weapon = WP_REPEATER;
 
-	// Do the damages
-	if ( ent->s.number != 0 )
-	{
-		if ( g_spskill->integer == 0 )
-		{
-			damage = REPEATER_NPC_DAMAGE_EASY;
-		}
-		else if ( g_spskill->integer == 1 )
-		{
-			damage = REPEATER_NPC_DAMAGE_NORMAL;
-		}
-		else
-		{
-			damage = REPEATER_NPC_DAMAGE_HARD;
-		}
-	}
-	
-	if ( ent->s.weapon == WP_Z6_ROTARY )
-	{
-		missile->s.weapon = WP_Z6_ROTARY;
-		damage = weaponData[WP_Z6_ROTARY].damage;
-	}
+	// same damage as the player, scaled by difficulty for NPCs
+	damage = WP_ShooterDamage( ent, damage );
 
 //	if ( ent->client && ent->client->ps.powerups[PW_WEAPON_OVERCHARGE] > 0 && ent->client->ps.powerups[PW_WEAPON_OVERCHARGE] > cg.time )
 //	{
@@ -120,29 +100,15 @@ static void WP_RepeaterAltFire( gentity_t *ent )
 			}
 			chargeScale = 0.55f + chargeCount * 0.186f;//0.55x on an instant tap (was floored to 1.0x, i.e. no weak state at all), up to 1.48x at a full charge
 		}
-		missile = CreateMissile( start, forwardVec, (int)(REPEATER_ALT_VELOCITY * chargeScale), 10000, ent, qtrue );
+		missile = CreateMissile( start, forwardVec, WP_ShooterVelocity( ent, weaponData[WP_REPEATER].altVelocity * chargeScale ), 10000, ent, qtrue );
 	}
 
 	missile->classname = "repeater_alt_proj";
 	missile->s.weapon = WP_REPEATER;
 	missile->mass = 10;
 
-	// Do the damages
-	if ( ent->s.number != 0 )
-	{
-		if ( g_spskill->integer == 0 )
-		{
-			damage = REPEATER_ALT_NPC_DAMAGE_EASY;
-		}
-		else if ( g_spskill->integer == 1 )
-		{
-			damage = REPEATER_ALT_NPC_DAMAGE_NORMAL;
-		}
-		else
-		{
-			damage = REPEATER_ALT_NPC_DAMAGE_HARD;
-		}
-	}
+	// same damage as the player, scaled by difficulty for NPCs
+	damage = WP_ShooterDamage( ent, damage );
 
 	VectorSet( missile->maxs, REPEATER_ALT_SIZE, REPEATER_ALT_SIZE, REPEATER_ALT_SIZE );
 	VectorScale( missile->maxs, -1, missile->mins );
@@ -172,9 +138,7 @@ static void WP_RepeaterAltFire( gentity_t *ent )
 void WP_FireRepeater( gentity_t *ent, qboolean alt_fire )
 //---------------------------------------------------------
 {
-	vec3_t	dir, angs;
-
-	vectoangles( forwardVec, angs );
+	vec3_t	dir;
 
 	if ( alt_fire )
 	{
@@ -182,29 +146,9 @@ void WP_FireRepeater( gentity_t *ent, qboolean alt_fire )
 	}
 	else
 	{
-		if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
-			|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
-		{//force sight 2+ gives perfect aim
-			//FIXME: maybe force sight level 3 autoaims some?
-			// Troopers use their aim values as well as the gun's inherent inaccuracy
-			// so check for all classes of stormtroopers and anyone else that has aim error
-			if ( ent->client && ent->NPC &&
-				( ent->client->NPC_class == CLASS_STORMTROOPER ||
-				  ent->client->NPC_class == CLASS_SWAMPTROOPER ||
-				  ent->client->NPC_class == CLASS_SHADOWTROOPER ) )
-			{
-				angs[PITCH] += ( Q_flrand(-1.0f, 1.0f) * (REPEATER_NPC_SPREAD+(6-ent->NPC->currentAim)*0.25f) );
-				angs[YAW]	+= ( Q_flrand(-1.0f, 1.0f) * (REPEATER_NPC_SPREAD+(6-ent->NPC->currentAim)*0.25f) );
-			}
-			else
-			{
-				// add some slop to the alt-fire direction
-				angs[PITCH] += Q_flrand(-1.0f, 1.0f) * REPEATER_SPREAD;
-				angs[YAW]	+= Q_flrand(-1.0f, 1.0f) * REPEATER_SPREAD;
-			}
-		}
-
-		AngleVectors( angs, dir, NULL, NULL );
+		// weapon spread, plus skill-based spread for NPCs (Force Sight 2+ is exempt)
+		VectorCopy( forwardVec, dir );
+		WP_ApplyWeaponSpread( ent, WP_REPEATER, qfalse, 1.0f, dir );
 
 		// FIXME: if temp_org does not have clear trace to inside the bbox, don't shoot!
 		WP_RepeaterMainFire( ent, dir );
@@ -223,27 +167,13 @@ static void WP_Z6MainFire( gentity_t *ent, vec3_t dir )
 
 	WP_MissileTargetHint(ent, start, dir);
 
-	gentity_t *missile = CreateMissile( start, dir, REPEATER_VELOCITY, 10000, ent );
+	gentity_t *missile = CreateMissile( start, dir, WP_ShooterVelocity( ent, weaponData[WP_Z6_ROTARY].velocity ), 10000, ent );
 
 	missile->classname = "z6_proj";
 	missile->s.weapon = WP_Z6_ROTARY;
 
-	// Do the damages
-	if ( ent->s.number != 0 )
-	{
-		if ( g_spskill->integer == 0 )
-		{
-			damage = REPEATER_NPC_DAMAGE_EASY;
-		}
-		else if ( g_spskill->integer == 1 )
-		{
-			damage = REPEATER_NPC_DAMAGE_NORMAL;
-		}
-		else
-		{
-			damage = REPEATER_NPC_DAMAGE_HARD;
-		}
-	}
+	// same damage as the player, scaled by difficulty for NPCs
+	damage = WP_ShooterDamage( ent, damage );
 
 	missile->damage = damage;
 	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
@@ -268,9 +198,7 @@ void WP_FireZ6Rotary( gentity_t *ent )
 		return;
 	}
 
-	vec3_t	dir, angs;
-
-	vectoangles( forwardVec, angs );
+	vec3_t	dir;
 
 	// The hotter the barrel, the worse the spread -- cubic curve so low/moderate heat barely matters
 	// (e.g. half-heated is still fairly tight) but the last stretch to a fully red-hot barrel falls
@@ -279,26 +207,9 @@ void WP_FireZ6Rotary( gentity_t *ent )
 	float heatFrac = ent->client->ps.z6Heat * 0.01f;
 	float spreadScale = 1.0f + ( heatFrac * heatFrac * heatFrac ) * 5.0f;
 
-	if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
-		|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
-	{
-		if ( ent->client && ent->NPC &&
-			( ent->client->NPC_class == CLASS_STORMTROOPER ||
-			  ent->client->NPC_class == CLASS_SWAMPTROOPER ||
-			  ent->client->NPC_class == CLASS_SHADOWTROOPER ) )
-		{
-			float npcSpread = (REPEATER_NPC_SPREAD+(6-ent->NPC->currentAim)*0.25f) * spreadScale;
-			angs[PITCH] += ( Q_flrand(-1.0f, 1.0f) * npcSpread );
-			angs[YAW]	+= ( Q_flrand(-1.0f, 1.0f) * npcSpread );
-		}
-		else
-		{
-			angs[PITCH] += Q_flrand(-1.0f, 1.0f) * REPEATER_SPREAD * spreadScale;
-			angs[YAW]	+= Q_flrand(-1.0f, 1.0f) * REPEATER_SPREAD * spreadScale;
-		}
-	}
-
-	AngleVectors( angs, dir, NULL, NULL );
+	// weapon spread (+ NPC skill spread), all scaled up by heat; Force Sight 2+ is exempt
+	VectorCopy( forwardVec, dir );
+	WP_ApplyWeaponSpread( ent, WP_Z6_ROTARY, qfalse, spreadScale, dir );
 
 	WP_Z6MainFire( ent, dir );
 

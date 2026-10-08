@@ -2007,6 +2007,7 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 		stats->sex			= SEX_MALE;
 		stats->aggression	= 3;
 		stats->aim			= 3;
+		stats->weaponSkill	= 0;//not set: use g_npcWeaponSkill
 		stats->earshot		= 1024;
 		stats->evasion		= 3;
 		stats->hfov			= 90;
@@ -2890,6 +2891,24 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 					if ( NPC->NPC )
 					{
 						stats->aim = n;
+					}
+					continue;
+				}
+
+				// weaponSkill: 1-5 gun handling (spread, string length, pauses, reaction time);
+				// entries without it use g_npcWeaponSkill
+				if ( !Q_stricmp( token, "weaponSkill" ) ) {
+					if ( COM_ParseInt( &p, &n ) ) {
+						SkipRestOfLine( &p );
+						continue;
+					}
+					if ( n < 1 || n > 5 ) {
+						gi.Printf( "bad %s in NPC '%s'\n", token, NPCName );
+						continue;
+					}
+					if ( NPC->NPC )
+					{
+						stats->weaponSkill = n;
 					}
 					continue;
 				}

@@ -41,26 +41,13 @@ static void WP_BowcasterMainFire( gentity_t *ent )
 	VectorCopy( muzzle, start );
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );//make sure our start point isn't on the other side of a wall
 
-	// Do the damages
-	if ( ent->s.number != 0 )
-	{
-		if ( g_spskill->integer == 0 )
-		{
-			damage = BOWCASTER_NPC_DAMAGE_EASY;
-		}
-		else if ( g_spskill->integer == 1 )
-		{
-			damage = BOWCASTER_NPC_DAMAGE_NORMAL;
-		}
-		else
-		{
-			damage = BOWCASTER_NPC_DAMAGE_HARD;
-		}
-	}
+	// same damage as the player, scaled by difficulty for NPCs
+	damage = WP_ShooterDamage( ent, damage );
 
+	WP_ApplyWeaponSpread( ent, WP_BOWCASTER, qfalse, 1.0f, forwardVec );
 	WP_MissileTargetHint(ent, start, forwardVec);
 
-	missile = CreateMissile( start, forwardVec, BOWCASTER_VELOCITY, 10000, ent );
+	missile = CreateMissile( start, forwardVec, WP_ShooterVelocity( ent, weaponData[WP_BOWCASTER].velocity ), 10000, ent );
 
 	missile->classname = "bowcaster_proj";
 	missile->s.weapon = WP_BOWCASTER;
@@ -105,29 +92,14 @@ static void WP_BowcasterAltFire( gentity_t *ent )
 		count--;
 	}
 
-	// stronger base damage that scales with charge (60 at count 1, 100 at count 5)
-	int damage = BOWCASTER_ALT_DAMAGE + (count - 1) * 10;
+	// stronger base damage (weapons.dat altdamage, default 70) that scales with charge, +10 per step;
+	// NPCs get the same, scaled by difficulty
+	int damage = WP_ShooterDamage( ent, weaponData[WP_BOWCASTER].altDamage + (count - 1) * 10 );
 
-	// NPC override
-	if ( ent->s.number != 0 )
-	{
-		if ( g_spskill->integer == 0 )
-		{
-			damage = BOWCASTER_NPC_DAMAGE_EASY;
-		}
-		else if ( g_spskill->integer == 1 )
-		{
-			damage = BOWCASTER_NPC_DAMAGE_NORMAL;
-		}
-		else
-		{
-			damage = BOWCASTER_NPC_DAMAGE_HARD;
-		}
-	}
-
+	WP_ApplyWeaponSpread( ent, WP_BOWCASTER, qtrue, 1.0f, forwardVec );
 	WP_MissileTargetHint(ent, start, forwardVec);
 
-	gentity_t *missile = CreateMissile( start, forwardVec, BOWCASTER_VELOCITY, 10000, ent, qtrue );
+	gentity_t *missile = CreateMissile( start, forwardVec, WP_ShooterVelocity( ent, weaponData[WP_BOWCASTER].altVelocity ), 10000, ent, qtrue );
 
 	missile->classname = "bowcaster_alt_proj";
 	missile->s.weapon = WP_BOWCASTER;

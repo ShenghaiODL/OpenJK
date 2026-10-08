@@ -478,6 +478,7 @@ void CG_RegisterWeapon( int weaponNum ) {
 		cgs.effects.bowcasterShotEffect		= theFxScheduler.RegisterEffect( "bowcaster/shot" );
 		cgs.effects.bowcasterBounceEffect	= theFxScheduler.RegisterEffect( "bowcaster/bounce_wall" );
 		cgs.effects.bowcasterImpactEffect	= theFxScheduler.RegisterEffect( "bowcaster/explosion" );
+		cgs.effects.bowcasterAltImpactEffect	= theFxScheduler.RegisterEffect( "bowcaster/alt_explosion" );
 		theFxScheduler.RegisterEffect( "bowcaster/deflect" );
 		break;
 
@@ -3574,7 +3575,7 @@ void CG_MissileHitWall( centity_t *cent, int weapon, vec3_t origin, vec3_t dir, 
 		break;
 
 	case WP_BOWCASTER:
-		FX_BowcasterHitWall( origin, dir );
+		FX_BowcasterHitWall( origin, dir, altFire );
 		break;
 
 	case WP_REPEATER:
@@ -3733,7 +3734,7 @@ void CG_MissileHitPlayer( centity_t *cent, int weapon, vec3_t origin, vec3_t dir
 		break;
 
 	case WP_BOWCASTER:
-		FX_BowcasterHitPlayer( origin, dir, humanoid );
+		FX_BowcasterHitPlayer( origin, dir, humanoid, altFire );
 		break;
 
 	case WP_REPEATER:

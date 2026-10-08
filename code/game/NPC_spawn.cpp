@@ -1076,10 +1076,8 @@ void NPC_Begin (gentity_t *ent)
 			{//bosses are a bit different
 				ent->NPC->stats.health = ceil((float)ent->NPC->stats.health*0.75f + ((float)ent->NPC->stats.health/4.0f*g_spskill->value)); // 75% on easy, 100% on medium, 125% on hard
 			}
-			else
-			{
-				ent->NPC->stats.health += ent->NPC->stats.health/4 * g_spskill->integer; // 100% on easy, 125% on medium, 150% on hard
-			}
+			//everyone else keeps their .npc health on every difficulty (was +25% per difficulty level);
+			//difficulty works through NPC damage (g_npcDamage*) and weapon skill instead
 		}
 
 		ent->max_health = client->pers.maxHealth = client->ps.stats[STAT_MAX_HEALTH] = ent->NPC->stats.health;

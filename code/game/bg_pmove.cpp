@@ -13785,6 +13785,12 @@ PM_Weapon
 Generates weapon events and modifes the weapon counter
 ==============
 */
+// Blaster-family guns (plus the data-driven custom slots) that NPCs fire at the weapon's real
+// fireTime / burst timing, exactly like the player (g_weapon.cpp). Everything else keeps the
+// NPC-only refire logic.
+extern qboolean WP_UsesWeaponProfile( int weapon );
+#define PM_NPCUsesWeaponFireRate WP_UsesWeaponProfile
+
 static void PM_Weapon( void )
 {
 	int			addTime, amount, trueCount = 1;
@@ -13988,10 +13994,9 @@ static void PM_Weapon( void )
 		}
 	}
 
-	if ( pm->ps->weapon == WP_REPEATER
-		&& pm->ps->repeaterBurstLeft > 0
-		&& (pm->ps->clientNum < MAX_CLIENTS||PM_ControlledByPlayer()) )
-	{//mid-burst: finish all 3 rounds even if the trigger was released. Alt is stripped so the
+	if ( weaponData[pm->ps->weapon].burstCount > 1
+		&& pm->ps->repeaterBurstLeft > 0 )
+	{//mid-burst: finish the whole burst even if the trigger was released (player or NPC). Alt is stripped so the
 	//blob-charge path can't hijack it; EF_FIRING has to be re-set because PM_AdjustAttackStates
 	//already cleared it from the raw buttons this frame.
 		pm->cmd.buttons |= BUTTON_ATTACK;
@@ -14495,12 +14500,8 @@ static void PM_Weapon( void )
 	else if ( pm->cmd.buttons & BUTTON_ALT_ATTACK )
 	{
 		PM_AddEvent( EV_ALT_FIRE );
-		addTime = weaponData[pm->ps->weapon].altFireTime;
-		if ( pm->ps->weapon == WP_BOWCASTER )
-		{// charged explosive bolt — nerf fire rate significantly
-			addTime *= 3.0f;
-		}
-		else if ( pm->ps->weapon == WP_THERMAL )
+		addTime = weaponData[pm->ps->weapon].altFireTime;//bowcaster's slow charged-bolt rate lives in weapons.dat now (was a hidden x3 here)
+		if ( pm->ps->weapon == WP_THERMAL )
 		{//threw our thermal
 			if ( pm->gent )
 			{// remove the thermal model if we had it.
@@ -14530,27 +14531,33 @@ static void PM_Weapon( void )
 			//melee with g_debugmelee on
 			addTime = pm->ps->torsoAnimTimer;
 			break;
-		case WP_BOWCASTER:
-			addTime *= 2.5f;
-			break;
 		case WP_REPEATER:
 			// repeater is supposed to do smoke after sustained bursts
 			pm->ps->weaponShotCount++;
-			if ( pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer() )
-			{// 3-round burst, tracked by its own counter so a tap always fires all 3 (the forced
-			//re-press near PM_DoChargedWeapons finishes it) and a new burst always starts clean.
-			//NPC burst cadence lives in NPC_combat.cpp's ChangeWeapon instead.
-				if ( pm->ps->repeaterBurstLeft <= 0 )
-				{
-					pm->ps->repeaterBurstLeft = 2;
-				}
-				else
-				{
-					pm->ps->repeaterBurstLeft--;
-				}
-				addTime = ( pm->ps->repeaterBurstLeft > 0 ) ? 60 : 450;
-			}
 			break;
+		}
+
+		// Burst weapons (weapons.dat burstCount > 1, e.g. the repeater's 3-round burst): a trigger
+		// pull always fires the whole burst (the forced re-press in PM_Weapon finishes it), burstGap
+		// between rounds and fireTime after the last one. Same for the player and NPCs.
+		if ( weaponData[pm->ps->weapon].burstCount > 1 )
+		{
+			if ( pm->ps->repeaterBurstLeft <= 0 )
+			{
+				pm->ps->repeaterBurstLeft = weaponData[pm->ps->weapon].burstCount - 1;
+			}
+			else
+			{
+				pm->ps->repeaterBurstLeft--;
+			}
+			if ( pm->ps->repeaterBurstLeft > 0 )
+			{
+				addTime = weaponData[pm->ps->weapon].burstGap;
+			}
+		}
+
+		switch( pm->ps->weapon )
+		{
 		case WP_THERMAL:
 			if ( pm->gent )
 			{// remove the thermal model if we had it.
@@ -14567,8 +14574,9 @@ static void PM_Weapon( void )
 
 	if(!PM_ControlledByPlayer())
 	{
-		if(pm->gent && pm->gent->NPC != NULL )
-		{//NPCs have their own refire logic
+		if(pm->gent && pm->gent->NPC != NULL && !PM_NPCUsesWeaponFireRate( pm->ps->weapon ) )
+		{//NPCs have their own refire logic -- except blaster-family guns, which NPCs fire at the
+		//same weapons.dat fireTime as the player (their AI only decides when to pull/release)
 			return;
 		}
 	}

@@ -363,6 +363,7 @@ typedef struct
 	fxHandle_t	bowcasterShotEffect;
 	fxHandle_t	bowcasterBounceEffect;
 	fxHandle_t	bowcasterImpactEffect;
+	fxHandle_t	bowcasterAltImpactEffect;	// charged alt-fire blast, sized to its splash radius
 
 	// FLECHETTE
 	fxHandle_t	flechetteShotEffect;

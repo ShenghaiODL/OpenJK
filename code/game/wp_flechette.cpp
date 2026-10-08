@@ -36,17 +36,12 @@ static void WP_FlechetteMainFire( gentity_t *ent )
 {
 	vec3_t		fwd, angs, start;
 	gentity_t	*missile;
-	float		damage = weaponData[WP_FLECHETTE].damage, vel = FLECHETTE_VEL;
+	// same pellet damage/speed as the player; NPCs get the difficulty damage scale and g_npcBoltSpeed
+	int			damage = WP_ShooterDamage( ent, weaponData[WP_FLECHETTE].damage );
+	float		vel = WP_ShooterVelocity( ent, weaponData[WP_FLECHETTE].velocity );
 
 	VectorCopy( muzzle, start );
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );//make sure our start point isn't on the other side of a wall
-
-	// If we aren't the player, we will cut the velocity and damage of the shots
-	if ( ent->s.number )
-	{
-		damage *= 0.75f;
-		vel *= 0.5f;
-	}
 
 //	if ( ent->client && ent->client->ps.powerups[PW_WEAPON_OVERCHARGE] > 0 && ent->client->ps.powerups[PW_WEAPON_OVERCHARGE] > cg.time )
 //	{
@@ -63,12 +58,16 @@ static void WP_FlechetteMainFire( gentity_t *ent )
 			// do nothing on the first shot for the player, this one will hit the crosshairs
 		}
 		else
-		{
-			angs[PITCH] += Q_flrand(-1.0f, 1.0f) * FLECHETTE_SPREAD;
-			angs[YAW]	+= Q_flrand(-1.0f, 1.0f) * FLECHETTE_SPREAD;
+		{// the shotgun pattern is the weapon's own spread (weapons.dat "spread"), not aim error,
+		//so Force Sight doesn't tighten it
+			angs[PITCH] += Q_flrand(-1.0f, 1.0f) * weaponData[WP_FLECHETTE].spread;
+			angs[YAW]	+= Q_flrand(-1.0f, 1.0f) * weaponData[WP_FLECHETTE].spread;
 		}
 
 		AngleVectors( angs, fwd, NULL, NULL );
+		// NPC aim error on top (skill + warm-up); uses the alt spread slot, which is 0, so only the
+		// NPC part applies
+		WP_ApplyWeaponSpread( ent, WP_FLECHETTE, qtrue, 1.0f, fwd );
 
 		WP_MissileTargetHint(ent, start, fwd);
 
@@ -236,9 +235,9 @@ static void WP_CreateFlechetteBouncyThing( vec3_t start, vec3_t fwd, gentity_t *
 
 	missile->s.eFlags |= EF_BOUNCE_HALF;
 
-	missile->damage = weaponData[WP_FLECHETTE].altDamage;
+	missile->damage = WP_ShooterDamage( self, weaponData[WP_FLECHETTE].altDamage );
 	missile->dflags = 0;
-	missile->splashDamage = weaponData[WP_FLECHETTE].altSplashDamage;
+	missile->splashDamage = WP_ShooterDamage( self, weaponData[WP_FLECHETTE].altSplashDamage );
 	missile->splashRadius = weaponData[WP_FLECHETTE].altSplashRadius;
 
 	missile->svFlags = SVF_USE_CURRENT_ORIGIN;

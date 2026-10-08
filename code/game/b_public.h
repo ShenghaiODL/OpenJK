@@ -156,6 +156,8 @@ public:
 	int		acceleration;
 	//sex
 	sexType_t	sex;			//male, female, etc.
+	//Weapons (blaster pass)
+	int		weaponSkill;		// 1-5 from the .npc "weaponSkill" key; 0 = not set, use g_npcWeaponSkill
 
 
 	void sg_export(
@@ -179,6 +181,7 @@ public:
 		saved_game.write<int32_t>(health);
 		saved_game.write<int32_t>(acceleration);
 		saved_game.write<int32_t>(sex);
+		saved_game.write<int32_t>(weaponSkill);
 	}
 
 	void sg_import(
@@ -202,6 +205,7 @@ public:
 		saved_game.read<int32_t>(health);
 		saved_game.read<int32_t>(acceleration);
 		saved_game.read<int32_t>(sex);
+		saved_game.read<int32_t>(weaponSkill);
 	}
 }; // gNPCstats_t
 

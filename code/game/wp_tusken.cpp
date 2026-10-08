@@ -107,42 +107,23 @@ void WP_FireCyclerRifle( gentity_t *ent, int chargeLevel )
 	}
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );
 
-	if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
-		|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
-	{
-		if ( ent->NPC && ent->NPC->currentAim < 5 )
-		{
-			vec3_t	angs;
-			vectoangles( forwardVec, angs );
-			angs[PITCH] += ( Q_flrand(-1.0f, 1.0f) * ((5-ent->NPC->currentAim)*0.25f) );
-			angs[YAW]	+= ( Q_flrand(-1.0f, 1.0f) * ((5-ent->NPC->currentAim)*0.25f) );
-			AngleVectors( angs, forwardVec, NULL, NULL );
-		}
-	}
+	// weapon spread, plus skill-based spread for NPCs (Force Sight 2+ is exempt)
+	WP_ApplyWeaponSpread( ent, WP_CYCLER_RIFLE, (qboolean)( chargeLevel > 0 ), 1.0f, forwardVec );
 
 	WP_MissileTargetHint(ent, start, forwardVec);
 
-	gentity_t *missile = CreateMissile( start, forwardVec, TUSKEN_RIFLE_VEL, 10000, ent, qfalse );
+	gentity_t *missile = CreateMissile( start, forwardVec, WP_ShooterVelocity( ent, weaponData[WP_CYCLER_RIFLE].velocity ), 10000, ent, qfalse );
 
 	missile->classname = "cycler_proj";
 	missile->s.weapon = WP_CYCLER_RIFLE;
 
-	if ( ent->s.number < MAX_CLIENTS || g_spskill->integer >= 2 )
-	{
-		missile->damage = TUSKEN_RIFLE_DAMAGE_HARD;
-	}
-	else if ( g_spskill->integer > 0 )
-	{
-		missile->damage = TUSKEN_RIFLE_DAMAGE_MEDIUM;
-	}
-	else
-	{
-		missile->damage = TUSKEN_RIFLE_DAMAGE_EASY;
-	}
+	// weapons.dat damage (default TUSKEN_RIFLE_DAMAGE_HARD), the same for NPCs scaled by difficulty
+	missile->damage = weaponData[WP_CYCLER_RIFLE].damage;
 	if ( chargeLevel > 0 )
 	{
 		missile->damage = missile->damage * ( 1 + chargeLevel / 5 );
 	}
+	missile->damage = WP_ShooterDamage( ent, missile->damage );
 	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
 	missile->methodOfDeath = ( chargeLevel > 0 ) ? MOD_SNIPER : MOD_BRYAR;
 	missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;

@@ -35,9 +35,11 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 void WP_FireBlasterMissile( gentity_t *ent, vec3_t start, vec3_t dir, qboolean altFire )
 //---------------------------------------------------------
 {
-	int velocity	= BLASTER_VELOCITY;
-	int	damage		= altFire ? weaponData[WP_BLASTER].altDamage : weaponData[WP_BLASTER].damage;
-	
+	// E-11, E-5 and DC-15S share this function; each uses its own weapons.dat profile
+	int		weapon	= ( ent->s.weapon == WP_E5_CARBINE || ent->s.weapon == WP_DC15S_CARBINE ) ? ent->s.weapon : WP_BLASTER;
+	float	velocity = altFire ? weaponData[weapon].altVelocity : weaponData[weapon].velocity;
+	int		damage	= altFire ? weaponData[weapon].altDamage : weaponData[weapon].damage;
+
 	if ( ent && ent->client && ent->client->NPC_class == CLASS_VEHICLE )
 	{
 		damage *= 3;
@@ -45,18 +47,9 @@ void WP_FireBlasterMissile( gentity_t *ent, vec3_t start, vec3_t dir, qboolean a
 	}
 	else
 	{
-		// If an enemy is shooting at us, lower the velocity so you have a chance to evade
-		if ( ent->client && ent->client->ps.clientNum != 0 && ent->client->NPC_class != CLASS_BOBAFETT )
-		{
-			if ( g_spskill->integer < 2 )
-			{
-				velocity *= BLASTER_NPC_VEL_CUT;
-			}
-			else
-			{
-				velocity *= BLASTER_NPC_HARD_VEL_CUT;
-			}
-		}
+		// NPC bolts are slowed (g_npcBoltSpeed) so you have a chance to evade/deflect
+		velocity = WP_ShooterVelocity( ent, velocity );
+		damage = WP_ShooterDamage( ent, damage );
 	}
 
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );//make sure our start point isn't on the other side of a wall
@@ -66,35 +59,7 @@ void WP_FireBlasterMissile( gentity_t *ent, vec3_t start, vec3_t dir, qboolean a
 	gentity_t *missile = CreateMissile( start, dir, velocity, 10000, ent, altFire );
 
 	missile->classname = "blaster_proj";
-	missile->s.weapon = WP_BLASTER;
-
-	// Do the damages
-	if ( ent->s.number != 0 && ent->client->NPC_class != CLASS_BOBAFETT )
-	{
-		if ( g_spskill->integer == 0 )
-		{
-			damage = BLASTER_NPC_DAMAGE_EASY;
-		}
-		else if ( g_spskill->integer == 1 )
-		{
-			damage = BLASTER_NPC_DAMAGE_NORMAL;
-		}
-		else
-		{
-			damage = BLASTER_NPC_DAMAGE_HARD;
-		}
-	}
-	
-	if ( ent->s.weapon == WP_E5_CARBINE )
-	{
-		damage = altFire ? weaponData[WP_E5_CARBINE].altDamage : weaponData[WP_E5_CARBINE].damage;
-		missile->s.weapon = WP_E5_CARBINE;
-	}
-	else if ( ent->s.weapon == WP_DC15S_CARBINE )
-	{
-		damage = altFire ? weaponData[WP_DC15S_CARBINE].altDamage : weaponData[WP_DC15S_CARBINE].damage;
-		missile->s.weapon = WP_DC15S_CARBINE;
-	}
+	missile->s.weapon = weapon;
 
 //	if ( ent->client )
 //	{
@@ -126,44 +91,12 @@ void WP_FireBlasterMissile( gentity_t *ent, vec3_t start, vec3_t dir, qboolean a
 void WP_FireBlaster( gentity_t *ent, qboolean alt_fire )
 //---------------------------------------------------------
 {
-	vec3_t	dir, angs;
+	vec3_t	dir;
+	int		weapon = ( ent->s.weapon == WP_E5_CARBINE || ent->s.weapon == WP_DC15S_CARBINE ) ? ent->s.weapon : WP_BLASTER;
 
-	vectoangles( forwardVec, angs );
-
-	if ( ent->client && ent->client->NPC_class == CLASS_VEHICLE )
-	{//no inherent aim screw up
-	}
-	else if ( !(ent->client->ps.forcePowersActive&(1<<FP_SEE))
-		|| ent->client->ps.forcePowerLevel[FP_SEE] < FORCE_LEVEL_2 )
-	{//force sight 2+ gives perfect aim
-		//FIXME: maybe force sight level 3 autoaims some?
-		if ( alt_fire )
-		{
-			// add some slop to the alt-fire direction
-			angs[PITCH] += Q_flrand(-1.0f, 1.0f) * BLASTER_ALT_SPREAD;
-			angs[YAW]	+= Q_flrand(-1.0f, 1.0f) * BLASTER_ALT_SPREAD;
-		}
-		else
-		{
-			// Troopers use their aim values as well as the gun's inherent inaccuracy
-			// so check for all classes of stormtroopers and anyone else that has aim error
-			if ( ent->client && ent->NPC &&
-				( ent->client->NPC_class == CLASS_STORMTROOPER ||
-				ent->client->NPC_class == CLASS_SWAMPTROOPER ) )
-			{
-				angs[PITCH] += ( Q_flrand(-1.0f, 1.0f) * (BLASTER_NPC_SPREAD+(6-ent->NPC->currentAim)*0.25f));//was 0.5f
-				angs[YAW]	+= ( Q_flrand(-1.0f, 1.0f) * (BLASTER_NPC_SPREAD+(6-ent->NPC->currentAim)*0.25f));//was 0.5f
-			}
-			else
-			{
-				// add some slop to the main-fire direction
-				angs[PITCH] += Q_flrand(-1.0f, 1.0f) * BLASTER_MAIN_SPREAD;
-				angs[YAW]	+= Q_flrand(-1.0f, 1.0f) * BLASTER_MAIN_SPREAD;
-			}
-		}
-	}
-
-	AngleVectors( angs, dir, NULL, NULL );
+	// weapon spread, plus skill-based spread for NPCs (vehicles and Force Sight 2+ are exempt)
+	VectorCopy( forwardVec, dir );
+	WP_ApplyWeaponSpread( ent, weapon, alt_fire, 1.0f, dir );
 
 	// FIXME: if temp_org does not have clear trace to inside the bbox, don't shoot!
 	WP_FireBlasterMissile( ent, muzzle, dir, alt_fire );

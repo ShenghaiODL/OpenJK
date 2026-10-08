@@ -255,6 +255,19 @@ void WPN_NoHandModel(const char **holdBuf);
 void WPN_SkinFile(const char **holdBuf);
 void WPN_WeaponSlot(const char **holdBuf);
 
+// Weapon profile (blaster pass)
+void WPN_Velocity(const char **holdBuf);
+void WPN_AltVelocity(const char **holdBuf);
+void WPN_Spread(const char **holdBuf);
+void WPN_AltSpread(const char **holdBuf);
+void WPN_NPCSpread(const char **holdBuf);
+void WPN_BurstCount(const char **holdBuf);
+void WPN_BurstGap(const char **holdBuf);
+void WPN_NPCBurstMin(const char **holdBuf);
+void WPN_NPCBurstMax(const char **holdBuf);
+void WPN_NPCPause(const char **holdBuf);
+void WPN_NPCDamageScale(const char **holdBuf);
+
 // Legacy weapons.dat force fields
 void WPN_FuncSkip(const char **holdBuf);
 
@@ -317,7 +330,7 @@ const int defaultAltDamage[] = {
 	BRYAR_PISTOL_DAMAGE,	// WP_BLASTER_PISTOL
 	BLASTER_DAMAGE,			// WP_BLASTER
 	DISRUPTOR_ALT_DAMAGE,	// WP_DISRUPTOR
-	BOWCASTER_DAMAGE,		// WP_BOWCASTER
+	BOWCASTER_ALT_DAMAGE,	// WP_BOWCASTER				// base of the charged explosive bolt (+10 per charge step)
 	REPEATER_ALT_DAMAGE,	// WP_REPEATER
 	DEMP2_ALT_DAMAGE,		// WP_DEMP2
 	FLECHETTE_ALT_DAMAGE,	// WP_FLECHETTE
@@ -591,6 +604,19 @@ wpnParms_t WpnParms[] =
 	{ "altSplashDamage",	WPN_AltSplashDamage },
 	{ "altSplashRadius",	WPN_AltSplashRadius },
 	
+	// Weapon profile (blaster pass)
+	{ "velocity",			WPN_Velocity },
+	{ "altVelocity",		WPN_AltVelocity },
+	{ "spread",				WPN_Spread },
+	{ "altSpread",			WPN_AltSpread },
+	{ "npcSpread",			WPN_NPCSpread },
+	{ "burstCount",			WPN_BurstCount },
+	{ "burstGap",			WPN_BurstGap },
+	{ "npcBurstMin",		WPN_NPCBurstMin },
+	{ "npcBurstMax",		WPN_NPCBurstMax },
+	{ "npcPause",			WPN_NPCPause },
+	{ "npcDamageScale",		WPN_NPCDamageScale },
+
 	{ "noHandModel",		WPN_NoHandModel },
 	{ "skinFile",			WPN_SkinFile },
 	{ "worldModel",			WPN_WorldModel },
@@ -1682,6 +1708,154 @@ void WPN_AltSplashRadius(const char **holdBuf)
 }
 
 //--------------------------------------------
+// Weapon profile (blaster pass)
+//--------------------------------------------
+
+static void WPN_ParseFloatField( const char **holdBuf, float *field )
+{
+	float	tokenFlt;
+
+	if( COM_ParseFloat(holdBuf,&tokenFlt))
+	{
+		SkipRestOfLine(holdBuf);
+		return;
+	}
+
+	*field = tokenFlt;
+}
+
+static void WPN_ParseIntField( const char **holdBuf, int *field )
+{
+	int		tokenInt;
+
+	if( COM_ParseInt(holdBuf,&tokenInt))
+	{
+		SkipRestOfLine(holdBuf);
+		return;
+	}
+
+	*field = tokenInt;
+}
+
+void WPN_Velocity(const char **holdBuf)		{ WPN_ParseFloatField( holdBuf, &weaponData[wpnParms.weaponNum].velocity ); }
+void WPN_AltVelocity(const char **holdBuf)	{ WPN_ParseFloatField( holdBuf, &weaponData[wpnParms.weaponNum].altVelocity ); }
+void WPN_Spread(const char **holdBuf)		{ WPN_ParseFloatField( holdBuf, &weaponData[wpnParms.weaponNum].spread ); }
+void WPN_AltSpread(const char **holdBuf)	{ WPN_ParseFloatField( holdBuf, &weaponData[wpnParms.weaponNum].altSpread ); }
+void WPN_NPCSpread(const char **holdBuf)	{ WPN_ParseFloatField( holdBuf, &weaponData[wpnParms.weaponNum].npcSpread ); }
+void WPN_BurstCount(const char **holdBuf)	{ WPN_ParseIntField( holdBuf, &weaponData[wpnParms.weaponNum].burstCount ); }
+void WPN_BurstGap(const char **holdBuf)		{ WPN_ParseIntField( holdBuf, &weaponData[wpnParms.weaponNum].burstGap ); }
+void WPN_NPCBurstMin(const char **holdBuf)	{ WPN_ParseIntField( holdBuf, &weaponData[wpnParms.weaponNum].npcBurstMin ); }
+void WPN_NPCBurstMax(const char **holdBuf)	{ WPN_ParseIntField( holdBuf, &weaponData[wpnParms.weaponNum].npcBurstMax ); }
+void WPN_NPCPause(const char **holdBuf)		{ WPN_ParseIntField( holdBuf, &weaponData[wpnParms.weaponNum].npcPause ); }
+void WPN_NPCDamageScale(const char **holdBuf)	{ WPN_ParseFloatField( holdBuf, &weaponData[wpnParms.weaponNum].npcDamageScale ); }
+
+// Per-weapon profile defaults, matching the values that used to be hard-coded (weapons.h
+// defines, NPC_combat.cpp's ChangeWeapon table at normal difficulty), so a weapons.dat without
+// the new keys plays the same as before. weapons.dat overrides any of these.
+static void WP_SetDefaultProfile( int weapon )
+{
+	weaponData_t *wd = &weaponData[weapon];
+
+	// generic template (custom slots and anything not listed below)
+	wd->velocity	= wd->altVelocity = BLASTER_VELOCITY;
+	wd->spread		= BLASTER_MAIN_SPREAD;
+	wd->altSpread	= BLASTER_ALT_SPREAD;
+	wd->npcSpread	= 1.25f;
+	wd->burstCount	= 0;
+	wd->burstGap	= 60;
+	wd->npcBurstMin	= wd->npcBurstMax = 1;
+	wd->npcPause	= 1000;
+	wd->npcDamageScale = 1.0f;
+
+	switch ( weapon )
+	{
+	case WP_BRYAR_PISTOL:
+	case WP_BLASTER_PISTOL:
+	case WP_JAWA:
+	case WP_DC15A_RIFLE:
+		wd->velocity	= wd->altVelocity = BRYAR_PISTOL_VEL;
+		wd->spread		= wd->altSpread = 0.0f;
+		wd->npcSpread	= 1.0f;
+		wd->npcPause	= ( weapon == WP_BRYAR_PISTOL ) ? 1000 : 750;
+		break;
+	case WP_BLASTER:
+	case WP_E5_CARBINE:
+	case WP_DC15S_CARBINE:
+		wd->npcPause	= 750;
+		break;
+	case WP_REPEATER:
+		wd->velocity	= REPEATER_VELOCITY;
+		wd->altVelocity	= REPEATER_ALT_VELOCITY;
+		wd->spread		= REPEATER_SPREAD;
+		wd->altSpread	= 0.0f;
+		wd->npcSpread	= 1.5f;
+		wd->burstCount	= 3;
+		wd->burstGap	= 60;
+		wd->npcPause	= 1000;
+		break;
+	case WP_Z6_ROTARY:
+		wd->velocity	= wd->altVelocity = REPEATER_VELOCITY;
+		wd->spread		= wd->altSpread = REPEATER_SPREAD;
+		wd->npcSpread	= 1.5f;
+		wd->npcBurstMin	= 60;	// ~3-3.5s streams at the 50ms fire rate
+		wd->npcBurstMax	= 70;
+		wd->npcPause	= 2000;
+		break;
+	case WP_DISRUPTOR:
+		wd->velocity	= wd->altVelocity = DISRUPTOR_VELOCITY;
+		wd->spread		= wd->altSpread = 0.0f;
+		wd->npcSpread	= 0.5f;
+		wd->npcPause	= 1000;
+		break;
+	case WP_BOWCASTER:
+		wd->velocity	= wd->altVelocity = BOWCASTER_VELOCITY;
+		wd->spread		= wd->altSpread = 0.0f;
+		wd->npcSpread	= 0.5f;
+		wd->npcPause	= 1875;
+		break;
+	case WP_DEMP2:
+		wd->velocity	= DEMP2_VELOCITY;
+		wd->altVelocity	= DEMP2_ALT_RANGE;	// alt "bolt" is the detonating shell, 1s life
+		wd->spread		= wd->altSpread = 0.0f;
+		wd->npcSpread	= 1.0f;
+		wd->npcPause	= 1500;
+		break;
+	case WP_FLECHETTE:
+		wd->velocity	= FLECHETTE_VEL;
+		wd->altVelocity	= FLECHETTE_MINE_VEL;	// alt grenades lob at a random 950-1650; this is just for AI lead
+		wd->spread		= FLECHETTE_SPREAD;		// per pellet
+		wd->altSpread	= 0.0f;
+		wd->npcSpread	= 1.0f;
+		wd->npcPause	= 1000;
+		break;
+	case WP_CONCUSSION:
+		wd->velocity	= CONC_VELOCITY;
+		wd->altVelocity	= Q3_INFINITE;		// alt is a hitscan beam
+		wd->spread		= wd->altSpread = 0.0f;
+		wd->npcSpread	= 1.0f;
+		wd->npcPause	= 1800;
+		wd->npcDamageScale = 0.25f;			// 150-dmg rocket / 225-dmg beam would one-shot the player otherwise
+		break;
+	case WP_ROCKET_LAUNCHER:
+		wd->velocity	= ROCKET_VELOCITY;
+		wd->altVelocity	= ROCKET_ALT_VELOCITY;
+		wd->spread		= wd->altSpread = 0.0f;
+		wd->npcSpread	= 0.5f;
+		wd->npcPause	= 2000;
+		wd->npcDamageScale = 0.65f;
+		break;
+	case WP_CYCLER_RIFLE:
+		wd->velocity	= wd->altVelocity = TUSKEN_RIFLE_VEL;
+		wd->spread		= wd->altSpread = 0.0f;
+		wd->npcSpread	= 0.5f;
+		wd->npcPause	= 1100;
+		break;
+	default:
+		break;
+	}
+}
+
+//--------------------------------------------
 
 void WPN_NoHandModel(const char **holdBuf)
 {
@@ -1770,6 +1944,7 @@ void WP_LoadWeaponParms (void)
 		weaponData[i].altSplashDamage = defaultAltSplashDamage[i];
 		weaponData[i].splashRadius = defaultSplashRadius[i];
 		weaponData[i].altSplashRadius = defaultAltSplashRadius[i];
+		WP_SetDefaultProfile( i );
 	}
 
 	WP_ParseParms(buffer);

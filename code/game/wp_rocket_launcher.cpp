@@ -53,7 +53,9 @@ void rocketThink( gentity_t *ent )
 	}
 	if ( ent->enemy && ent->enemy->inuse )
 	{
-		float vel = (ent->spawnflags&1)?ent->speed:ROCKET_VELOCITY;
+		// homing speed is vel*0.5 below; hand-held rockets store their launch speed in speed (profile
+		// altVelocity, NPC-scaled), so x2 keeps them flying at the speed they were fired at
+		float vel = (ent->spawnflags&1)?ent->speed:( ent->speed > 0.0f ? ent->speed * 2.0f : ROCKET_VELOCITY );
 		float newDirMult = ent->angle?ent->angle*2.0f:1.0f;
 		float oldDirMult = ent->angle?(1.0f-ent->angle)*2.0f:1.0f;
 
@@ -174,43 +176,22 @@ void WP_FireRocket( gentity_t *ent, qboolean alt_fire )
 //---------------------------------------------------------
 {
 	vec3_t	start;
-	int		damage	= weaponData[WP_ROCKET_LAUNCHER].damage;
-	float	vel = ROCKET_VELOCITY;
-
-	if ( alt_fire )
-	{
-		vel *= 0.5f;
-	}
+	// same damage/speed as the player; NPCs get the difficulty scale x npcDamageScale (Boba Fett:
+	// npcDamageScale only -- replaces his old "half rocket damage" rule) and g_npcBoltSpeed
+	int		damage	= WP_ShooterDamage( ent, weaponData[WP_ROCKET_LAUNCHER].damage );
+	float	vel = WP_ShooterVelocity( ent, alt_fire ? weaponData[WP_ROCKET_LAUNCHER].altVelocity : weaponData[WP_ROCKET_LAUNCHER].velocity );
 
 	VectorCopy( muzzle, start );
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );//make sure our start point isn't on the other side of a wall
+
+	WP_ApplyWeaponSpread( ent, WP_ROCKET_LAUNCHER, alt_fire, 1.0f, forwardVec );
 
 	gentity_t *missile = CreateMissile( start, forwardVec, vel, 10000, ent, alt_fire );
 
 	missile->classname = "rocket_proj";
 	missile->s.weapon = WP_ROCKET_LAUNCHER;
 	missile->mass = 10;
-
-	// Do the damages
-	if ( ent->s.number != 0 )
-	{
-		if ( g_spskill->integer == 0 )
-		{
-			damage = ROCKET_NPC_DAMAGE_EASY;
-		}
-		else if ( g_spskill->integer == 1 )
-		{
-			damage = ROCKET_NPC_DAMAGE_NORMAL;
-		}
-		else
-		{
-			damage = ROCKET_NPC_DAMAGE_HARD;
-		}
-		if (ent->client && ent->client->NPC_class==CLASS_BOBAFETT)
-		{
-			damage = damage/2;
-		}
-	}
+	missile->speed = vel;//rocketThink keeps homing rockets at this speed
 
 	if ( alt_fire )
 	{
@@ -301,7 +282,7 @@ void WP_FireRocket( gentity_t *ent, qboolean alt_fire )
 	}
 
 	missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
-	missile->splashDamage = weaponData[WP_ROCKET_LAUNCHER].splashDamage;
+	missile->splashDamage = WP_ShooterDamage( ent, weaponData[WP_ROCKET_LAUNCHER].splashDamage );
 	missile->splashRadius = weaponData[WP_ROCKET_LAUNCHER].splashRadius;
 
 	// we don't want it to ever bounce

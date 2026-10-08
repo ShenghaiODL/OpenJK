@@ -207,6 +207,11 @@ cvar_t	*g_saberLockRandomNess;
 cvar_t	*g_debugMelee;
 cvar_t	*g_debugNPCFire;
 cvar_t	*g_debugAim;
+cvar_t	*g_npcWeaponSkill;
+cvar_t	*g_npcDamageEasy;
+cvar_t	*g_npcDamageNormal;
+cvar_t	*g_npcDamageHard;
+cvar_t	*g_npcBoltSpeed;
 cvar_t	*g_saberRestrictForce;
 cvar_t	*g_saberPickuppableDroppedSabers;
 cvar_t	*g_dismemberProbabilities;
@@ -715,6 +720,12 @@ void G_InitCvars( void ) {
 	g_debugMelee = gi.cvar( "g_debugMelee", "0", CVAR_CHEAT );//just for debugging/development, test kicks and grabs
 	g_debugNPCFire = gi.cvar( "g_debugNPCFire", "0", 0 );//prints why stormtrooper-AI NPCs are/aren't shooting the player
 	g_debugAim = gi.cvar( "g_debugAim", "0", 0 );//draws the player's crosshair ray / corrected bolt path per shot (WP_MissileTargetHint)
+	// Blaster pass: NPCs fire with the player's weapon profile; these tune how
+	g_npcWeaponSkill = gi.cvar( "g_npcWeaponSkill", "3", CVAR_ARCHIVE );//default 1-5 gun skill for NPCs whose .npc entry has no weaponSkill
+	g_npcDamageEasy = gi.cvar( "g_npcDamageEasy", "0.4", CVAR_ARCHIVE );//NPC bolt damage = player damage x this, per difficulty
+	g_npcDamageNormal = gi.cvar( "g_npcDamageNormal", "0.6", CVAR_ARCHIVE );
+	g_npcDamageHard = gi.cvar( "g_npcDamageHard", "0.8", CVAR_ARCHIVE );
+	g_npcBoltSpeed = gi.cvar( "g_npcBoltSpeed", "0.75", CVAR_ARCHIVE );//NPC bolt speed = weapon velocity x this (dodge/deflect window)
 	g_saberRestrictForce = gi.cvar( "g_saberRestrictForce", "0", CVAR_ARCHIVE );//restricts certain force powers when using a 2-handed saber or 2 sabers
 	g_saberPickuppableDroppedSabers = gi.cvar( "g_saberPickuppableDroppedSabers", "0", CVAR_CHEAT );//lets you pick up sabers that are dropped
 

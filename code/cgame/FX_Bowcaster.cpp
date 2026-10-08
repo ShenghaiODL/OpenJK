@@ -69,9 +69,10 @@ FX_BowcasterHitWall
 ---------------------------
 */
 
-void FX_BowcasterHitWall( vec3_t origin, vec3_t normal )
+void FX_BowcasterHitWall( vec3_t origin, vec3_t normal, qboolean altFire )
 {
-	theFxScheduler.PlayEffect( cgs.effects.bowcasterImpactEffect, origin, normal );
+	// the charged alt bolt gets a blast sized to its splash radius
+	theFxScheduler.PlayEffect( altFire ? cgs.effects.bowcasterAltImpactEffect : cgs.effects.bowcasterImpactEffect, origin, normal );
 }
 
 /*
@@ -80,7 +81,7 @@ FX_BowcasterHitPlayer
 ---------------------------
 */
 
-void FX_BowcasterHitPlayer( vec3_t origin, vec3_t normal, qboolean humanoid )
+void FX_BowcasterHitPlayer( vec3_t origin, vec3_t normal, qboolean humanoid, qboolean altFire )
 {
-	theFxScheduler.PlayEffect( cgs.effects.bowcasterImpactEffect, origin, normal );
+	theFxScheduler.PlayEffect( altFire ? cgs.effects.bowcasterAltImpactEffect : cgs.effects.bowcasterImpactEffect, origin, normal );
 }

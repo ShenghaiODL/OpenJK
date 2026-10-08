@@ -897,6 +897,88 @@ qboolean G_JediInRoom( vec3_t from )
 	return qfalse;
 }
 
+//---------------------------------------------------------
+// Gun (non-saber) hit locations. The surface-name rules below were tuned for saber dismemberment
+// and misread bolts in three ways:
+//  - surfaces that match no rule (helmets, hats, bolt-on models) gave HL_NONE (x1, no headshot);
+//  - a hit on a torso surface more than 4u off the centre line counted as an ARM hit, so ordinary
+//    off-centre chest hits (especially with the torso twisted to aim) were x0.5;
+//  - in the rifle pose the left arm crosses in front of the chest, so chest shots hit the arm mesh.
+// This re-classifies from the impact point in torso space (renderInfo.torsoPoint/torsoAngles,
+// same as the torso rule) with a body-sized split. Saber hits keep the original rules.
+//---------------------------------------------------------
+#define GUNHIT_CHEST_HALFWIDTH	10.0f	// |right| beyond this is an arm
+#define GUNHIT_CHEST_CENTRE		3.0f	// |right| below this is centre chest/back
+#define GUNHIT_WAIST_BELOW		-10.0f	// below torsoPoint by more than this is waist
+#define GUNHIT_HEAD_BELOW_EYE	-7.0f	// within this of the eye height and above is the head
+
+static void G_GunHitLocFromTorsoSpace( float frontSide, float rightSide, float upSide, int *hitLoc )
+{
+	if ( upSide < GUNHIT_WAIST_BELOW )
+	{
+		*hitLoc = HL_WAIST;
+	}
+	else if ( rightSide > GUNHIT_CHEST_HALFWIDTH )
+	{
+		*hitLoc = HL_ARM_RT;
+	}
+	else if ( rightSide < -GUNHIT_CHEST_HALFWIDTH )
+	{
+		*hitLoc = HL_ARM_LT;
+	}
+	else if ( rightSide > GUNHIT_CHEST_CENTRE )
+	{
+		*hitLoc = ( frontSide > 0 ) ? HL_CHEST_RT : HL_BACK_RT;
+	}
+	else if ( rightSide < -GUNHIT_CHEST_CENTRE )
+	{
+		*hitLoc = ( frontSide > 0 ) ? HL_CHEST_LT : HL_BACK_LT;
+	}
+	else
+	{
+		*hitLoc = ( frontSide > 0 ) ? HL_CHEST : HL_BACK;
+	}
+}
+
+static void G_GunRefineHitLoc( gentity_t *ent, const char *surfName, vec3_t point, int *hitLoc )
+{
+	if ( !ent->client || !ent->ghoul2.size() )
+	{
+		return;
+	}
+
+	vec3_t	t_fwd, t_rt, t_up, dirToImpact;
+	AngleVectors( ent->client->renderInfo.torsoAngles, t_fwd, t_rt, t_up );
+	VectorSubtract( point, ent->client->renderInfo.torsoPoint, dirToImpact );
+	const float frontSide = DotProduct( t_fwd, dirToImpact );
+	const float rightSide = DotProduct( t_rt, dirToImpact );
+	const float upSide = DotProduct( t_up, dirToImpact );
+
+	if ( *hitLoc == HL_NONE )
+	{// unknown surface (helmet, hat, bolt-on model): place it on the body from the impact point
+		if ( point[2] - ent->client->renderInfo.eyePoint[2] > GUNHIT_HEAD_BELOW_EYE )
+		{
+			*hitLoc = HL_HEAD;
+		}
+		else
+		{
+			G_GunHitLocFromTorsoSpace( frontSide, rightSide, upSide, hitLoc );
+		}
+	}
+	else if ( !Q_stricmpn( "torso", surfName, 5 ) )
+	{// torso surface: body-sized chest instead of the 4u saber split
+		G_GunHitLocFromTorsoSpace( frontSide, rightSide, upSide, hitLoc );
+	}
+	else if ( ( *hitLoc == HL_ARM_LT || *hitLoc == HL_ARM_RT || *hitLoc == HL_HAND_LT || *hitLoc == HL_HAND_RT )
+		&& frontSide > 0
+		&& upSide >= GUNHIT_WAIST_BELOW
+		&& point[2] - ent->client->renderInfo.eyePoint[2] <= GUNHIT_HEAD_BELOW_EYE
+		&& fabs( rightSide ) <= GUNHIT_CHEST_HALFWIDTH )
+	{// arm/hand raised across the front of the chest (rifle pose): the bolt is hitting the chest
+		G_GunHitLocFromTorsoSpace( frontSide, rightSide, upSide, hitLoc );
+	}
+}
+
 qboolean G_GetHitLocFromSurfName( gentity_t *ent, const char *surfName, int *hitLoc, vec3_t point, vec3_t dir, vec3_t bladeDir, int mod, saberType_t saberType )
 {
 	qboolean dismember = qfalse;
@@ -1238,6 +1320,11 @@ qboolean G_GetHitLocFromSurfName( gentity_t *ent, const char *surfName, int *hit
 		Com_Printf( "ERROR: surface %s does not belong to any hitLocation!!!\n", surfName );
 	}
 #endif //_DEBUG
+
+	if ( mod != MOD_SABER && point )
+	{// guns: helmet/unknown surfaces, the narrow torso split and arms raised across the chest
+		G_GunRefineHitLoc( ent, surfName, point, hitLoc );
+	}
 
 	if ( g_saberRealisticCombat->integer > 1
 		|| debug_subdivision->integer )

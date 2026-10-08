@@ -117,6 +117,25 @@ Previously restricted to double bladed saber
 BLASTER BALANCING
 -----------------
 Blaster bolt velocity: 2300 -> 3000
+Every blaster now has its own role instead of being a reskin of the others:
+  Bryar pistol: precise sidearm, 18 dmg, one shot every 0.6s, charged alt
+  Blaster pistol (DL-44): slow heavy hand-cannon, 26 dmg, one shot every 0.8s -- also fixed it secretly using the Bryar's damage
+  E-11: the all-rounder, 20 dmg, one shot every 0.45s, alt still sprays
+  Repeater: 3-round bursts (rounds 0.1s apart, 0.75s between bursts), 12 dmg per bolt
+  Z-6: suppression -- 12 dmg at a very high rate, heat ruins accuracy on long strings
+  Bowcaster: heavy single shots, 55 dmg, slow; charged explosive alt
+  Disruptor / Cycler: snipers -- very fast bolts, double damage headshots
+NPCs now shoot exactly like you do: same fire rates, same bursts, same bolts. No more NPCs firing faster than the gun can, or a different set of hidden "NPC damage" numbers per weapon //the old tables were all over the place, some NPCs did a third of your damage with a gun and others did full damage with another
+NPC damage = your damage x a difficulty multiplier (g_npcDamageEasy/Normal/Hard, 0.4/0.6/0.8), and NPC bolts fly a bit slower (g_npcBoltSpeed, 0.75) so you can still dodge and deflect them
+New NPC weapon skill (1-5): low-skill troops spray more, fire shorter strings, pause longer between shots and take longer to open fire on you; elite troops are tight, sustained and quick on the trigger. Set per NPC with "weaponSkill" in the .npc file, everyone else uses g_npcWeaponSkill (3). Difficulty shifts it by one either way
+Weapon stats (velocity, spread, bursts, NPC pacing) all live in weapons.dat now, and the custom weapon slots can actually fire -- a new blaster is just a weapons.dat/items.dat entry //baseline for adding more guns later
+DEMP2, flechette, concussion rifle and rocket launcher are on the same system too: NPCs fire them at your rate with the same skill rules. Heavy weapons have a per-weapon NPC damage scale (npcDamageScale) so a trooper with a concussion rifle or rocket launcher doesn't one-shot you, and Boba Fett's rockets use it too
+DEMP2 fires about 3x slower (1.35s), and its charged alt now actually scales with charge: the shockwave hits for 1x/2x/3x damage (it used to read the repeater's numbers and the charge did nothing)
+Homing rockets keep the speed they were fired at instead of snapping back to a fixed speed
+Bowcaster charged alt-fire now has a big red blast and shock ring that shows its actual damage radius (primary impacts unchanged)
+NPCs no longer get bonus health on higher difficulties (+25%/+50% before) -- difficulty now comes from how hard they hit and how well they shoot. Bosses (Tavion, Kyle, Alora) still scale
+Better hit detection for guns: headshots on helmets now count as headshots (they used to register as no location and lost the 2x), chest shots no longer get downgraded to arm hits just for being a little off-centre, and an NPC's arm raised across its chest while aiming no longer soaks your chest shots. g_debugDamage 1 also prints which part of the model each bolt hit
+Note: savegames from before this update won't load
 
 
 BLASTER VISUALS

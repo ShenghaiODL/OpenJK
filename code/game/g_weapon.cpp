@@ -86,8 +86,13 @@ float weaponSpeed[WP_NUM_WEAPONS][2] =
 
 };
 
+qboolean WP_UsesWeaponProfile( int weapon );
 float WP_SpeedOfMissileForWeapon( int wp, qboolean alt_fire )
 {
+	if ( WP_UsesWeaponProfile( wp ) )
+	{// weapons.dat profile speed (the disruptor fires real travel-time bolts now, not hitscan)
+		return alt_fire ? weaponData[wp].altVelocity : weaponData[wp].velocity;
+	}
 	if ( alt_fire )
 	{
 		return weaponSpeed[wp][1];
@@ -382,6 +387,185 @@ bool WP_MissileTargetHint(gentity_t* shooter, vec3_t start, vec3_t out)
 	RotatePointAroundVector( rotated, axis, out, RAD2DEG( angleRad ) );
 	VectorCopy( rotated, out );
 	return true;
+}
+
+//---------------------------------------------------------
+// Weapon profile helpers (blaster pass). The player and NPCs share one weapon profile
+// (weapons.dat); NPCs differ only by their weapon skill and the difficulty damage scale.
+//---------------------------------------------------------
+extern cvar_t	*g_npcWeaponSkill;
+extern cvar_t	*g_npcDamageEasy;
+extern cvar_t	*g_npcDamageNormal;
+extern cvar_t	*g_npcDamageHard;
+extern cvar_t	*g_npcBoltSpeed;
+
+// Weapons driven by the shared profile: NPCs fire them at the weapon's real fireTime / burst
+// timing (bg_pmove.cpp) and their AI timing comes from the profile + weapon skill (NPC_combat.cpp).
+qboolean WP_UsesWeaponProfile( int weapon )
+{
+	if ( weapon >= WP_CUSTOM_1 && weapon <= WP_CUSTOM_16 )
+	{
+		return qtrue;
+	}
+	switch ( weapon )
+	{
+	case WP_BRYAR_PISTOL:
+	case WP_BLASTER_PISTOL:
+	case WP_BLASTER:
+	case WP_DISRUPTOR:
+	case WP_BOWCASTER:
+	case WP_REPEATER:
+	case WP_E5_CARBINE:
+	case WP_DC15S_CARBINE:
+	case WP_DC15A_RIFLE:
+	case WP_Z6_ROTARY:
+	case WP_CYCLER_RIFLE:
+	case WP_DEMP2:
+	case WP_FLECHETTE:
+	case WP_CONCUSSION:
+	case WP_ROCKET_LAUNCHER:
+		return qtrue;
+	default:
+		return qfalse;
+	}
+}
+
+// NPCs (not the player, not a player-possessed NPC) whose shots get the NPC treatment
+static qboolean WP_IsNPCShooter( const gentity_t *ent )
+{
+	return (qboolean)( ent && ent->s.number && ent->client && ent->NPC );
+}
+
+// Effective weapon skill 1-5: the .npc "weaponSkill" (or g_npcWeaponSkill when the entry has
+// none), shifted by difficulty (easy -1, hard +1). The player counts as 5.
+int WP_NPCWeaponSkill( const gentity_t *ent )
+{
+	if ( !WP_IsNPCShooter( ent ) )
+	{
+		return 5;
+	}
+	int skill = ent->NPC->stats.weaponSkill;
+	if ( skill <= 0 )
+	{
+		skill = g_npcWeaponSkill->integer;
+	}
+	skill += g_spskill->integer - 1;
+	return Com_Clampi( 1, 5, skill );
+}
+
+// Applies the weapon's spread to dir (in place). NPCs add npcSpread scaled by their skill, plus
+// the existing dynamic aim loss (currentAim below their aim stat: still warming up, morale
+// broken, lost sight), capped so a broken squad isn't spraying wildly. Force Sight 2+ and
+// vehicles stay perfectly accurate.
+void WP_ApplyWeaponSpread( gentity_t *ent, int weapon, qboolean alt, float scale, vec3_t dir )
+{
+	if ( ent->client )
+	{
+		if ( ent->client->NPC_class == CLASS_VEHICLE )
+		{
+			return;
+		}
+		if ( (ent->client->ps.forcePowersActive&(1<<FP_SEE))
+			&& ent->client->ps.forcePowerLevel[FP_SEE] >= FORCE_LEVEL_2 )
+		{//force sight 2+ gives perfect aim
+			return;
+		}
+	}
+
+	float spread = alt ? weaponData[weapon].altSpread : weaponData[weapon].spread;
+	if ( WP_IsNPCShooter( ent ) )
+	{
+		spread += weaponData[weapon].npcSpread * ( 5 - WP_NPCWeaponSkill( ent ) ) * 0.25f;
+		int aimLoss = ent->NPC->stats.aim - ent->NPC->currentAim;
+		if ( aimLoss > 0 )
+		{
+			spread += Q_min( aimLoss, 16 ) * 0.25f;
+		}
+	}
+	spread *= scale;
+	if ( spread <= 0.0f )
+	{
+		return;
+	}
+
+	vec3_t angs;
+	vectoangles( dir, angs );
+	angs[PITCH] += Q_flrand(-1.0f, 1.0f) * spread;
+	angs[YAW]	+= Q_flrand(-1.0f, 1.0f) * spread;
+	AngleVectors( angs, dir, NULL, NULL );
+}
+
+// NPC damage = the same per-weapon damage as the player, times one difficulty multiplier and the
+// weapon's npcDamageScale (heavy weapons). Boba Fett skips the difficulty scale (full blaster
+// damage, as before) but still gets npcDamageScale; vehicles keep full damage.
+int WP_ShooterDamage( const gentity_t *ent, int damage )
+{
+	if ( damage <= 0
+		|| !WP_IsNPCShooter( ent )
+		|| ent->client->NPC_class == CLASS_VEHICLE )
+	{
+		return damage;
+	}
+	float scale = 1.0f;
+	if ( ent->client->NPC_class != CLASS_BOBAFETT )
+	{
+		switch ( g_spskill->integer )
+		{
+		case 0:		scale = g_npcDamageEasy->value;		break;
+		case 1:		scale = g_npcDamageNormal->value;	break;
+		default:	scale = g_npcDamageHard->value;		break;
+		}
+	}
+	scale *= weaponData[ent->s.weapon].npcDamageScale;
+	return Q_max( 1, (int)( damage * scale + 0.5f ) );
+}
+
+// NPC bolts fly at g_npcBoltSpeed of the weapon's speed, so they can be dodged/deflected.
+float WP_ShooterVelocity( const gentity_t *ent, float velocity )
+{
+	if ( !WP_IsNPCShooter( ent )
+		|| ent->client->NPC_class == CLASS_BOBAFETT
+		|| ent->client->NPC_class == CLASS_VEHICLE )
+	{
+		return velocity;
+	}
+	return velocity * g_npcBoltSpeed->value;
+}
+
+//---------------------------------------------------------
+// Generic profile-driven bolt, for the WP_CUSTOM_* slots: everything comes from weapons.dat
+// (fireTime, damage, splash, velocity, spread, burst); cgame visuals come from the slot's
+// missileFuncName. Adding a gun is a weapons.dat + items.dat block, no code.
+//---------------------------------------------------------
+void WP_FireGenericBolt( gentity_t *ent, qboolean alt_fire )
+{
+	const int		weapon = ent->s.weapon;
+	weaponData_t	*wd = &weaponData[weapon];
+	vec3_t			start, dir;
+
+	VectorCopy( forwardVec, dir );
+	WP_ApplyWeaponSpread( ent, weapon, alt_fire, 1.0f, dir );
+
+	VectorCopy( muzzle, start );
+	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );
+	WP_MissileTargetHint( ent, start, dir );
+
+	float velocity = WP_ShooterVelocity( ent, alt_fire ? wd->altVelocity : wd->velocity );
+	gentity_t *missile = CreateMissile( start, dir, velocity, 10000, ent, alt_fire );
+
+	missile->classname = "generic_proj";
+	missile->s.weapon = weapon;
+	missile->damage = WP_ShooterDamage( ent, alt_fire ? wd->altDamage : wd->damage );
+	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
+	missile->methodOfDeath = alt_fire ? MOD_BLASTER_ALT : MOD_BLASTER;
+	missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
+	missile->splashDamage = alt_fire ? wd->altSplashDamage : wd->splashDamage;
+	missile->splashRadius = alt_fire ? wd->altSplashRadius : wd->splashRadius;
+	if ( missile->splashDamage )
+	{
+		missile->splashMethodOfDeath = missile->methodOfDeath;
+	}
+	missile->bounceCount = 8;
 }
 
 int G_GetHitLocFromTrace( trace_t *trace, int mod )
@@ -1733,6 +1917,13 @@ void FireWeapon( gentity_t *ent, qboolean alt_fire )
 		{
 			WP_SonicBlast( ent );
 		}
+		break;
+
+	case WP_CUSTOM_1:	case WP_CUSTOM_2:	case WP_CUSTOM_3:	case WP_CUSTOM_4:
+	case WP_CUSTOM_5:	case WP_CUSTOM_6:	case WP_CUSTOM_7:	case WP_CUSTOM_8:
+	case WP_CUSTOM_9:	case WP_CUSTOM_10:	case WP_CUSTOM_11:	case WP_CUSTOM_12:
+	case WP_CUSTOM_13:	case WP_CUSTOM_14:	case WP_CUSTOM_15:	case WP_CUSTOM_16:
+		WP_FireGenericBolt( ent, alt_fire );
 		break;
 
 	case WP_TUSKEN_STAFF:

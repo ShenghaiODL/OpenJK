@@ -35,34 +35,19 @@ static void WP_DEMP2_MainFire( gentity_t *ent )
 //---------------------------------------------------------
 {
 	vec3_t	start;
-	int		damage	= weaponData[WP_DEMP2].damage;
+	// same damage as the player, scaled by difficulty for NPCs
+	int		damage	= WP_ShooterDamage( ent, weaponData[WP_DEMP2].damage );
 
 	VectorCopy( muzzle, start );
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );//make sure our start point isn't on the other side of a wall
 
+	WP_ApplyWeaponSpread( ent, WP_DEMP2, qfalse, 1.0f, forwardVec );
 	WP_MissileTargetHint(ent, start, forwardVec);
 
-	gentity_t *missile = CreateMissile( start, forwardVec, DEMP2_VELOCITY, 10000, ent );
+	gentity_t *missile = CreateMissile( start, forwardVec, WP_ShooterVelocity( ent, weaponData[WP_DEMP2].velocity ), 10000, ent );
 
 	missile->classname = "demp2_proj";
 	missile->s.weapon = WP_DEMP2;
-
-	// Do the damages
-	if ( ent->s.number != 0 )
-	{
-		if ( g_spskill->integer == 0 )
-		{
-			damage = DEMP2_NPC_DAMAGE_EASY;
-		}
-		else if ( g_spskill->integer == 1 )
-		{
-			damage = DEMP2_NPC_DAMAGE_NORMAL;
-		}
-		else
-		{
-			damage = DEMP2_NPC_DAMAGE_HARD;
-		}
-	}
 
 	VectorSet( missile->maxs, DEMP2_SIZE, DEMP2_SIZE, DEMP2_SIZE );
 	VectorScale( missile->maxs, -1, missile->mins );
@@ -156,7 +141,8 @@ void DEMP2_AltRadiusDamage( gentity_t *ent )
 		// push the center of mass higher than the origin so players get knocked into the air more
 		dir[2] += 12;
 
-		G_Damage( gent, ent, ent->owner, dir, ent->currentOrigin, weaponData[WP_DEMP2].altDamage, DAMAGE_DEATH_KNOCKBACK, ent->splashMethodOfDeath );
+		// per-target shock damage: altdamage x charge (1-3), NPC-scaled, set at fire time
+		G_Damage( gent, ent, ent->owner, dir, ent->currentOrigin, ent->damage ? ent->damage : weaponData[WP_DEMP2].altDamage, DAMAGE_DEATH_KNOCKBACK, ent->splashMethodOfDeath );
 		if ( gent->takedamage && gent->client )
 		{
 			gent->s.powerups |= ( 1 << PW_SHOCKED );
@@ -197,7 +183,7 @@ void DEMP2_AltDetonate( gentity_t *ent )
 static void WP_DEMP2_AltFire( gentity_t *ent )
 //---------------------------------------------------------
 {
-	int		damage	= weaponData[WP_REPEATER].altDamage;
+	int		damage	= weaponData[WP_DEMP2].altDamage;//was reading WP_REPEATER's altdamage
 	int		count;
 	vec3_t	start;
 	trace_t	tr;
@@ -216,9 +202,12 @@ static void WP_DEMP2_AltFire( gentity_t *ent )
 		count = 3;
 	}
 
-	damage *= ( 1 + ( count * ( count - 1 )));// yields damage of 12,36,84...gives a higher bonus for longer charge
+	// the shockwave hits everything it reaches for altdamage x charge (1x/2x/3x), NPC-scaled; this
+	// used to be computed and never used (the shell always detonates, and the shock dealt a flat altdamage)
+	damage = WP_ShooterDamage( ent, damage * count );
 
 	// the shot can travel a whopping 4096 units in 1 second. Note that the shot will auto-detonate at 4096 units...we'll see if this looks cool or not
+	WP_ApplyWeaponSpread( ent, WP_DEMP2, qtrue, 1.0f, forwardVec );
 	WP_MissileTargetHint(ent, start, forwardVec);
 	gentity_t *missile = CreateMissile( start, forwardVec, DEMP2_ALT_RANGE, 1000, ent, qtrue );
 

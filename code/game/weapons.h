@@ -203,6 +203,22 @@ typedef struct weaponData_s
 
 	weaponClass_t	loadoutClass;	// loadout slot this weapon occupies (WPCLASS_NONE = unrestricted)
 
+	// Weapon profile (blaster pass). Data-driven via weapons.dat; per-weapon defaults are set in
+	// WP_SetDefaultProfile (g_weaponLoad.cpp) and match the old hard-coded values. Shared by the
+	// player and NPCs: NPCs fire at fireTime/altFireTime like the player, and their skill only
+	// changes spread, string length, pauses and reaction time.
+	float	velocity;		// bolt speed (primary)
+	float	altVelocity;	// bolt speed (alt)
+	float	spread;			// base spread in degrees, player and NPC (primary)
+	float	altSpread;		// base spread in degrees (alt)
+	float	npcSpread;		// extra NPC spread at weapon skill 1, fading to 0 at skill 5
+	int		burstCount;		// shots per trigger pull (0/1 = not a burst weapon); fireTime is the gap after a burst
+	int		burstGap;		// ms between shots inside a burst
+	int		npcBurstMin;	// shots per NPC string at skill 3 (1 = single shots)
+	int		npcBurstMax;
+	int		npcPause;		// ms an NPC waits between strings/shots at skill 3
+	float	npcDamageScale;	// extra NPC damage multiplier on top of the difficulty scale (heavy weapons < 1)
+
 } weaponData_t;
 
 

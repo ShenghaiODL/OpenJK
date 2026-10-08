@@ -31,6 +31,14 @@ void WP_ExplosiveDie( gentity_t *self, gentity_t *inflictor, gentity_t *attacker
 bool WP_MissileTargetHint(gentity_t* shooter, vec3_t start, vec3_t out);
 void G_GetAimRay( gentity_t *ent, vec3_t org, vec3_t dir );
 
+// Weapon profile helpers (blaster pass, g_weapon.cpp)
+qboolean WP_UsesWeaponProfile( int weapon );
+int WP_NPCWeaponSkill( const gentity_t *ent );
+void WP_ApplyWeaponSpread( gentity_t *ent, int weapon, qboolean alt, float scale, vec3_t dir );
+int WP_ShooterDamage( const gentity_t *ent, int damage );
+float WP_ShooterVelocity( const gentity_t *ent, float velocity );
+void WP_FireGenericBolt( gentity_t *ent, qboolean alt_fire );
+
 void drop_charge(gentity_t *ent, vec3_t start, vec3_t dir);
 void ViewHeightFix( const gentity_t * const ent );
 qboolean LogAccuracyHit( gentity_t *target, gentity_t *attacker );

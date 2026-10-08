@@ -39,31 +39,16 @@ static void WP_DisruptorMainFire( gentity_t *ent )
 //---------------------------------------------------------
 {
 	vec3_t	start;
-	int		damage = weaponData[WP_DISRUPTOR].damage;
-
-	if ( ent->NPC )
-	{
-		switch ( g_spskill->integer )
-		{
-		case 0:
-			damage = DISRUPTOR_NPC_MAIN_DAMAGE_EASY;
-			break;
-		case 1:
-			damage = DISRUPTOR_NPC_MAIN_DAMAGE_MEDIUM;
-			break;
-		case 2:
-		default:
-			damage = DISRUPTOR_NPC_MAIN_DAMAGE_HARD;
-			break;
-		}
-	}
+	// same damage as the player, scaled by difficulty for NPCs
+	int		damage = WP_ShooterDamage( ent, weaponData[WP_DISRUPTOR].damage );
 
 	VectorCopy( muzzle, start );
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );
 
+	WP_ApplyWeaponSpread( ent, WP_DISRUPTOR, qfalse, 1.0f, forwardVec );
 	WP_MissileTargetHint(ent, start, forwardVec);
 
-	gentity_t *missile = CreateMissile( start, forwardVec, DISRUPTOR_VELOCITY, 10000, ent );
+	gentity_t *missile = CreateMissile( start, forwardVec, WP_ShooterVelocity( ent, weaponData[WP_DISRUPTOR].velocity ), 10000, ent );
 
 	missile->classname = "disruptor_proj";
 	missile->s.weapon = WP_DISRUPTOR;
@@ -88,22 +73,11 @@ void WP_DisruptorAltFire( gentity_t *ent )
 	int		damage = weaponData[WP_DISRUPTOR].altDamage;
 
 	if ( ent->NPC )
-	{
-		switch ( g_spskill->integer )
-		{
-		case 0:
-			damage = DISRUPTOR_NPC_ALT_DAMAGE_EASY;
-			break;
-		case 1:
-			damage = DISRUPTOR_NPC_ALT_DAMAGE_MEDIUM;
-			break;
-		case 2:
-		default:
-			damage = DISRUPTOR_NPC_ALT_DAMAGE_HARD;
-			break;
-		}
+	{// NPCs fire an uncharged-equivalent alt bolt: the player's 1-step charge damage, scaled by difficulty
+		damage = WP_ShooterDamage( ent, damage + (int)( weaponData[WP_DISRUPTOR].damage * 0.5f ) );
 		VectorCopy( muzzle, start );
 		VectorCopy( forwardVec, dir );
+		WP_ApplyWeaponSpread( ent, WP_DISRUPTOR, qtrue, 1.0f, dir );
 	}
 	else
 	{
@@ -124,7 +98,7 @@ void WP_DisruptorAltFire( gentity_t *ent )
 		damage = damage * count + weaponData[WP_DISRUPTOR].damage * 0.5f; // give a boost to low charge shots
 	}
 
-	gentity_t *missile = CreateMissile( start, dir, DISRUPTOR_VELOCITY, 10000, ent, qtrue );
+	gentity_t *missile = CreateMissile( start, dir, WP_ShooterVelocity( ent, weaponData[WP_DISRUPTOR].altVelocity ), 10000, ent, qtrue );
 
 	missile->classname = "disruptor_alt_proj";
 	missile->s.weapon = WP_DISRUPTOR;

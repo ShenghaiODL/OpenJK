@@ -1160,8 +1160,8 @@ void FX_DisruptorMainShot( vec3_t start, vec3_t end );
 void FX_DisruptorAltShot( vec3_t start, vec3_t end, qboolean full );
 void FX_DisruptorAltMiss( vec3_t origin, vec3_t normal );
 
-void FX_BowcasterHitWall( vec3_t origin, vec3_t normal );
-void FX_BowcasterHitPlayer( vec3_t origin, vec3_t normal, qboolean humanoid );
+void FX_BowcasterHitWall( vec3_t origin, vec3_t normal, qboolean altFire = qfalse );
+void FX_BowcasterHitPlayer( vec3_t origin, vec3_t normal, qboolean humanoid, qboolean altFire = qfalse );
 
 void FX_RepeaterHitWall( vec3_t origin, vec3_t normal );
 void FX_RepeaterAltHitWall( vec3_t origin, vec3_t normal );
