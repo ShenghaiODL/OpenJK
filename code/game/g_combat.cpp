@@ -898,21 +898,24 @@ qboolean G_JediInRoom( vec3_t from )
 }
 
 //---------------------------------------------------------
-// Gun (non-saber) hit locations. The surface-name rules below were tuned for saber dismemberment
-// and misread bolts in three ways:
+// Hit-location refinement for guns and sabers. The surface-name rules below misread hits in a
+// few ways:
 //  - surfaces that match no rule (helmets, hats, bolt-on models) gave HL_NONE (x1, no headshot);
 //  - a hit on a torso surface more than 4u off the centre line counted as an ARM hit, so ordinary
-//    off-centre chest hits (especially with the torso twisted to aim) were x0.5;
-//  - in the rifle pose the left arm crosses in front of the chest, so chest shots hit the arm mesh.
+//    off-centre chest hits (especially with the torso twisted to aim) were arm hits;
+//  - (guns only) in the rifle pose the left arm crosses in front of the chest, so chest shots hit
+//    the arm mesh. A saber blade going through a raised arm really does hit the arm, so sabers
+//    skip that rule.
 // This re-classifies from the impact point in torso space (renderInfo.torsoPoint/torsoAngles,
-// same as the torso rule) with a body-sized split. Saber hits keep the original rules.
+// same as the torso rule) with a body-sized split. Arm dismemberment from shoulder cuts still
+// works: HL_CHEST_LT/RT use the same *torso_cap_*_arm tag checks as HL_ARM_*.
 //---------------------------------------------------------
 #define GUNHIT_CHEST_HALFWIDTH	10.0f	// |right| beyond this is an arm
 #define GUNHIT_CHEST_CENTRE		3.0f	// |right| below this is centre chest/back
 #define GUNHIT_WAIST_BELOW		-10.0f	// below torsoPoint by more than this is waist
 #define GUNHIT_HEAD_BELOW_EYE	-7.0f	// within this of the eye height and above is the head
 
-static void G_GunHitLocFromTorsoSpace( float frontSide, float rightSide, float upSide, int *hitLoc )
+static void G_GunHitLocFromTorsoSpace( float frontSide, float rightSide, float upSide, int *hitLoc, qboolean saber )
 {
 	if ( upSide < GUNHIT_WAIST_BELOW )
 	{
@@ -934,13 +937,17 @@ static void G_GunHitLocFromTorsoSpace( float frontSide, float rightSide, float u
 	{
 		*hitLoc = ( frontSide > 0 ) ? HL_CHEST_LT : HL_BACK_LT;
 	}
+	else if ( saber && upSide > -3 )
+	{// original saber rule: a centred cut at the top of the torso goes through the neck
+		*hitLoc = HL_HEAD;
+	}
 	else
 	{
 		*hitLoc = ( frontSide > 0 ) ? HL_CHEST : HL_BACK;
 	}
 }
 
-static void G_GunRefineHitLoc( gentity_t *ent, const char *surfName, vec3_t point, int *hitLoc )
+static void G_RefineHitLoc( gentity_t *ent, const char *surfName, vec3_t point, int *hitLoc, qboolean saber )
 {
 	if ( !ent->client || !ent->ghoul2.size() )
 	{
@@ -962,20 +969,21 @@ static void G_GunRefineHitLoc( gentity_t *ent, const char *surfName, vec3_t poin
 		}
 		else
 		{
-			G_GunHitLocFromTorsoSpace( frontSide, rightSide, upSide, hitLoc );
+			G_GunHitLocFromTorsoSpace( frontSide, rightSide, upSide, hitLoc, saber );
 		}
 	}
 	else if ( !Q_stricmpn( "torso", surfName, 5 ) )
 	{// torso surface: body-sized chest instead of the 4u saber split
-		G_GunHitLocFromTorsoSpace( frontSide, rightSide, upSide, hitLoc );
+		G_GunHitLocFromTorsoSpace( frontSide, rightSide, upSide, hitLoc, saber );
 	}
-	else if ( ( *hitLoc == HL_ARM_LT || *hitLoc == HL_ARM_RT || *hitLoc == HL_HAND_LT || *hitLoc == HL_HAND_RT )
+	else if ( !saber
+		&& ( *hitLoc == HL_ARM_LT || *hitLoc == HL_ARM_RT || *hitLoc == HL_HAND_LT || *hitLoc == HL_HAND_RT )
 		&& frontSide > 0
 		&& upSide >= GUNHIT_WAIST_BELOW
 		&& point[2] - ent->client->renderInfo.eyePoint[2] <= GUNHIT_HEAD_BELOW_EYE
 		&& fabs( rightSide ) <= GUNHIT_CHEST_HALFWIDTH )
-	{// arm/hand raised across the front of the chest (rifle pose): the bolt is hitting the chest
-		G_GunHitLocFromTorsoSpace( frontSide, rightSide, upSide, hitLoc );
+	{// guns only: arm/hand raised across the front of the chest (rifle pose): the bolt is hitting the chest
+		G_GunHitLocFromTorsoSpace( frontSide, rightSide, upSide, hitLoc, saber );
 	}
 }
 
@@ -1321,9 +1329,9 @@ qboolean G_GetHitLocFromSurfName( gentity_t *ent, const char *surfName, int *hit
 	}
 #endif //_DEBUG
 
-	if ( mod != MOD_SABER && point )
-	{// guns: helmet/unknown surfaces, the narrow torso split and arms raised across the chest
-		G_GunRefineHitLoc( ent, surfName, point, hitLoc );
+	if ( point )
+	{// helmet/unknown surfaces and the narrow torso split (guns and sabers), arms raised across the chest (guns)
+		G_RefineHitLoc( ent, surfName, point, hitLoc, (qboolean)(mod == MOD_SABER) );
 	}
 
 	if ( g_saberRealisticCombat->integer > 1
@@ -5431,6 +5439,36 @@ float damageModifier[HL_MAX] =
 	1.0f,	//HL_GENERIC6,
 };
 
+// Saber hit-location multipliers (WP_SaberApplyDamage, all victims). Gentler than the gun table:
+// a lightsaber does serious damage wherever it lands; the head is a bonus, limbs a small discount.
+// Also used to pick the most damaging location when a swing touches several in one frame.
+float saberLocationMod[HL_MAX] =
+{
+	1.0f,	//HL_NONE,
+	0.5f,	//HL_FOOT_RT,
+	0.5f,	//HL_FOOT_LT,
+	0.8f,	//HL_LEG_RT,
+	0.8f,	//HL_LEG_LT,
+	1.0f,	//HL_WAIST,
+	1.0f,	//HL_BACK_RT,
+	1.0f,	//HL_BACK_LT,
+	1.0f,	//HL_BACK,
+	1.0f,	//HL_CHEST_RT,
+	1.0f,	//HL_CHEST_LT,
+	1.0f,	//HL_CHEST,
+	0.8f,	//HL_ARM_RT,
+	0.8f,	//HL_ARM_LT,
+	0.5f,	//HL_HAND_RT,
+	0.5f,	//HL_HAND_LT,
+	1.5f,	//HL_HEAD,
+	1.0f,	//HL_GENERIC1,
+	1.0f,	//HL_GENERIC2,
+	1.0f,	//HL_GENERIC3,
+	1.0f,	//HL_GENERIC4,
+	1.0f,	//HL_GENERIC5,
+	1.0f,	//HL_GENERIC6,
+};
+
 void G_TrackWeaponUsage( gentity_t *self, gentity_t *inflictor, int add, int mod )
 {
 	if ( !self || !self->client || self->s.number )
@@ -6605,7 +6643,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 			}
 		}
 	}
-	if ( !(dflags&DAMAGE_NO_HIT_LOC) || !(dflags&DAMAGE_RADIUS))
+	if ( !(dflags&DAMAGE_NO_HIT_LOC) && !(dflags&DAMAGE_RADIUS) )//was ||, which made DAMAGE_NO_HIT_LOC do nothing (the saber applies its own location and got it twice)
 	{
 		if ( !G_NonLocationSpecificDamage( mod ) )
 		{//certain kinds of damage don't care about hitlocation

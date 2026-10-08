@@ -197,6 +197,7 @@ cvar_t	*g_heavyAttackSpeedScale;
 cvar_t	*g_saberRealisticCombat;
 cvar_t	*debug_subdivision;
 cvar_t	*g_saberDamageCapping;
+cvar_t	*g_saberMaxPlayerHitPct;
 cvar_t	*g_saberMoveSpeed;
 cvar_t	*g_saberAnimSpeed;
 cvar_t	*g_saberAutoAim;
@@ -710,6 +711,7 @@ void G_InitCvars( void ) {
 	debug_subdivision = gi.cvar( "debug_subdivision", "0", CVAR_ARCHIVE );//debug for dismemberment
 	g_dismemberProbabilities = gi.cvar ( "g_dismemberProbabilities", "1", CVAR_ARCHIVE );//0 = ignore probabilities, 1 = use probabilities
 	g_saberDamageCapping = gi.cvar( "g_saberDamageCapping", "1", CVAR_CHEAT );//caps damage of sabers vs players and NPC who use sabers
+	g_saberMaxPlayerHitPct = gi.cvar( "g_saberMaxPlayerHitPct", "0.5", CVAR_ARCHIVE );//one saber hit takes at most this fraction of the player's max health (needs g_saberDamageCapping)
 	g_saberMoveSpeed = gi.cvar( "g_saberMoveSpeed", "1", CVAR_CHEAT );//how fast you run while attacking with a saber
 	g_saberAnimSpeed = gi.cvar( "g_saberAnimSpeed", "1", CVAR_CHEAT );//how fast saber animations run
 	g_saberAutoAim = gi.cvar( "g_saberAutoAim", "1", CVAR_CHEAT );//auto-aims at enemies when not moving or when just running forward

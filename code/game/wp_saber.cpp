@@ -1587,13 +1587,15 @@ void WP_SaberClearDamageForEntNum( gentity_t *attacker, int entityNum, int saber
 
 extern float damageModifier[];
 extern float hitLocHealthPercentage[];
+extern float saberLocationMod[];
+extern cvar_t *g_saberMaxPlayerHitPct;
+extern cvar_t *g_debugDamage;
 qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 							 qboolean brokenParry, int saberNum, int bladeNum, qboolean thrownSaber )
 {
 	qboolean	didDamage = qfalse;
 	gentity_t	*victim;
 	int			dFlags = baseDFlags;
-	float		maxDmg;
 	saberType_t saberType = ent->client->ps.saber[saberNum].type;
 
 	if ( !numVictims )
@@ -1612,6 +1614,17 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 				{
 					continue;
 				}
+				// who gets "real" saber damage (location-scaled, 5-100) rather than the lethal-anywhere
+				// rule for normal NPCs: the player, saber users, Jedi/Reborn/Shadowtroopers, bosses, wampas
+				const qboolean saberFighter = (qboolean)( victim->client
+					&& ( victim->s.number < MAX_CLIENTS
+						|| victim->s.weapon == WP_SABER
+						|| victim->client->NPC_class == CLASS_REBORN
+						|| victim->client->NPC_class == CLASS_JEDI
+						|| victim->client->NPC_class == CLASS_SHADOWTROOPER
+						|| victim->client->NPC_class == CLASS_WAMPA
+						|| ( victim->NPC && ( victim->NPC->aiFlags & (NPCAI_BOSS_CHARACTER|NPCAI_SUBBOSS_CHARACTER) ) ) ) );
+				const float rawContactDmg = totalDmg[i];
 
 				if ( victim->e_DieFunc == dieF_maglock_die )
 				{//*sigh*, special check for maglocks
@@ -1644,60 +1657,48 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 					{//never cap the superbreak wins
 					}
 					else
-					{
-						if ( victim->client
-							&& (victim->s.weapon == WP_SABER || (victim->client->NPC_class==CLASS_REBORN) || (victim->client->NPC_class==CLASS_WAMPA))
-							&& !g_saberRealisticCombat->integer )
-						{//dmg vs other saber fighters is modded by hitloc and capped
-							totalDmg[i] *= damageModifier[hitLoc[i]];
-							if ( hitLoc[i] == HL_NONE )
-							{
-								maxDmg = 33*baseDamage;
-							}
-							else
-							{
-								maxDmg = 50*hitLocHealthPercentage[hitLoc[i]]*baseDamage;//*victim->client->ps.stats[STAT_MAX_HEALTH]*2.0f;
-							}
-							if ( maxDmg < totalDmg[i] )
-							{
-								totalDmg[i] = maxDmg;
-							}
-							//dFlags |= DAMAGE_NO_HIT_LOC;
+					{// Saber damage = continuous contact damage (blade depth/time inside the model) x
+					//saberLocationMod, for every victim (this used to apply only vs saber users, and
+					//G_Damage then applied the gun table on top). Normal NPCs: lethal anywhere on a
+					//real swing. Saber fighters/bosses/player: real damage, no per-difficulty caps --
+					//the guard/parry system carries saber difficulty.
+						if ( !g_saberRealisticCombat->integer )
+						{
+							totalDmg[i] *= saberLocationMod[hitLoc[i]];
 						}
-						//clamp the dmg
-						if ( victim->s.weapon != WP_SABER )
-						{//clamp the dmg between 25 and maxhealth
-							/*
-							if ( totalDmg[i] > victim->max_health )
-							{
-								totalDmg[i] = victim->max_health;
-							}
-							else */if ( totalDmg[i] < 25 )
+						if ( !victim->client )
+						{//breakables etc: as before, 25-100 so a swing actually breaks things
+							if ( totalDmg[i] < 25 )
 							{
 								totalDmg[i] = 25;
 							}
-							if ( totalDmg[i] > 100 )//+(50*g_spskill->integer) )
-							{//clamp using same adjustment as in NPC_Begin
-								totalDmg[i] = 100;//+(50*g_spskill->integer);
-							}
-						}
-						else
-						{//clamp the dmg between 5 and 100
-							if ( !victim->s.number && totalDmg[i] > 50 )
-							{//never do more than half full health damage to player
-								//prevents one-hit kills
-								totalDmg[i] = 50;
-							}
-							else if ( totalDmg[i] > 100 )
+							if ( totalDmg[i] > 100 )
 							{
 								totalDmg[i] = 100;
 							}
-							else
+						}
+						else if ( !saberFighter )
+						{//troopers etc: a real attack swing does at least 80% of their max health
+						//wherever it lands; transition/defence brushes (baseDamage < 2.5) keep their small
+						//real contact damage (used to get a 25 floor, so any touch nearly killed)
+							if ( baseDamage >= 2.5f && totalDmg[i] < victim->max_health * 0.8f )
 							{
-								if ( totalDmg[i] < 5 )
-								{
-									totalDmg[i] = 5;
-								}
+								totalDmg[i] = victim->max_health * 0.8f;
+							}
+							if ( totalDmg[i] > 150 )
+							{
+								totalDmg[i] = 150;
+							}
+						}
+						else
+						{//saber fighters, bosses and the player: clamp 5-100
+							if ( totalDmg[i] > 100 )
+							{
+								totalDmg[i] = 100;
+							}
+							else if ( totalDmg[i] < 5 )
+							{
+								totalDmg[i] = 5;
 							}
 						}
 					}
@@ -1772,49 +1773,15 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 							&& !g_saberRealisticCombat->integer
 							&& g_saberDamageCapping->integer )
 						{//never cap the superbreak wins
-							if ( victim->client
-								&& victim->s.number >= MAX_CLIENTS )
+						//One cap only: a single saber hit never takes more than g_saberMaxPlayerHitPct of the
+						//player's max health (no one-shots). The old per-difficulty caps (bosses 10-25, saber
+						//users 30-75, player 7-50) are gone; the guard/parry system carries saber difficulty.
+							if ( victim->s.number < MAX_CLIENTS && victim->client )
 							{
-								if ( victim->client->NPC_class == CLASS_SHADOWTROOPER
-									|| ( victim->NPC && (victim->NPC->aiFlags&NPCAI_BOSS_CHARACTER) ) )
-								{//hit a boss character
-									int maxDmg = ((3-g_spskill->integer)*5)+10;
-									if ( totalDmg[i] > maxDmg )
-									{
-										totalDmg[i] = maxDmg;
-									}
-								}
-								else if ( victim->client->ps.weapon == WP_SABER
-									|| victim->client->NPC_class == CLASS_REBORN
-									|| victim->client->NPC_class == CLASS_JEDI )
-								{//hit a non-boss saber-user
-									int maxDmg = ((3-g_spskill->integer)*15)+30;
-									if ( totalDmg[i] > maxDmg )
-									{
-										totalDmg[i] = maxDmg;
-									}
-								}
-							}
-							if ( victim->s.number < MAX_CLIENTS
-								&& ent->NPC )
-							{
-                                if ( (ent->NPC->aiFlags&NPCAI_BOSS_CHARACTER)
-									|| (ent->NPC->aiFlags&NPCAI_SUBBOSS_CHARACTER)
-									|| ent->client->NPC_class == CLASS_SHADOWTROOPER )
-								{//player hit by a boss character
-									int maxDmg = ((g_spskill->integer+1)*4)+3;
-									if ( totalDmg[i] > maxDmg )
-									{
-										totalDmg[i] = maxDmg;
-									}
-								}
-								else if ( g_spskill->integer < 3 ) //was < 2
-								{//player hit by any enemy //on easy or medium?
-									int maxDmg = ((g_spskill->integer+1)*10)+20;
-									if ( totalDmg[i] > maxDmg )
-									{
-										totalDmg[i] = maxDmg;
-									}
+								const float playerCap = victim->max_health * g_saberMaxPlayerHitPct->value;
+								if ( playerCap > 0.0f && totalDmg[i] > playerCap )
+								{
+									totalDmg[i] = playerCap;
 								}
 							}
 						}
@@ -1907,6 +1874,20 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 						else
 						{
 							damage = ceil(totalDmg[i]);
+						}
+						if ( victim->client && victim->s.number >= MAX_CLIENTS
+							&& (dFlags&DAMAGE_DISMEMBER)
+							&& ( hitDismemberLoc[i] == HL_HAND_RT || hitDismemberLoc[i] == HL_HAND_LT )
+							&& victim->health > 1 && damage >= victim->health )
+						{//severing a hand isn't lethal: they lose the hand (and the weapon) and live,
+						//so the disarmed-NPC behaviour (flee/surrender/re-arm) can take over
+							damage = victim->health - 1;
+						}
+						if ( g_debugDamage->integer )
+						{
+							gi.Printf( "saber: victim %d hitloc %d (x%.2f) contact %.1f -> %d dmg%s, dismemberLoc %d\n",
+								victim->s.number, hitLoc[i], g_saberRealisticCombat->integer ? 1.0f : saberLocationMod[hitLoc[i]],
+								rawContactDmg, damage, saberFighter ? "" : " (lethal-anywhere)", hitDismemberLoc[i] );
 						}
 						G_Damage( victim, inflictor, ent, dmgDir[i], dmgSpot[i], damage, dFlags, MOD_SABER, hitDismemberLoc[i] );
 						if ( damage > 0 && cg.time )
@@ -2010,8 +1991,9 @@ void WP_SaberDamageAdd( float trDmg, int trVictimEntityNum, vec3_t trDmgDir, vec
 		}
 
 		float addDmg = trDmg*dmg;
-		if ( trHitLoc!=HL_NONE && (hitLoc[curVictim]==HL_NONE||hitLocHealthPercentage[trHitLoc]>hitLocHealthPercentage[hitLoc[curVictim]]) )
-		{//this hitLoc is more critical than the previous one this frame
+		if ( trHitLoc!=HL_NONE && (hitLoc[curVictim]==HL_NONE||saberLocationMod[trHitLoc]>saberLocationMod[hitLoc[curVictim]]) )
+		{//this hitLoc is more damaging than the previous one this frame (a swing through neck and
+		//shoulder counts as the head; used to prefer the "most health" location, which ranked the head low)
 			hitLoc[curVictim] = trHitLoc;
 		}
 
