@@ -29,6 +29,7 @@ void WP_Stick( gentity_t *missile, trace_t *trace, float fudge_distance = 0.0f )
 void WP_Explode( gentity_t *self );
 void WP_ExplosiveDie( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int meansOfDeath,int dFlags,int hitLoc );
 bool WP_MissileTargetHint(gentity_t* shooter, vec3_t start, vec3_t out);
+void G_GetAimRay( gentity_t *ent, vec3_t org, vec3_t dir );
 
 void drop_charge(gentity_t *ent, vec3_t start, vec3_t dir);
 void ViewHeightFix( const gentity_t * const ent );

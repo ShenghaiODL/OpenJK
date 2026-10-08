@@ -1904,14 +1904,11 @@ static qboolean CG_CalcViewValues( void ) {
 			}
 		}*/
 		CG_OffsetThirdPersonView();
-		// Camera origin for WP_MissileTargetHint's crosshair correction. Kept out of eyePoint on
-		// purpose: NPCs use the player's eyePoint as where the body is, and the camera sits ~92
-		// units behind it, which made them think every shot was blocked.
+		// (crosshairOrigin/crosshairDir are written after the final view axis is built, below.)
 		{
 			centity_t *playerCent = &cg_entities[0];
 			if ( playerCent && playerCent->gent && playerCent->gent->client )
 			{
-				VectorCopy( cg.refdef.vieworg, playerCent->gent->client->renderInfo.crosshairOrigin );
 				VectorCopy( cg.refdefViewAngles, playerCent->gent->client->renderInfo.eyeAngles );
 			}
 		}
@@ -1925,7 +1922,6 @@ static qboolean CG_CalcViewValues( void ) {
 		if ( playerCent && playerCent->gent && playerCent->gent->client )
 		{
 			VectorCopy( cg.refdef.vieworg, playerCent->gent->client->renderInfo.eyePoint );
-			VectorCopy( cg.refdef.vieworg, playerCent->gent->client->renderInfo.crosshairOrigin );
 			VectorCopy( cg.refdefViewAngles, playerCent->gent->client->renderInfo.eyeAngles );
 			if ( cg.snap->ps.viewEntity > 0 && cg.snap->ps.viewEntity < ENTITYNUM_WORLD )
 			{//in an entity camera view
@@ -1970,6 +1966,19 @@ static qboolean CG_CalcViewValues( void ) {
 	}
 
 	AnglesToAxis( cg.refdefViewAngles, cg.refdef.viewaxis );
+
+	// The exact ray the crosshair is traced along (CG_ScanForCrosshairEntity uses this same
+	// vieworg/viewaxis), for WP_MissileTargetHint and force push/pull aiming. In third person
+	// the camera axis differs from ps.viewangles, so both origin and direction are needed.
+	// Kept out of eyePoint on purpose: NPCs use the player's eyePoint as where the body is.
+	{
+		centity_t *playerCent = &cg_entities[0];
+		if ( playerCent->gent && playerCent->gent->client )
+		{
+			VectorCopy( cg.refdef.vieworg, playerCent->gent->client->renderInfo.crosshairOrigin );
+			VectorCopy( cg.refdef.viewaxis[0], playerCent->gent->client->renderInfo.crosshairDir );
+		}
+	}
 
 	if ( cg.hyperspace )
 	{

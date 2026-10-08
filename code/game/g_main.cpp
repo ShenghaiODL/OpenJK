@@ -206,6 +206,7 @@ cvar_t	*g_debugSaberLock;
 cvar_t	*g_saberLockRandomNess;
 cvar_t	*g_debugMelee;
 cvar_t	*g_debugNPCFire;
+cvar_t	*g_debugAim;
 cvar_t	*g_saberRestrictForce;
 cvar_t	*g_saberPickuppableDroppedSabers;
 cvar_t	*g_dismemberProbabilities;
@@ -713,6 +714,7 @@ void G_InitCvars( void ) {
 	g_saberLockRandomNess = gi.cvar( "g_saberLockRandomNess", "2", CVAR_ARCHIVE );//just for debugging/development, controls frequency of saberlocks
 	g_debugMelee = gi.cvar( "g_debugMelee", "0", CVAR_CHEAT );//just for debugging/development, test kicks and grabs
 	g_debugNPCFire = gi.cvar( "g_debugNPCFire", "0", 0 );//prints why stormtrooper-AI NPCs are/aren't shooting the player
+	g_debugAim = gi.cvar( "g_debugAim", "0", 0 );//draws the player's crosshair ray / corrected bolt path per shot (WP_MissileTargetHint)
 	g_saberRestrictForce = gi.cvar( "g_saberRestrictForce", "0", CVAR_ARCHIVE );//restricts certain force powers when using a 2-handed saber or 2 sabers
 	g_saberPickuppableDroppedSabers = gi.cvar( "g_saberPickuppableDroppedSabers", "0", CVAR_CHEAT );//lets you pick up sabers that are dropped
 

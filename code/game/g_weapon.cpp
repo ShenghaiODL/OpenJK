@@ -38,6 +38,7 @@ vec3_t	muzzle;
 
 gentity_t *ent_list[MAX_GENTITIES];
 extern cvar_t	*g_debugMelee;
+extern cvar_t	*g_debugAim;
 extern void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
 
 // some naughty little things that are used cg side
@@ -255,49 +256,105 @@ void WP_ExplosiveDie( gentity_t *self, gentity_t *inflictor, gentity_t *attacker
 	WP_Explode( self );
 }
 
+// The screen-center aiming ray. For the player it's the exact ray the crosshair is traced
+// along (cg.refdef.vieworg + viewaxis[0], stored in renderInfo.crosshairOrigin/crosshairDir).
+// In third person that's the camera behind the player, looking along the camera's own axis,
+// which is NOT ps.viewangles (the camera aims at a focus point). NPCs aim from their eyes
+// along their view angles.
+void G_GetAimRay( gentity_t *ent, vec3_t org, vec3_t dir )
+{
+	if ( !ent->client )
+	{
+		VectorCopy( ent->currentOrigin, org );
+		AngleVectors( ent->currentAngles, dir, NULL, NULL );
+		return;
+	}
+	if ( ent->s.number >= MAX_CLIENTS )
+	{
+		VectorCopy( ent->client->renderInfo.eyePoint, org );
+		AngleVectors( ent->client->ps.viewangles, dir, NULL, NULL );
+		return;
+	}
+
+	VectorCopy( ent->client->renderInfo.crosshairOrigin, org );
+	VectorCopy( ent->client->renderInfo.crosshairDir, dir );
+
+	// Not written yet (first frame after a load), or the camera is clipped into geometry
+	// (third-person wall clip): fall back to the player's eye and view angles.
+	trace_t tr;
+	gi.trace( &tr, org, vec3_origin, vec3_origin, org,
+	          ent->s.number, MASK_SOLID, G2_NOCOLLIDE, 0 );
+	if ( VectorCompare( org, vec3_origin ) || tr.startsolid || VectorNormalize( dir ) < 0.5f )
+	{
+		ViewHeightFix( ent );
+		VectorCopy( ent->currentOrigin, org );
+		org[2] += ent->client->ps.viewheight;
+		AngleVectors( ent->client->ps.viewangles, dir, NULL, NULL );
+	}
+}
+
 bool WP_MissileTargetHint(gentity_t* shooter, vec3_t start, vec3_t out)
 {
 	if ( shooter->s.number >= MAX_CLIENTS )
 		return false;
 
-	// Trace from the crosshair's exact origin (= cg.refdef.vieworg, stored in
-	// renderInfo.crosshairOrigin) to find the world aim target, then redirect the shot from the
-	// muzzle toward it. In third person the camera is behind the player; this corrects the
-	// parallax so the shot lands exactly where the screen-center crosshair shows.
+	// Trace the crosshair's own ray to find the world aim target, then redirect the shot from
+	// the muzzle toward it. In third person the camera is behind the player and looks along its
+	// own axis; this corrects the parallax so the shot lands exactly where the crosshair shows.
+	// fwd (view angles) stays the reference for rotating out, since out and its spread are
+	// built from the view angles.
 	vec3_t fwd;
 	AngleVectors( shooter->client->ps.viewangles, fwd, NULL, NULL );
 
-	vec3_t traceOrg;
-	VectorCopy( shooter->client->renderInfo.crosshairOrigin, traceOrg );
+	vec3_t traceOrg, traceDir;
+	G_GetAimRay( shooter, traceOrg, traceDir );
 
-	// Not written yet (first frame after a load), or the camera is clipped into geometry
-	// (third-person wall clip): fall back to the player's eye.
+	// Per-poly Ghoul2 collision, same as missiles (g_missile.cpp). A bounding-box trace stops
+	// on the front face of an NPC's box, in front of the actual model; up close, steering the
+	// bolt from the low/left muzzle through that point sends it over the head into the ceiling.
 	trace_t tr;
-	gi.trace( &tr, traceOrg, vec3_origin, vec3_origin, traceOrg,
-	          shooter->s.number, MASK_SOLID, G2_NOCOLLIDE, 0 );
-	if ( VectorCompare( traceOrg, vec3_origin ) || tr.startsolid )
+	vec3_t aimTarget;
+	VectorMA( traceOrg, 8192, traceDir, aimTarget );
+	gi.trace( &tr, traceOrg, vec3_origin, vec3_origin, aimTarget,
+	          shooter->s.number, MASK_SHOT, G2_RETURNONHIT, 10 );
+	if ( tr.fraction < 1.0f )
 	{
-		ViewHeightFix( shooter );
-		VectorCopy( shooter->currentOrigin, traceOrg );
-		traceOrg[2] += shooter->client->ps.viewheight;
+		VectorCopy( tr.endpos, aimTarget );
+		if ( tr.entityNum < ENTITYNUM_WORLD )
+		{// aim a little into the model so float error or a thin limb doesn't graze past
+			VectorMA( aimTarget, 4.0f, traceDir, aimTarget );
+		}
 	}
 
-	vec3_t aimTarget;
-	VectorMA( traceOrg, 8192, fwd, aimTarget );
-	gi.trace( &tr, traceOrg, vec3_origin, vec3_origin, aimTarget,
-	          shooter->s.number, MASK_SHOT, G2_NOCOLLIDE, 0 );
-	if ( tr.fraction < 1.0f )
-		VectorCopy( tr.endpos, aimTarget );
+	if ( g_debugAim->integer )
+	{
+		vec3_t uncorrected;
+		VectorMA( start, 64.0f, out, uncorrected );
+		G_DebugLine( traceOrg, aimTarget, 1000, 0x0000ff00, qtrue );	// green: crosshair ray
+		G_DebugLine( start, aimTarget, 1000, 0x000000ff, qtrue );		// red: corrected bolt path
+		G_DebugLine( start, uncorrected, 1000, 0x0000ffff, qtrue );		// yellow: uncorrected bolt dir
+		gi.Printf( "aim: hitEnt %d dist %.0f camToEye %.0f\n", tr.entityNum,
+		           Distance( start, aimTarget ), Distance( traceOrg, shooter->client->renderInfo.eyePoint ) );
+	}
 
 	vec3_t aimDir;
 	VectorSubtract( aimTarget, start, aimDir );
 	float len = VectorNormalize( aimDir );
-	if ( len < 1.0f || DotProduct( aimDir, fwd ) < 0.0f )
-		return true; // unreliable correction — leave out (with spread) unchanged
+	if ( len < 16.0f || DotProduct( aimDir, fwd ) < 0.0f )
+	{
+		// The aim point is at the muzzle, or between the camera and the muzzle (target
+		// pressed against the gun): no turn from the muzzle can reach it. Spawn the shot on
+		// the crosshair ray just in front of the aim point instead. The camera-to-aim-point
+		// ray is known clear, so this start isn't inside a wall.
+		if ( tr.fraction < 1.0f )
+			VectorMA( tr.endpos, -8.0f, traceDir, start );
+		return true;
+	}
 
 	// Compute the correction axis and angle.
-	// Cap at 12 degrees so close-range targets don't produce steep bolt trajectories
-	// while still giving full correction at medium/far range (>~70 units).
+	// Cap the turn so mid/long-range shots don't get steep bolt trajectories: 12 degrees from
+	// 256 units out, ramping up to 45 degrees under 128 units, where the shoulder-camera offset
+	// needs a much bigger turn to land on what the crosshair shows.
 	vec3_t axis;
 	CrossProduct( fwd, aimDir, axis );
 	float sinAngle = VectorNormalize( axis );
@@ -306,7 +363,18 @@ bool WP_MissileTargetHint(gentity_t* shooter, vec3_t start, vec3_t out)
 
 	float cosAngle = DotProduct( fwd, aimDir );
 	float angleRad = atan2f( sinAngle, cosAngle );
-	const float maxRad = DEG2RAD( 12.0f );
+	// The big close-range allowance is for the third-person shoulder camera only. In first
+	// person the camera is the eye and the muzzle is the hidden body model's gun bolt, whose
+	// offset shifts with pitch/animation; a large turn there over-corrected at some angles.
+	float maxDeg = 12.0f;
+	if ( cg.renderingThirdPerson )
+	{
+		if ( len < 128.0f )
+			maxDeg = 45.0f;
+		else if ( len < 256.0f )
+			maxDeg = 45.0f - (45.0f - 12.0f) * ((len - 128.0f) / 128.0f);
+	}
+	const float maxRad = DEG2RAD( maxDeg );
 	if ( angleRad > maxRad )
 		angleRad = maxRad;
 

@@ -9701,10 +9701,13 @@ qboolean ShouldPlayerResistForceThrow( gentity_t *player, gentity_t *attacker, q
 	return qfalse;
 }
 
+extern void G_GetAimRay( gentity_t *ent, vec3_t org, vec3_t dir );
 void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 {//FIXME: pass in a target ent so we (an NPC) can push/pull just one targeted ent.
 	//shove things in front of you away
 	float		dist;
+	vec3_t		aimOrg, aimDir;
+	float		aimRange;
 	gentity_t	*ent, *forwardEnt = NULL;
 	gentity_t	*entityList[MAX_GENTITIES];
 	gentity_t	*push_list[MAX_GENTITIES];
@@ -9846,6 +9849,12 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 	AngleVectors( fwdangles, forward, right, NULL );
 	VectorCopy( self->currentOrigin, center );
 
+	// "Pointing right at it" traces start where the crosshair does (the camera in third
+	// person), so the target under the crosshair is the one pushed/pulled. Extend the range
+	// by the camera's distance from the eye so the offset doesn't shorten it.
+	G_GetAimRay( self, aimOrg, aimDir );
+	aimRange = radius + Distance( aimOrg, self->client->renderInfo.eyePoint );
+
 	if ( pull )
 	{
 		cone = forcePullCone[self->client->ps.forcePowerLevel[FP_PULL]];
@@ -9857,8 +9866,8 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 
 	//	if ( cone >= 1.0f )
 	{//must be pointing right at them
-		VectorMA( self->client->renderInfo.eyePoint, radius, forward, end );
-		gi.trace( &tr, self->client->renderInfo.eyePoint, vec3_origin, vec3_origin, end, self->s.number, MASK_OPAQUE|CONTENTS_SOLID|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE, (EG2_Collision)0, 0 );//was MASK_SHOT, changed to match crosshair trace
+		VectorMA( aimOrg, aimRange, aimDir, end );
+		gi.trace( &tr, aimOrg, vec3_origin, vec3_origin, end, self->s.number, MASK_OPAQUE|CONTENTS_SOLID|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE, (EG2_Collision)0, 0 );//was MASK_SHOT, changed to match crosshair trace
 		if ( tr.entityNum < ENTITYNUM_WORLD )
 		{//found something right in front of self,
 			forwardEnt = &g_entities[tr.entityNum];
@@ -10419,8 +10428,8 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 
 					AngleVectors( self->client->ps.viewangles, forward, NULL, NULL );
 					VectorNormalize( forward );
-					VectorMA( self->client->renderInfo.eyePoint, radius, forward, end );
-					gi.trace( &tr, self->client->renderInfo.eyePoint, vec3_origin, vec3_origin, end, self->s.number, MASK_SHOT, (EG2_Collision)0, 0 );
+					VectorMA( aimOrg, aimRange, aimDir, end );
+					gi.trace( &tr, aimOrg, vec3_origin, vec3_origin, end, self->s.number, MASK_SHOT, (EG2_Collision)0, 0 );
 					if ( tr.entityNum != push_list[x]->s.number || tr.fraction == 1.0 || tr.allsolid || tr.startsolid )
 					{//must be pointing right at it
 						continue;
@@ -10428,11 +10437,11 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 
 					if ( pull )
 					{
-						VectorSubtract( self->client->renderInfo.eyePoint, tr.endpos, pushDir );
+						VectorSubtract( aimOrg, tr.endpos, pushDir );
 					}
 					else
 					{
-						VectorSubtract( tr.endpos, self->client->renderInfo.eyePoint, pushDir );
+						VectorSubtract( tr.endpos, aimOrg, pushDir );
 					}
 					/*
 					VectorSubtract( push_list[x]->absmax, push_list[x]->absmin, size );
@@ -10480,8 +10489,8 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 
 					AngleVectors( self->client->ps.viewangles, forward, NULL, NULL );
 					VectorNormalize( forward );
-					VectorMA( self->client->renderInfo.eyePoint, radius, forward, end );
-					gi.trace( &tr, self->client->renderInfo.eyePoint, vec3_origin, vec3_origin, end, self->s.number, MASK_SHOT, (EG2_Collision)0, 0 );
+					VectorMA( aimOrg, aimRange, aimDir, end );
+					gi.trace( &tr, aimOrg, vec3_origin, vec3_origin, end, self->s.number, MASK_SHOT, (EG2_Collision)0, 0 );
 					if ( tr.entityNum != push_list[x]->s.number || tr.fraction == 1.0 || tr.allsolid || tr.startsolid )
 					{//must be pointing right at it
 						continue;

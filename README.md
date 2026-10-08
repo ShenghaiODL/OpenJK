@@ -38,6 +38,21 @@ HEAVY ATTACKS
 Saber-capable enemies can now telegraph a heavy attack: a visibly slowed windup into a normal-speed strike, so you get a real tell instead of every swing looking the same -- one enemy can only do this once every 7 seconds (g_heavyAttackCooldown)
 Blocking a heavy attack without perfect timing still staggers you, but damage is halved compared to a normal mistimed block -- rewards at least trying to block a heavy swing even if the timing's off
 A Force push/pull/repulse/grip that actually staggers someone now locks out the caster's own follow-up attack for a share of the victim's recovery time (g_forceStaggerLockoutScale, 60%) so you can't just push someone down and get a free hit every time
+Katas now count as heavy attacks too -- mistiming a block against one gets the same heavy-attack stagger treatment
+
+
+SABER STYLES
+--------------------------------------
+Each style now plays differently mechanically, not just visually:
+  Every style has its own parry recovery time
+  Fast and Dual: quicker on your feet
+  Strong: bonus guard damage -- breaks an enemy's guard noticeably faster
+  Staff: blocking blaster fire costs less and covers a wider angle
+  Dual: exempt from the "blocking the same direction over and over" penalty
+New dedicated Kata keybind (+kata, in the controls menu) -- the old attack+alt-attack combo stopped working once block took over the right mouse button, so katas were basically unreachable before
+Only boss-tier enemies get their guard instantly refilled after a break now; regular saber users have to recover it
+While an enemy's guard is still intact they shrug off part of your saber damage, so breaking guard first actually matters
+Saber clashes/bounces kick in with partial Saber Offense investment now, instead of needing it maxed
 
 
 FORCE ECONOMY
@@ -69,6 +84,8 @@ Loop sound plays while spinning; spin-down sound plays on button release
 Model and animations courtesy of MBII
 Stormtroopers, officers, and select NPCs can now spawn with the Z-6 as a weapon pool option
 Real heat mechanic: sustained fire builds heat, which widens the spread the longer you hold the trigger (gentle at first, falls off a cliff near max heat) -- trades accuracy for suppression instead of just being a bigger repeater
+Running dry no longer leaves you stuck spinning with an empty gun -- it spins down and auto-switches like everything else
+NPCs with the Z-6 now lay down long suppression streams (longer and more frequent on higher difficulties) instead of short bursts
 // Fixed this round: muzzle flash/shot trail effects were firing slower than the gun itself, so most shots showed no visual at all; missing shader definitions were throwing console warnings; dropped Z-6 pickups showed the repeater's world model instead of their own; max-heat spread was a little much and got trimmed down
 
 
@@ -76,6 +93,9 @@ REPEATER REWORK
 ----------------------------------------
 Primary fire is a 3-round burst rather than straight full-auto -- holding the trigger keeps firing burst after burst automatically, no need to release and re-press
 Alt fire ("blob") charges the longer you hold it, throwing farther with a longer charge
+A burst always finishes once started -- tapping the trigger can't cut it short or turn it back into full-auto
+Alt fire now has a charge-up hum and a glow on the barrel while charging
+NPCs with the repeater fire the same 3-round bursts
 // Fixed this round: an instant tap on alt fire was getting the same power/range as a "properly" charged shot -- there was no actual weak/uncharged state at all. Quick taps are now noticeably weaker and shorter-range, full charge unchanged
 
 
@@ -84,6 +104,7 @@ CYCLER RIFLE / AMBAN SNIPER (Replaces Disruptor for player and will eventually f
 New weapon using the Amban model and MB2 skeleton animations
 Cycler rifle that needs to be reloaded in between shots.
 Keeps disruptor mechanic, but needs to charge for longer.
+Shots are real travel-time bolts now instead of instant hitscan beams, and hit harder; headshots do double damage. Disintegration is gone from this weapon -- a full charge is one heavy bolt rather than a beam through several enemies
 
 
 KICK SYSTEM
@@ -96,6 +117,15 @@ Previously restricted to double bladed saber
 BLASTER BALANCING
 -----------------
 Blaster bolt velocity: 2300 -> 3000
+
+
+BLASTER VISUALS
+-----------------
+New bolt look for the blaster, both pistols, repeater and Z-6: thin hot core with a proper red glow that actually blooms with dynamic glow on //going for a Battlefront II feel
+Repeater and Z-6 bolts are red now (repeater was blue, Z-6 read orange)
+Muzzle flashes glow, are about half the size they were, and sit on the barrel properly instead of slightly above it
+Bolts hitting walls get an extra red flash and a few glowing sparks on top of the usual impact
+Z-6 barrel glow at high heat is red to match
 
 
 CLASS-BASED WEAPON LOADOUTS
@@ -136,6 +166,9 @@ Stormtroopers reposition more often, fire while moving/retreating more, and hold
 New NPC_StormtrooperRandom spawner: drops a weighted-random stormtrooper variant (rifle/heavy/officer/grenadier) from a config file instead of needing a distinct classname per spawn -- add new variants by editing the .npc/.cfg, no recompile
 Various stormtrooper fixes: grenadier now switches back to its blaster properly after throwing, saber no longer flickers off/on during door-cam cutscenes, fixed stormtrooper_random always falling back to the hardcoded variant list
 Toned down how much NPCs strafe and jump around during saber duels -- was getting a bit chaotic to actually read what they were doing
+Fixed stormtroopers refusing to shoot at you while you backpedal or stand side-on to them (with a gun or a saber) -- they were treating the third-person camera's position as where your body was, so every shot looked blocked
+Disarmed NPCs now react instead of standing there: they run for cover and look for a weapon on the way, surrender (cower, hands up) if their squad's morale is broken or you corner them with a lit saber, and otherwise go down swinging in a desperate melee
+NPCs can re-arm from weapon racks placed in the level, as well as picking up dropped weapons like before
 
 
 SABOTEUR CLOAK REWORK
@@ -152,12 +185,17 @@ New console command g_saberloaddebug to inspect animation and movement state for
 RENDERER
 --------
 Vertex limit per surface raised (from my brief testing, negligible impact on fps/performance. Opens up a couple of cool possibilties with rend2 I think.)
+rend2 updated to SomaZ's latest (Aug 2026). New options: real bloom on glowing effects (r_dynamicGlowBloom 1-2), SMAA anti-aliasing (r_smaa 1, or 2 for temporal), volumetric fog lit by the map (r_volumetricFog 1), chromatic aberration on refraction (r_refractionChromaticAberration)
+Faster map loads and vid_restart (compiled shaders are cached), fixed missing projectile splash effects, plus a long list of renderer bug fixes
+Animated md3 models now animate smoothly instead of snapping between frames
+cg_fovViewModel now works correctly with cg_fovAspectAdjust and FOV changes
 
 
 CAMERA
 --------
 Third-person camera now shifts between three profiles depending on what you're holding -- a looser "explore" view with the saber holstered, a tighter dueling view with the blade lit, and a closer over-the-shoulder "shooter" view for guns -- smoothly blending between them and re-tracing to avoid clipping into walls
 Shooter mode aims to fix the old mismatch between the 3D crosshair and where shots actually land //inspired by Jedi Survivor's camera, still tuning the exact offsets
+Point-blank shots now land where the crosshair is (even with the gun pressed against an enemy), and Force push/pull grab whatever is under the crosshair in third person
 
 
 PHYSICS
