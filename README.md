@@ -44,7 +44,7 @@ Katas now count as heavy attacks too -- mistiming a block against one gets the s
 SABER DAMAGE
 --------------------------------------
 A real saber swing is lethal to regular enemies wherever it lands -- troopers, officers and the like take at least 80% of their health from any proper hit. Just brushing someone with the blade while it's transitioning or blocking no longer counts as a near-kill (it used to do a minimum of 25)
-Cutting off an enemy's hand is non-lethal: they drop their weapon and live, and can flee, surrender or go looking for another gun
+Cutting off a regular enemy's hand is non-lethal: the hand comes off, they scream, drop their gun, stagger for a moment, then either throw their hands up or run from you (and give up once cornered). They count as killed so missions keep progressing, but you can still finish them off //needs testing; a fuller non-lethal system will come later
 Against saber fighters, bosses and you, damage depends on where the blade lands: head x1.5, torso x1, arms/legs x0.8, hands/feet x0.5 -- a swing through the neck now actually counts as a head hit
 Fixed saber hit locations being applied twice against saber users (an arm hit could end up at a quarter damage), and the same chest/helmet detection fixes the blasters got
 Removed the pile of per-difficulty saber damage caps (bosses could only ever take 10-25 per hit, you could only take 7-19 from a boss, etc). Saber fight difficulty now comes from the guard/parry system; the one cap left is that a single saber hit never takes more than half your health (g_saberMaxPlayerHitPct)

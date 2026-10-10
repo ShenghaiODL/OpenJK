@@ -1588,6 +1588,9 @@ void WP_SaberClearDamageForEntNum( gentity_t *attacker, int entityNum, int saber
 extern float damageModifier[];
 extern float hitLocHealthPercentage[];
 extern float saberLocationMod[];
+extern qboolean G_DoDismemberment( gentity_t *self, vec3_t point, int mod, int damage, int hitLoc, qboolean force );
+extern void G_FlagNPCAsKilled( gentity_t *self, gentity_t *attacker );
+void WP_DropWeapon( gentity_t *dropper, vec3_t velocity );
 extern cvar_t *g_saberMaxPlayerHitPct;
 extern cvar_t *g_debugDamage;
 qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
@@ -1875,13 +1878,23 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 						{
 							damage = ceil(totalDmg[i]);
 						}
-						if ( victim->client && victim->s.number >= MAX_CLIENTS
+						// Severing a regular NPC's hand is non-lethal: wound them, drop their gun, cut the
+						// hand off the living body, and count them as killed for mission purposes (they
+						// go neutral and harmless). Dismemberment normally only runs in player_die, so
+						// it's done here directly; the hit itself must not kill or the death path would
+						// double up.
+						qboolean severHand = qfalse;
+						if ( victim->client && victim->NPC && victim->s.number >= MAX_CLIENTS
+							&& !saberFighter
+							&& victim->health > 1
 							&& (dFlags&DAMAGE_DISMEMBER)
 							&& ( hitDismemberLoc[i] == HL_HAND_RT || hitDismemberLoc[i] == HL_HAND_LT )
-							&& victim->health > 1 && damage >= victim->health )
-						{//severing a hand isn't lethal: they lose the hand (and the weapon) and live,
-						//so the disarmed-NPC behaviour (flee/surrender/re-arm) can take over
-							damage = victim->health - 1;
+							&& victim->locationDamage[hitDismemberLoc[i]] < Q3_INFINITE//hand still attached
+							&& ( g_dismemberment->integer || g_saberRealisticCombat->integer > 1 ) )
+						{
+							severHand = qtrue;
+							damage = Q_min( victim->health - 1, Q_max( 1, (int)( victim->max_health * 0.3f ) ) );
+							dFlags &= ~DAMAGE_DISMEMBER;
 						}
 						if ( g_debugDamage->integer )
 						{
@@ -1890,6 +1903,38 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 								rawContactDmg, damage, saberFighter ? "" : " (lethal-anywhere)", hitDismemberLoc[i] );
 						}
 						G_Damage( victim, inflictor, ent, dmgDir[i], dmgSpot[i], damage, dFlags, MOD_SABER, hitDismemberLoc[i] );
+						if ( severHand && victim->health > 0 )
+						{
+							// disarm first, so the gun falls as a real pickup instead of being copied onto the hand
+							if ( victim->s.weapon != WP_NONE && victim->s.weapon != WP_MELEE && victim->s.weapon != WP_SABER )
+							{
+								WP_DropWeapon( victim, NULL );
+							}
+							// cut it off the living body (force: skip the damage-threshold check), then
+							// allow a later killing blow to dismember again
+							victim->client->dismembered = false;
+							G_DoDismemberment( victim, dmgSpot[i], MOD_SABER, damage, hitDismemberLoc[i], qtrue );
+							victim->client->dismembered = false;
+							G_FlagNPCAsKilled( victim, ent );
+							// cry out (their own pain100 or death scream), then a moment of shock in a held
+							// pain anim before NPC_RunBehavior takes them to hands-up and/or running away
+							if ( Q_irand( 0, 1 ) )
+							{
+								G_SoundOnEnt( victim, CHAN_VOICE_ATTEN, "*pain100.wav" );
+							}
+							else
+							{
+								G_AddEvent( victim, Q_irand( EV_DEATH1, EV_DEATH3 ), victim->health );
+							}
+							const int reactTime = Q_irand( 800, 1400 );
+							TIMER_Set( victim, "maimedReact", reactTime );
+							NPC_SetAnim( victim, SETANIM_BOTH, Q_irand( BOTH_PAIN1, BOTH_PAIN4 ), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+							victim->client->ps.torsoAnimTimer = victim->client->ps.legsAnimTimer = reactTime;
+							if ( g_debugDamage->integer )
+							{
+								gi.Printf( "saber: hand severed on %d, non-lethal, disarmed, flagged as killed\n", victim->s.number );
+							}
+						}
 						if ( damage > 0 && cg.time )
 						{
 							float sizeTimeScale = 1.0f;

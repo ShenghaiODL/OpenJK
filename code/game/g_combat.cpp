@@ -455,6 +455,54 @@ void G_CheckVictoryScript(gentity_t *self)
 	}
 }
 
+//---------------------------------------------------------
+// An NPC taken out of the fight without dying (currently: a saber severing its hand) counts as
+// killed for mission purposes, so it can never block progress: fires the mission-relevant parts
+// of player_die once -- its target, its death script, the player's kill count and victory
+// script. It keeps its team and enemy (so it can flee from / surrender to its attacker, and can
+// still be finished off); the "maimed" timer marks it so a real death later doesn't count a
+// second kill, and drives its shock/surrender/flee reaction (NPC_RunBehavior). A proper
+// non-lethal system (capture etc) is a later pass.
+// Known limit: scripts that wait on health <= 0 still won't see it as dead.
+//---------------------------------------------------------
+void G_FlagNPCAsKilled( gentity_t *self, gentity_t *attacker )
+{
+	if ( !self || !self->client || !self->NPC || self->health <= 0 )
+	{
+		return;
+	}
+
+	const qboolean wasEnemy = (qboolean)( self->client->playerTeam == TEAM_ENEMY || self->client->playerTeam == TEAM_FREE );
+
+	// its target(s), once
+	G_UseTargets( self, self );
+	self->target = NULL;
+	self->target2 = NULL;
+	self->target4 = NULL;
+
+	// its death script, once
+	if ( self->behaviorSet[BSET_DEATH] )
+	{
+		G_ActivateBehavior( self, BSET_DEATH );
+		self->behaviorSet[BSET_DEATH] = NULL;
+	}
+
+	if ( attacker && attacker->client && !attacker->s.number && wasEnemy )
+	{
+		attacker->client->sess.missionStats.enemiesKilled++;
+		G_CheckVictoryScript( attacker );
+	}
+
+	// marks it as already counted, and drives its reaction (timers are saved with the game)
+	TIMER_Set( self, "maimed", Q3_INFINITE );
+	// it's unarmed and stays that way (Track 9's flee logic would otherwise go looking for a gun)
+	TIMER_Set( self, "CheckForWeaponToPickup", Q3_INFINITE );
+	if ( attacker && attacker->client && attacker != self && !self->enemy )
+	{
+		G_SetEnemy( self, attacker );
+	}
+}
+
 qboolean OnSameTeam( gentity_t *ent1, gentity_t *ent2 )
 {
 	if ( ent1->s.number < MAX_CLIENTS
@@ -4068,8 +4116,8 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 	{
 		if ( attacker->client && !attacker->s.number )
 		{
-			if ( self->client )
-			{//killed a client
+			if ( self->client && !TIMER_Exists( self, "maimed" ) )
+			{//killed a client (a maimed NPC was already counted when it was taken out, G_FlagNPCAsKilled)
 				if ( self->client->playerTeam == TEAM_ENEMY
 					|| self->client->playerTeam == TEAM_FREE
 					|| (self->NPC && (self->NPC->charmedTime > level.time || self->NPC->darkCharmedTime > level.time) ) )

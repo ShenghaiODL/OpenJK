@@ -1861,6 +1861,59 @@ extern bool NPC_IsTrooper( gentity_t *ent );
 extern bool Pilot_MasterUpdate();
 extern void NPC_BSGM_Default( void );
 
+extern void NPC_Surrender( void );
+
+// A regular NPC whose hand was cut off by a saber (WP_SaberApplyDamage; counted as killed by
+// G_FlagNPCAsKilled): a moment of shock in a held pain anim, then -- decided once -- either hands
+// up right where it stands, or running away from its attacker. While running, the normal
+// (Track 9) flee behaviour drives it, which already drops into NPC_Surrender once it can't get
+// further away; when the flee wears off it puts its hands up too. Returns qtrue if it handled
+// this think.
+static qboolean NPC_MaimedThink( void )
+{
+	if ( !TIMER_Done( NPC, "maimedReact" ) )
+	{// shock: stand still in the held pain anim
+		ucmd.forwardmove = ucmd.rightmove = ucmd.upmove = 0;
+		ucmd.buttons &= ~(BUTTON_ATTACK|BUTTON_ALT_ATTACK);
+		if ( NPC->enemy )
+		{
+			NPC_FaceEnemy();
+		}
+		NPC_UpdateAngles( qtrue, qtrue );
+		return qtrue;
+	}
+
+	if ( !TIMER_Exists( NPC, "maimedChoice" ) )
+	{// decide once: run (then hands up when cornered/caught) or hands up right here
+		TIMER_Set( NPC, "maimedChoice", Q3_INFINITE );
+		if ( NPC->enemy && Q_irand( 0, 1 ) )
+		{
+			TIMER_Set( NPC, "maimedFlee", Q3_INFINITE );
+			G_StartFlee( NPC, NPC->enemy, NPC->enemy->currentOrigin, AEL_DANGER_GREAT, 4000, 8000 );
+			TIMER_Set( NPC, "meleeFallback", Q3_INFINITE );//no fighting back with fists after losing a hand
+		}
+	}
+
+	if ( TIMER_Exists( NPC, "maimedFlee" )
+		&& NPC->enemy
+		&& NPCInfo->tempBehavior == BS_FLEE
+		&& !TIMER_Done( NPC, "flee" ) )
+	{// still running away: let the normal flee behaviour drive it
+		return qfalse;
+	}
+
+	// hands up, and stay that way
+	ucmd.forwardmove = ucmd.rightmove = ucmd.upmove = 0;
+	ucmd.buttons &= ~(BUTTON_ATTACK|BUTTON_ALT_ATTACK);
+	if ( NPC->enemy )
+	{
+		NPC_FaceEnemy();
+	}
+	NPC_Surrender();
+	NPC_UpdateAngles( qtrue, qtrue );
+	return qtrue;
+}
+
 void NPC_RunBehavior( int team, int bState )
 {
 	//
@@ -1879,6 +1932,10 @@ void NPC_RunBehavior( int team, int bState )
 	else if ( !TIMER_Done(NPC, "DEMP2_StunTime"))
 	{
 		NPC_UpdateAngles(qtrue, qtrue);
+		return;
+	}
+	else if ( TIMER_Exists( NPC, "maimed" ) && NPC_MaimedThink() )
+	{//lost a hand to a saber: shock, then surrendering and/or fleeing
 		return;
 	}
 	else if ( NPC->client->ps.weapon == WP_EMPLACED_GUN )
