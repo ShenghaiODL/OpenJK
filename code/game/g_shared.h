@@ -531,6 +531,8 @@ public:
 	int				otherAttacksCnt;				// # of times anything else on a monster was hit with saber
 	int				forceUsed[NUM_FORCE_POWERS];	// # of times each force power was used
 	int				weaponUsed[WP_NUM_WEAPONS];		// # of times each weapon was used
+	int				enemiesSubdued;					// # of enemies taken alive (non-lethal)
+	int				enemiesBypassed;				// # of enemies that never noticed you (stealth)
 
 
 	void sg_export(
@@ -550,6 +552,8 @@ public:
 		saved_game.write<int32_t>(otherAttacksCnt);
 		saved_game.write<int32_t>(forceUsed);
 		saved_game.write<int32_t>(weaponUsed);
+		saved_game.write<int32_t>(enemiesSubdued);
+		saved_game.write<int32_t>(enemiesBypassed);
 	}
 
 	void sg_import(
@@ -569,6 +573,8 @@ public:
 		saved_game.read<int32_t>(otherAttacksCnt);
 		saved_game.read<int32_t>(forceUsed);
 		saved_game.read<int32_t>(weaponUsed);
+		saved_game.read<int32_t>(enemiesSubdued);
+		saved_game.read<int32_t>(enemiesBypassed);
 	}
 }; // missionStats_t
 
@@ -1248,6 +1254,9 @@ Ghoul2 Insert End
 	char		*NPC_type;
 	char		*NPC_targetname;
 	char		*NPC_target;
+	char		*NPC_subduetarget;	//fired instead of NPC_target when taken alive (non-lethal)
+	char		*squadname;			//NPCs sharing a squadname form a squad at spawn
+	int			nonlethal;			//0 default, 1 never (must die properly), 2 prefer (always taken alive when eligible)
 
 //Variables used by movers (most likely exclusively by them)
 	moverState_t moverState;

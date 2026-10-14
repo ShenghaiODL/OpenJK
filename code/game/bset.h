@@ -41,6 +41,7 @@ typedef enum //# bSet_e
 	BSET_FFIRE,//# script to run when player shoots their own teammates
 	BSET_FFDEATH,//# script to run when player kills a teammate
 	BSET_MINDTRICK,//# script to run when player does a mind trick on this NPC
+	BSET_SUBDUE,//# script to run when taken alive (non-lethal) instead of the death script
 
 	NUM_BSETS
 } bSet_t;

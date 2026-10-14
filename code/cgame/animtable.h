@@ -1514,6 +1514,12 @@ stringID_table_t animTable [MAX_ANIMATIONS+1] =
 	ENUM2STRING(BOTH_KYLE_PA_3),		//# hold 3
 	ENUM2STRING(BOTH_PLAYER_PA_3),	//# player getting held 3
 	ENUM2STRING(BOTH_PLAYER_PA_3_FLY),//# player getting thrown at end of hold 3
+	//stealth takedown from behind
+	ENUM2STRING(BOTH_SPY_GRAB),
+	ENUM2STRING(BOTH_SPY_KILL),
+	ENUM2STRING(BOTH_SPY_VICTIM),
+	ENUM2STRING(BOTH_SPY_VICTIM_DEAD),
+	ENUM2STRING(BOTH_MELEE5),
 	//Rancor
 	ENUM2STRING(BOTH_BUCK_RIDER),	//# Rancor bucks when someone is on him
 	//WAMPA Grabbing enemy

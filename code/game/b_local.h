@@ -62,8 +62,9 @@ extern cvar_t		*debugNPCFreeze;		// set to disable NPC ai and temporarily freeze
 extern cvar_t		*debugNPCName;
 extern cvar_t		*d_JediAI;
 extern cvar_t		*d_saberCombat;
-extern cvar_t		*d_moraleDebug;		// draw group morale/squad-state info over NPC heads
-extern int AI_GetGroupMoraleTier( const AIGroupInfo_t *group );	// 0 ROUTED .. 4 RUSH
+extern cvar_t		*d_aiDebug;			// draw nerve / decision info over NPC heads (1 nerve, 2 + action, 3 + last event)
+extern cvar_t		*d_nerveLog;		// print nerve events: -1 all NPCs, else an entity number
+extern cvar_t		*d_aiLog;			// print brain decisions: -1 all NPCs, else an entity number
 extern void G_DamageGuard( gentity_t *victim, gentity_t *attacker, int amount );	// saber guard/composure drain (wp_saber.cpp)
 extern void NPC_Think ( gentity_t *self);
 extern void pitch_roll_for_slope( gentity_t *forwhom, vec3_t pass_slope = NULL, vec3_t storeAngles = NULL, qboolean keepPitch = qfalse );
@@ -112,8 +113,9 @@ extern void NPC_BSSearch (void);
 extern void NPC_BSSearchStart (int	homeWp, bState_t bState);
 extern void NPC_BSWander (void);
 extern qboolean NPC_BSFlee( void );
-extern void NPC_StartFlee( gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int fleeTimeMin, int fleeTimeMax );
-extern void G_StartFlee( gentity_t *self, gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int fleeTimeMin, int fleeTimeMax );
+extern qboolean NPC_FindFleeSpot( const vec3_t dangerPos, vec3_t outPos );
+extern qboolean NPC_StartFlee( gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int fleeTimeMin, int fleeTimeMax );
+extern qboolean G_StartFlee( gentity_t *self, gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int fleeTimeMin, int fleeTimeMax );
 
 //NPC_combat
 extern int ChooseBestWeapon( void );
@@ -125,6 +127,7 @@ extern qboolean CanShoot ( gentity_t *ent, gentity_t *shooter );
 extern void NPC_CheckPossibleEnemy( gentity_t *other, visibility_t vis );
 extern gentity_t *NPC_PickEnemy (gentity_t *closestTo, int enemyTeam, qboolean checkVis, qboolean findPlayersFirst, qboolean findClosest);
 extern gentity_t *NPC_CheckEnemy (qboolean findNew, qboolean tooFarOk, qboolean setEnemy = qtrue );
+extern void NPC_CheckRetarget( void );
 extern qboolean NPC_CheckAttack (float scale);
 extern qboolean NPC_CheckDefend (float scale);
 extern qboolean NPC_CheckCanAttack (float attack_scale, qboolean stationary);

@@ -1556,12 +1556,14 @@ void NPC_BehaviorSet_Trooper( int bState )
 ////////////////////////////////////////////////////////////////////////////////////////
 bool NPC_IsTrooper(gentity_t* actor)
 {
+	// Only actual hazard troopers (or anyone already placed in a troop) use the CTroop
+	// formation AI. SCF_NO_GROUPS alone used to route any armed NPC here.
 	return (
 		actor &&
 		actor->NPC &&
+		actor->client &&
 		actor->s.weapon &&
-		!!(actor->NPC->scriptFlags&SCF_NO_GROUPS)// &&
-//		 !(actor->NPC->scriptFlags&SCF_CHASE_ENEMIES)
+		( actor->client->NPC_class == CLASS_HAZARD_TROOPER || actor->NPC->troop )
 		 );
 }
 

@@ -1208,6 +1208,16 @@ void NPC_Begin (gentity_t *ent)
 	ent->NPC->currentAmmo = ent->client->ps.ammo[weaponData[ent->client->ps.weapon].ammoIndex];
 	ent->client->ps.weaponstate = WEAPON_IDLE;
 	ChangeWeapon( ent, ent->client->ps.weapon );
+	ent->NPC->spawnWeapon = ent->client->ps.weapon;//what they were handed at spawn (AI profile / grenadier routing)
+	AI_NerveInit( ent );
+	if ( ent->NPC->leash <= 0 )
+	{//companions: how far from the leader they'll fight (.npc "leash")
+		ent->NPC->leash = 384.0f;
+	}
+	if ( ent->squadname && ent->squadname[0] )
+	{//placed as part of a named squad: form up now, not at first contact
+		AI_SquadJoin( ent );
+	}
 
 	VectorCopy( spawn_origin, client->ps.origin );
 
@@ -1716,6 +1726,9 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent, qboolean fullSpawnNow )
 	newent->target2 = G_NewString(ent->target2);//knocked out death
 	newent->target3 = G_NewString(ent->target3);//???
 	newent->target4 = G_NewString(ent->target4);//ffire death
+	newent->NPC_subduetarget = G_NewString(ent->NPC_subduetarget);//taken alive
+	newent->squadname = G_NewString(ent->squadname);
+	newent->nonlethal = ent->nonlethal;
 	newent->paintarget = G_NewString(ent->paintarget);
 	newent->opentarget = G_NewString(ent->opentarget);
 	newent->radius = ent->radius;

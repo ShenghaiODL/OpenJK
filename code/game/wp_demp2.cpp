@@ -142,7 +142,7 @@ void DEMP2_AltRadiusDamage( gentity_t *ent )
 		dir[2] += 12;
 
 		// per-target shock damage: altdamage x charge (1-3), NPC-scaled, set at fire time
-		G_Damage( gent, ent, ent->owner, dir, ent->currentOrigin, ent->damage ? ent->damage : weaponData[WP_DEMP2].altDamage, DAMAGE_DEATH_KNOCKBACK, ent->splashMethodOfDeath );
+		G_Damage( gent, ent, ent->owner, dir, ent->currentOrigin, ent->damage ? ent->damage : weaponData[WP_DEMP2].altDamage, ent->dflags ? ent->dflags : DAMAGE_DEATH_KNOCKBACK, ent->splashMethodOfDeath );
 		if ( gent->takedamage && gent->client )
 		{
 			gent->s.powerups |= ( 1 << PW_SHOCKED );
@@ -227,6 +227,10 @@ static void WP_DEMP2_AltFire( gentity_t *ent )
 	missile->splashRadius = weaponData[WP_DEMP2].altSplashRadius;
 
 	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
+	if ( count >= 3 )
+	{//a full-charge shock stuns rather than kills (the hit that would finish an NPC knocks it out)
+		missile->dflags |= DAMAGE_NONLETHAL;
+	}
 	missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
 
 	// we don't want it to ever bounce

@@ -337,6 +337,10 @@ typedef enum //# setType_e
 	SET_RADAR_ICON,
 	SET_RADAR_OBJECT,
 
+	//non-lethal
+	SET_SUBDUESCRIPT,//## %s="NULL" !!"W:\game\base\scripts\!!#*.txt" # Script to run when taken alive instead of killed
+	SET_SUBDUED,//## %t="BOOL_TYPES" # (get only) NPC has been taken alive (maimed, knocked out, surrendered...)
+
 	//# #eol
 	SET_
 } setType_t;

@@ -63,6 +63,10 @@ void G_ClearEnemy (gentity_t *self)
 		{
 			self->NPC->goalEntity = NULL;
 		}
+		if ( self->NPC )
+		{//lost them: still on edge, go looking where they were
+			AI_AwarenessLostEnemy( self );
+		}
 		//FIXME: set last enemy?
 	}
 
@@ -426,6 +430,11 @@ void G_SetEnemy( gentity_t *self, gentity_t *enemy )
 	if ( enemy == NULL )
 		return;
 
+	if ( self->NPC && self->enemy != enemy )
+	{//however we got here, we're onto them now
+		AI_AwarenessSetAlert( self );
+	}
+
 	//Must be valid
 	if ( enemy->inuse == 0 )
 	{
@@ -456,6 +465,11 @@ void G_SetEnemy( gentity_t *self, gentity_t *enemy )
 	if ( self->NPC->insanityTime > level.time )
 	{//can't pick up enemies if confused
 		return;
+	}
+
+	if ( enemy->client && enemy->client->ps.weapon == WP_SABER && enemy->client->ps.SaberActive() )
+	{//first sight of a lit saber coming your way (long debounce: once per fight, not once per re-acquire)
+		AI_NerveEvent( self, NE_ENEMY_SABER_SEEN, 1.0f, enemy );
 	}
 
 #ifdef _DEBUG
@@ -1902,6 +1916,69 @@ gentity_t *NPC_PickAlly ( qboolean facingEachOther, float range, qboolean ignore
 	return closestAlly;
 }
 
+/*
+-------------------------
+NPC_CheckRetarget
+
+  We have a live enemy; is there a better one? Switch when another enemy-team fighter is
+  clearly closer, or when ours has been out of sight a while and the other one is right
+  there. With a squad, spread out: if three or more of us are already on the same target
+  and there's a second one in view, the odd ones out take it.
+-------------------------
+*/
+void NPC_CheckRetarget( void )
+{
+	if ( !NPC->enemy || (NPC->svFlags&(SVF_LOCKEDENEMY|SVF_IGNORE_ENEMIES)) || NPC->client->enemyTeam == TEAM_NEUTRAL )
+	{
+		return;
+	}
+	if ( NPCInfo->defendEnt || NPCInfo->confusionTime > level.time || NPCInfo->insanityTime > level.time )
+	{
+		return;
+	}
+
+	gentity_t *other = NPC_PickEnemy( NPC, NPC->client->enemyTeam, qtrue, qfalse, qtrue );
+	if ( !other || other == NPC->enemy || !G_ValidEnemy( NPC, other ) )
+	{
+		return;
+	}
+
+	const float	dOther	= DistanceSquared( NPC->currentOrigin, other->currentOrigin );
+	const float	dCur	= DistanceSquared( NPC->currentOrigin, NPC->enemy->currentOrigin );
+	qboolean	take	= qfalse;
+
+	if ( dOther * 2.25f < dCur )
+	{//they're a lot closer (1.5x)
+		take = qtrue;
+	}
+	else if ( level.time - NPCInfo->enemyLastSeenTime > 3000 )
+	{//haven't seen ours in a while and this one is in view
+		take = qtrue;
+	}
+	else if ( NPCInfo->group && NPCInfo->group->numGroup >= 3 && NPCInfo->group->commander != NPC )
+	{//squad: don't all pile onto one target
+		int onMine = 0;
+		for ( int i = 0; i < NPCInfo->group->numGroup; i++ )
+		{
+			if ( g_entities[NPCInfo->group->member[i].number].enemy == NPC->enemy )
+			{
+				onMine++;
+			}
+		}
+		if ( onMine >= 3 && dOther < dCur * 2.0f )
+		{
+			take = qtrue;
+		}
+	}
+
+	if ( take )
+	{
+		NPC->lastEnemy = NPC->enemy;
+		G_ClearEnemy( NPC );
+		G_SetEnemy( NPC, other );
+	}
+}
+
 gentity_t *NPC_CheckEnemy( qboolean findNew, qboolean tooFarOk, qboolean setEnemy )
 {
 	qboolean	forcefindNew = qfalse;
@@ -1925,6 +2002,14 @@ gentity_t *NPC_CheckEnemy( qboolean findNew, qboolean tooFarOk, qboolean setEnem
 			if ( setEnemy )
 			{
 				G_ClearEnemy( NPC );
+			}
+		}
+		else if ( G_IsNeutralized( NPC->enemy ) && !(NPC->svFlags&SVF_LOCKEDENEMY) )
+		{//they're out of the fight (knocked out, hands up, running unarmed): forget them and look for a live one
+			if ( setEnemy )
+			{
+				G_ClearEnemy( NPC );
+				forcefindNew = qtrue;
 			}
 		}
 	}
@@ -3136,6 +3221,10 @@ void NPC_CheckGetNewWeapon( void )
 	if ( NPC->client
 		&& !G_CanPickUpWeapons( NPC ) )
 	{//this NPC can't pick up weapons...
+		return;
+	}
+	if ( !TIMER_Done( NPC, "CheckForWeaponToPickup" ) )
+	{//told to hold off (flee search debounce, or maimed/neutralized NPCs that must never re-arm)
 		return;
 	}
 	if ( NPC->s.weapon == WP_NONE && NPC->enemy )

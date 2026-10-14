@@ -20,77 +20,14 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 ===========================================================================
 */
 
-// These utilities are meant for strictly non-player, non-team NPCs.
-// These functions are in their own file because they are only intended
-// for use with NPCs who's logic has been overriden from the original
-// AI code, and who's code resides in files with the AI_ prefix.
+// Squad (AIGroupInfo_t) bookkeeping shared by the AI_ files. Squads are formed and kept
+// current in AI_Squad.cpp; this file holds the member-list primitives.
 
 #include "b_local.h"
 #include "g_nav.h"
 #include "g_navigator.h"
 
-#define	MAX_RADIUS_ENTS		128
-#define	DEFAULT_RADIUS		45
-
 extern cvar_t		*d_noGroupAI;
-qboolean AI_ValidateGroupMember( AIGroupInfo_t *group, gentity_t *member );
-
-/*
--------------------------
-AI_GetGroupSize
--------------------------
-*/
-
-int	AI_GetGroupSize( vec3_t origin, int radius, team_t playerTeam, gentity_t *avoid )
-{
-	gentity_t	*radiusEnts[ MAX_RADIUS_ENTS ];
-	vec3_t		mins, maxs;
-	int			numEnts, realCount = 0;
-
-	//Setup the bbox to search in
-	for ( int i = 0; i < 3; i++ )
-	{
-		mins[i] = origin[i] - radius;
-		maxs[i] = origin[i] + radius;
-	}
-
-	//Get the number of entities in a given space
-	numEnts = gi.EntitiesInBox( mins, maxs, radiusEnts, MAX_RADIUS_ENTS );
-
-	//Cull this list
-	for ( int j = 0; j < numEnts; j++ )
-	{
-		//Validate clients
-		if ( radiusEnts[ j ]->client == NULL )
-			continue;
-
-		//Skip the requested avoid ent if present
-		if ( ( avoid != NULL ) && ( radiusEnts[ j ] == avoid ) )
-			continue;
-
-		//Must be on the same team
-		if ( radiusEnts[ j ]->client->playerTeam != playerTeam )
-			continue;
-
-		//Must be alive
-		if ( radiusEnts[ j ]->health <= 0 )
-			continue;
-
-		realCount++;
-	}
-
-	return realCount;
-}
-
-//Overload
-
-int AI_GetGroupSize( gentity_t *ent, int radius )
-{
-	if ( ( ent == NULL ) || ( ent->client == NULL ) )
-		return -1;
-
-	return AI_GetGroupSize( ent->currentOrigin, radius, ent->client->playerTeam, ent );
-}
 
 void AI_SetClosestBuddy( AIGroupInfo_t *group )
 {
@@ -196,24 +133,25 @@ void AI_SortGroupByPathCostToEnemy( AIGroupInfo_t *group )
 	}
 }
 
-qboolean AI_FindSelfInPreviousGroup( gentity_t *self )
-{//go through other groups made this frame and see if any of those contain me already
-	int	i, j;
-	for ( i = 0; i < MAX_FRAME_GROUPS; i++ )
+// the leader: highest rank, first one in on a tie, and it stays put while they live
+void AI_SetNewGroupCommander( AIGroupInfo_t *group )
+{
+	gentity_t *member = NULL;
+	group->commander = NULL;
+	group->leaderNum = ENTITYNUM_NONE;
+	for ( int i = 0; i < group->numGroup; i++ )
 	{
-		if ( level.groups[i].numGroup )//&& level.groups[i].enemy != NULL )
-		{//check this one
-			for ( j = 0; j < level.groups[i].numGroup; j++ )
-			{
-				if ( level.groups[i].member[j].number == self->s.number )
-				{
-					self->NPC->group = &level.groups[i];
-					return qtrue;
-				}
-			}
+		member = &g_entities[group->member[i].number];
+		if ( !member->NPC )
+		{
+			continue;
+		}
+		if ( !group->commander || !group->commander->NPC || member->NPC->rank > group->commander->NPC->rank )
+		{
+			group->commander = member;
+			group->leaderNum = member->s.number;
 		}
 	}
-	return qfalse;
 }
 
 void AI_InsertGroupMember( AIGroupInfo_t *group, gentity_t *member )
@@ -235,344 +173,38 @@ void AI_InsertGroupMember( AIGroupInfo_t *group, gentity_t *member )
 		group->member[group->numGroup++].number = member->s.number;
 		group->numState[member->NPC->squadState]++;
 	}
-	if ( !group->commander || (member->NPC->rank > group->commander->NPC->rank) )
+	if ( !group->commander || !group->commander->NPC || (member->NPC->rank > group->commander->NPC->rank) )
 	{//keep track of highest rank
 		group->commander = member;
+		group->leaderNum = member->s.number;
 	}
 	member->NPC->group = group;
-}
+	member->NPC->squadNum = group->squadId;
 
-qboolean AI_TryJoinPreviousGroup( gentity_t *self )
-{//go through other groups made this frame and see if any of those have the same enemy as me... if so, add me in!
-	int	i;
-	for ( i = 0; i < MAX_FRAME_GROUPS; i++ )
-	{
-		if ( level.groups[i].numGroup
-			&& level.groups[i].numGroup < (MAX_GROUP_MEMBERS - 1)
-			//&& level.groups[i].enemy != NULL
-			&& level.groups[i].enemy == self->enemy )
-		{//has members, not full and has my enemy
-			if ( AI_ValidateGroupMember( &level.groups[i], self ) )
-			{//I am a valid member for this group
-				AI_InsertGroupMember( &level.groups[i], self );
-				return qtrue;
+	if ( group->enemy && group->numGroup > 1 )
+	{//help arrived mid-fight (debounced per NPC, so the constant regrouping doesn't spam it)
+		for ( i = 0; i < group->numGroup; i++ )
+		{
+			gentity_t *other = &g_entities[group->member[i].number];
+			if ( other != member )
+			{
+				AI_NerveEvent( other, NE_REINFORCED, 1.0f, member );
 			}
-		}
-	}
-	return qfalse;
-}
-
-qboolean AI_GetNextEmptyGroup( gentity_t *self )
-{
-	if ( AI_FindSelfInPreviousGroup( self ) )
-	{//already in one, no need to make a new one
-		return qfalse;
-	}
-
-	if ( AI_TryJoinPreviousGroup( self ) )
-	{//try to just put us in one that already exists
-		return qfalse;
-	}
-
-	//okay, make a whole new one, then
-	for ( int i = 0; i < MAX_FRAME_GROUPS; i++ )
-	{
-		if ( !level.groups[i].numGroup )
-		{//make a new one
-			self->NPC->group = &level.groups[i];
-			return qtrue;
-		}
-	}
-
-	//if ( i >= MAX_FRAME_GROUPS )
-	{//WTF?  Out of groups!
-		self->NPC->group = NULL;
-		return qfalse;
-	}
-}
-
-qboolean AI_ValidateNoEnemyGroupMember( AIGroupInfo_t *group, gentity_t *member )
-{
-	if ( !group )
-	{
-		return qfalse;
-	}
-	vec3_t center;
-	if ( group->commander )
-	{
-		VectorCopy( group->commander->currentOrigin, center );
-	}
-	else
-	{//hmm, just pick the first member
-		if ( group->member[0].number < 0 || group->member[0].number >= ENTITYNUM_WORLD )
-		{
-			return qfalse;
-		}
-		VectorCopy( g_entities[group->member[0].number].currentOrigin, center );
-	}
-	//FIXME: maybe it should be based on the center of the mass of the group, not the commander?
-	if ( DistanceSquared( center, member->currentOrigin ) > 147456/*384*384*/ )
-	{
-		return qfalse;
-	}
-	if ( !gi.inPVS( member->currentOrigin, center ) )
-	{//not within PVS of the group enemy
-		return qfalse;
-	}
-	return qtrue;
-}
-
-qboolean AI_ValidateGroupMember( AIGroupInfo_t *group, gentity_t *member )
-{
-	//Validate ents
-	if ( member == NULL )
-		return qfalse;
-
-	//Validate clients
-	if ( member->client == NULL )
-		return qfalse;
-
-	//Validate NPCs
-	if ( member->NPC == NULL )
-		return qfalse;
-
-	//must be aware
-	if ( member->NPC->confusionTime > level.time )
-		return qfalse;
-	
-	if ( member->NPC->insanityTime > level.time )
-		return qfalse;
-
-	//must be allowed to join groups
-	if ( member->NPC->scriptFlags&SCF_NO_GROUPS )
-		return qfalse;
-
-	//Must not be in another group
-	if ( member->NPC->group != NULL && member->NPC->group != group )
-	{//FIXME: if that group's enemy is mine, why not absorb that group into mine?
-		return qfalse;
-	}
-
-	//Must be alive
-	if ( member->health <= 0 )
-		return qfalse;
-
-	//can't be in an emplaced gun
-	if( member->s.eFlags & EF_LOCKED_TO_WEAPON )
-		return qfalse;
-
-	if( member->s.eFlags & EF_HELD_BY_RANCOR )
-		return qfalse;
-
-	if( member->s.eFlags & EF_HELD_BY_SAND_CREATURE )
-		return qfalse;
-
-	if( member->s.eFlags & EF_HELD_BY_WAMPA )
-		return qfalse;
-
-	//Must be on the same team
-	if ( member->client->playerTeam != group->team )
-		return qfalse;
-
-	if ( member->client->ps.weapon == WP_SABER ||//!= self->s.weapon )
-		member->client->ps.weapon == WP_THERMAL ||
-		member->client->ps.weapon == WP_DISRUPTOR ||
-		member->client->ps.weapon == WP_EMPLACED_GUN ||
-		member->client->ps.weapon == WP_BOT_LASER ||		// Probe droid	- Laser blast
-		member->client->ps.weapon == WP_MELEE ||
-		member->client->ps.weapon == WP_TURRET ||			// turret guns
-		member->client->ps.weapon == WP_ATST_MAIN ||
-		member->client->ps.weapon == WP_ATST_SIDE ||
-		member->client->ps.weapon == WP_TIE_FIGHTER )
-	{//not really a squad-type guy
-		return qfalse;
-	}
-
-	if ( member->client->NPC_class == CLASS_ATST ||
-		member->client->NPC_class == CLASS_PROBE ||
-		member->client->NPC_class == CLASS_SEEKER ||
-		member->client->NPC_class == CLASS_REMOTE ||
-		member->client->NPC_class == CLASS_SENTRY ||
-		member->client->NPC_class == CLASS_INTERROGATOR ||
-		member->client->NPC_class == CLASS_MINEMONSTER ||
-		member->client->NPC_class == CLASS_HOWLER ||
-		member->client->NPC_class == CLASS_RANCOR ||
-		member->client->NPC_class == CLASS_MARK1 ||
-		member->client->NPC_class == CLASS_MARK2 )
-	{//these kinds of enemies don't actually use this group AI
-		return qfalse;
-	}
-
-	//should have same enemy
-	if ( member->enemy != group->enemy )
-	{
-		if ( member->enemy != NULL )
-		{//he's fighting someone else, leave him out
-			return qfalse;
-		}
-		if ( !gi.inPVS( member->currentOrigin, group->enemy->currentOrigin ) )
-		{//not within PVS of the group enemy
-			return qfalse;
-		}
-	}
-	else if ( group->enemy == NULL )
-	{//if the group is a patrol group, only take those within the room and radius
-		if ( !AI_ValidateNoEnemyGroupMember( group, member ) )
-		{
-			return qfalse;
-		}
-	}
-	//must be actually in combat mode
-	if ( !TIMER_Done( member, "interrogating" ) )
-		return qfalse;
-	//FIXME: need to have a route to enemy and/or clear shot?
-	return qtrue;
-}
-
-/*
--------------------------
-AI_GetGroup
--------------------------
-*/
-void AI_GetGroup( gentity_t *self )
-{
-	int	i;
-	gentity_t	*member;//, *waiter;
-	//int	waiters[MAX_WAITERS];
-
-	if ( !self || !self->NPC )
-	{
-		return;
-	}
-
-	if ( d_noGroupAI->integer )
-	{
-		self->NPC->group = NULL;
-		return;
-	}
-
-	if ( !self->client )
-	{
-		self->NPC->group = NULL;
-		return;
-	}
-
-	if ( self->NPC->scriptFlags&SCF_NO_GROUPS )
-	{
-		self->NPC->group = NULL;
-		return;
-	}
-
-	if ( self->enemy && (!self->enemy->client || (level.time - self->NPC->enemyLastSeenTime > 7000 )))
-	{
-		self->NPC->group = NULL;
-		return;
-	}
-
-	if ( !AI_GetNextEmptyGroup( self ) )
-	{//either no more groups left or we're already in a group built earlier
-		return;
-	}
-
-	//create a new one
-	memset( self->NPC->group, 0, sizeof( AIGroupInfo_t ) );
-
-	self->NPC->group->enemy = self->enemy;
-	self->NPC->group->team = self->client->playerTeam;
-	self->NPC->group->processed = qfalse;
-	self->NPC->group->commander = self;
-	self->NPC->group->memberValidateTime = level.time + 2000;
-	self->NPC->group->activeMemberNum = 0;
-
-	if ( self->NPC->group->enemy )
-	{
-		self->NPC->group->lastSeenEnemyTime = level.time;
-		self->NPC->group->lastClearShotTime = level.time;
-		VectorCopy( self->NPC->group->enemy->currentOrigin, self->NPC->group->enemyLastSeenPos );
-	}
-
-//	for ( i = 0, member = &g_entities[0]; i < globals.num_entities ; i++, member++)
-	for ( i = 0; i < globals.num_entities ; i++)
-	{
-		if(!PInUse(i))
-			continue;
-		member = &g_entities[i];
-
-		if ( !AI_ValidateGroupMember( self->NPC->group, member ) )
-		{//FIXME: keep track of those who aren't angry yet and see if we should wake them after we assemble the core group
-			continue;
-		}
-
-		//store it
-		AI_InsertGroupMember( self->NPC->group, member );
-
-		if ( self->NPC->group->numGroup >= (MAX_GROUP_MEMBERS - 1) )
-		{//full
-			break;
-		}
-	}
-
-	/*
-	//now go through waiters and see if any should join the group
-	//NOTE:  Some should hang back and probably not attack, so we can ambush
-	//NOTE: only do this if calling for reinforcements?
-	for ( i = 0; i < numWaiters; i++ )
-	{
-		waiter = &g_entities[waiters[i]];
-
-		for ( j = 0; j < self->NPC->group->numGroup; j++ )
-		{
-			member = &g_entities[self->NPC->group->member[j];
-
-			if ( gi.inPVS( waiter->currentOrigin, member->currentOrigin ) )
-			{//this waiter is within PVS of a current member
-			}
-		}
-	}
-	*/
-
-	if ( self->NPC->group->numGroup <= 0 )
-	{//none in group
-		self->NPC->group = NULL;
-		return;
-	}
-
-	AI_SortGroupByPathCostToEnemy( self->NPC->group );
-	AI_SetClosestBuddy( self->NPC->group );
-}
-
-void AI_SetNewGroupCommander( AIGroupInfo_t *group )
-{
-	gentity_t *member = NULL;
-	group->commander = NULL;
-	for ( int i = 0; i < group->numGroup; i++ )
-	{
-		member = &g_entities[group->member[i].number];
-
-		if ( !group->commander || !group->commander->NPC )
-		{
-			group->commander = member;
-		}
-		else if ( member && member->NPC && member->NPC->rank > group->commander->NPC->rank )
-		{//strictly higher rank always wins
-			group->commander = member;
-		}
-		else if ( member && member->NPC && member->NPC->rank == group->commander->NPC->rank && Q_irand( 0, 1 ) )
-		{//equal rank: random tiebreaker so all-crewman squads get a random acting commander
-			group->commander = member;
 		}
 	}
 }
 
 void AI_DeleteGroupMember( AIGroupInfo_t *group, int memberNum )
 {
+	gentity_t *member = &g_entities[group->member[memberNum].number];
 	if ( group->commander && group->commander->s.number == group->member[memberNum].number )
 	{
 		group->commander = NULL;
 	}
-	if ( g_entities[group->member[memberNum].number].NPC )
-	{
-		g_entities[group->member[memberNum].number].NPC->group = NULL;
+	if ( member->NPC && member->NPC->group == group )
+	{//(a member whose pointer already moved to another squad keeps that one)
+		member->NPC->group = NULL;
+		member->NPC->squadNum = 0;
 	}
 	for ( int i = memberNum; i < (group->numGroup-1); i++ )
 	{
@@ -591,12 +223,14 @@ void AI_DeleteGroupMember( AIGroupInfo_t *group, int memberNum )
 	{
 		group->numGroup = 0;
 	}
-	AI_SetNewGroupCommander( group );
+	if ( !group->commander )
+	{
+		AI_SetNewGroupCommander( group );
+	}
 }
 
 void AI_DeleteSelfFromGroup( gentity_t *self )
 {
-	//FIXME: if killed, keep track of how many in group killed?  To affect morale?
 	for ( int i = 0; i < self->NPC->group->numGroup; i++ )
 	{
 		if ( self->NPC->group->member[i].number == self->s.number )
@@ -607,87 +241,6 @@ void AI_DeleteSelfFromGroup( gentity_t *self )
 	}
 }
 
-extern void ST_AggressionAdjust( gentity_t *self, int change );
-extern void ST_MarkToCover( gentity_t *self );
-extern void ST_StartFlee( gentity_t *self, gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int minTime, int maxTime );
-void AI_GroupMemberKilled( gentity_t *self )
-{
-/*	AIGroupInfo_t *group = self->NPC->group;
-	gentity_t	*member;
-	qboolean	noflee = qfalse;
-
-	if ( !group )
-	{//what group?
-		return;
-	}
-	if ( !self || !self->NPC || self->NPC->rank < RANK_ENSIGN )
-	{//I'm not an officer, let's not really care for now
-		return;
-	}
-	//temporarily drop group morale for a few seconds
-	group->moraleAdjust -= self->NPC->rank;
-	//go through and drop aggression on my teammates (more cover, worse aim)
-	for ( int i = 0; i < group->numGroup; i++ )
-	{
-		member = &g_entities[group->member[i].number];
-		if ( member == self )
-		{
-			continue;
-		}
-		if ( member->NPC->rank > RANK_ENSIGN )
-		{//officers do not panic
-			noflee = qtrue;
-		}
-		else
-		{
-			ST_AggressionAdjust( member, -1 );
-			member->NPC->currentAim -= Q_irand( 0, 10 );//Q_irand( 0, 2);//drop their aim accuracy
-		}
-	}
-	//okay, if I'm the group commander, make everyone else flee
-	if ( group->commander != self )
-	{//I'm not the commander... hmm, should maybe a couple flee... maybe those near me?
-		return;
-	}
-	//now see if there is another of sufficient rank to keep them from fleeing
-	if ( !noflee )
-	{
-		self->NPC->group->speechDebounceTime = 0;
-		for ( int i = 0; i < group->numGroup; i++ )
-		{
-			member = &g_entities[group->member[i].number];
-			if ( member == self )
-			{
-				continue;
-			}
-			if ( member->NPC->rank < RANK_ENSIGN )
-			{//grunt
-				if ( group->enemy && DistanceSquared( member->currentOrigin, group->enemy->currentOrigin ) < 65536 )//256*256
-				{//those close to enemy run away!
-					ST_StartFlee( member, group->enemy, member->currentOrigin, AEL_DANGER_GREAT, 3000, 5000 );
-				}
-				else if ( DistanceSquared( member->currentOrigin, self->currentOrigin ) < 65536 )
-				{//those close to me run away!
-					ST_StartFlee( member, group->enemy, member->currentOrigin, AEL_DANGER_GREAT, 3000, 5000 );
-				}
-				else
-				{//else, maybe just a random chance
-					if ( Q_irand( 0, self->NPC->rank ) > member->NPC->rank )
-					{//lower rank they are, higher rank I am, more likely they are to flee
-						ST_StartFlee( member, group->enemy, member->currentOrigin, AEL_DANGER_GREAT, 3000, 5000 );
-					}
-					else
-					{
-						ST_MarkToCover( member );
-					}
-				}
-				member->NPC->currentAim -= Q_irand( 1, 15 ); //Q_irand( 1, 3 );//drop their aim accuracy even more
-			}
-			member->NPC->currentAim -= Q_irand( 1, 15 ); //Q_irand( 1, 3 );//drop their aim accuracy even more
-		}
-	}*/
-}
-
 void AI_GroupUpdateEnemyLastSeen( AIGroupInfo_t *group, vec3_t spot )
 {
 	if ( !group )
@@ -696,15 +249,8 @@ void AI_GroupUpdateEnemyLastSeen( AIGroupInfo_t *group, vec3_t spot )
 	}
 	group->lastSeenEnemyTime = level.time;
 	VectorCopy( spot, group->enemyLastSeenPos );
-}
-
-void AI_GroupUpdateClearShotTime( AIGroupInfo_t *group )
-{
-	if ( !group )
-	{
-		return;
-	}
-	group->lastClearShotTime = level.time;
+	VectorCopy( spot, group->lastKnownEnemyPos );
+	group->lastKnownEnemyTime = level.time;
 }
 
 void AI_GroupUpdateSquadstates( AIGroupInfo_t *group, gentity_t *member, int newSquadState )
@@ -727,267 +273,16 @@ void AI_GroupUpdateSquadstates( AIGroupInfo_t *group, gentity_t *member, int new
 	}
 }
 
-qboolean AI_RefreshGroup( AIGroupInfo_t *group )
-{
-	gentity_t	*member;
-	int			i;//, j;
-
-	//see if we should merge with another group
-	for ( i = 0; i < MAX_FRAME_GROUPS; i++ )
-	{
-		if ( &level.groups[i] == group )
-		{
-			break;
-		}
-		else
-		{
-			if ( level.groups[i].enemy == group->enemy )
-			{//2 groups with same enemy
-				if ( level.groups[i].numGroup+group->numGroup < (MAX_GROUP_MEMBERS - 1) )
-				{//combining the members would fit in one group
-					qboolean deleteWhenDone = qtrue;
-					//combine the members of mine into theirs
-					for ( int j = 0; j < group->numGroup; j++ )
-					{
-						member = &g_entities[group->member[j].number];
-						if ( level.groups[i].enemy == NULL )
-						{//special case for groups without enemies, must be in range
-							if ( !AI_ValidateNoEnemyGroupMember( &level.groups[i], member ) )
-							{
-								deleteWhenDone = qfalse;
-								continue;
-							}
-						}
-						//remove this member from this group
-						AI_DeleteGroupMember( group, j );
-						//keep marker at same place since we deleted this guy and shifted everyone up one
-						j--;
-						//add them to the earlier group
-						AI_InsertGroupMember( &level.groups[i], member );
-					}
-					//return and delete this group
-					if ( deleteWhenDone )
-					{
-						return qfalse;
-					}
-				}
-			}
-		}
-	}
-	//clear numStates
-	for ( i = 0; i < NUM_SQUAD_STATES; i++ )
-	{
-		group->numState[i] = 0;
-	}
-
-	//go through group and validate each membership
-	group->commander = NULL;
-	for ( i = 0; i < group->numGroup; i++ )
-	{
-		/*
-		//this checks for duplicate copies of one member in a group
-		for ( j = 0; j < group->numGroup; j++ )
-		{
-			if ( i != j )
-			{
-				if ( group->member[i].number == group->member[j].number )
-				{
-					break;
-				}
-			}
-		}
-		if ( j < group->numGroup )
-		{//found a dupe!
-			gi.Printf( S_COLOR_RED"ERROR: member %s(%d) a duplicate group member!!!\n", g_entities[group->member[i].number].targetname, group->member[i].number );
-			AI_DeleteGroupMember( group, i );
-			i--;
-			continue;
-		}
-		*/
-		member = &g_entities[group->member[i].number];
-
-		//Must be alive
-		if ( member->health <= 0 )
-		{
-			// Apply morale penalty for this casualty — shock fades at 1/sec via moraleAdjust decay.
-			group->moraleAdjust -= 5;
-			if ( group->moraleAdjust < -20 ) group->moraleAdjust = -20;
-			AI_DeleteGroupMember( group, i );
-			//keep marker at same place since we deleted this guy and shifted everyone up one
-			i--;
-		}
-		else if ( group->memberValidateTime < level.time && !AI_ValidateGroupMember( group, member ) )
-		{
-			//remove this one from the group
-			AI_DeleteGroupMember( group, i );
-			//keep marker at same place since we deleted this guy and shifted everyone up one
-			i--;
-		}
-		else
-		{//membership is valid
-			//keep track of squadStates
-			group->numState[member->NPC->squadState]++;
-			if ( !group->commander || member->NPC->rank > group->commander->NPC->rank )
-			{//keep track of highest rank
-				group->commander = member;
-			}
-		}
-	}
-	if ( group->memberValidateTime < level.time )
-	{
-		group->memberValidateTime = level.time + Q_irand( 500, 2500 );
-	}
-	//Now add any new guys as long as we're not full
-	/*
-	for ( i = 0, member = &g_entities[0]; i < globals.num_entities && group->numGroup < (MAX_GROUP_MEMBERS - 1); i++, member++)
-	{
-		if ( !AI_ValidateGroupMember( group, member ) )
-		{//FIXME: keep track of those who aren't angry yet and see if we should wake them after we assemble the core group
-			continue;
-		}
-		if ( member->NPC->group == group )
-		{//DOH, already in our group
-			continue;
-		}
-
-		//store it
-		AI_InsertGroupMember( group, member );
-	}
-	*/
-
-	//calc the morale of this group
-	group->morale = group->moraleAdjust;
-	for ( i = 0; i < group->numGroup; i++ )
-	{
-		member = &g_entities[group->member[i].number];
-		if ( member->NPC->rank < RANK_ENSIGN )
-		{//grunts — worth 2 so each nets +1 boost after the numGroup subtraction in
-		//AI_GetGroupMoraleTier; squad size itself now builds confidence
-			group->morale += 2;
-		}
-		else
-		{//officers stay strictly above grunts (ENSIGN=3 ... CAPTAIN=8)
-			group->morale += member->NPC->rank + 1;
-		}
-		if ( group->commander && debugNPCAI->integer )
-		{
-			G_DebugLine( group->commander->currentOrigin, member->currentOrigin, FRAMETIME, 0x00ff00ff, qtrue );
-		}
-	}
-	if ( group->enemy )
-	{//modify morale based on enemy health and weapon
-		if ( group->enemy->health < 10 )
-		{
-			group->morale += 10;
-		}
-		else if ( group->enemy->health < 25 )
-		{
-			group->morale += 5;
-		}
-		else if ( group->enemy->health < 50 )
-		{
-			group->morale += 2;
-		}
-		switch( group->enemy->s.weapon )
-		{
-		case WP_SABER:
-			group->morale -= 5;
-			break;
-		case WP_BRYAR_PISTOL:
-		case WP_BLASTER_PISTOL:
-			group->morale += 3;
-			break;
-		case WP_DISRUPTOR:
-			group->morale += 2;
-			break;
-		case WP_REPEATER:
-			group->morale -= 1;
-			break;
-		case WP_FLECHETTE:
-			group->morale -= 2;
-			break;
-		case WP_ROCKET_LAUNCHER:
-			group->morale -= 10;
-			break;
-		case WP_CONCUSSION:
-			group->morale -= 12;
-			break;
-		case WP_THERMAL:
-			group->morale -= 5;
-			break;
-		case WP_TRIP_MINE:
-			group->morale -= 3;
-			break;
-		case WP_DET_PACK:
-			group->morale -= 10;
-			break;
-		case WP_MELEE:			// Any ol' melee attack
-			group->morale += 20;
-			break;
-		case WP_STUN_BATON:
-			group->morale += 10;
-			break;
-		case WP_EMPLACED_GUN:
-			group->morale -= 8;
-			break;
-		case WP_ATST_MAIN:
-			group->morale -= 8;
-			break;
-		case WP_ATST_SIDE:
-			group->morale -= 20;
-			break;
-		}
-	}
-	// Clamp moraleAdjust and total morale.
-	if ( group->moraleAdjust > 30 ) group->moraleAdjust = 30;
-	if ( group->moraleAdjust < -20 ) group->moraleAdjust = -20;
-	if ( group->morale > 50 ) group->morale = 50;
-
-	if ( group->moraleDebounce < level.time )
-	{//slowly degrade whatever moraleAdjusters we may have
-		if ( group->moraleAdjust > 0 )
-		{
-			group->moraleAdjust--;
-		}
-		else if ( group->moraleAdjust < 0 )
-		{
-			group->moraleAdjust++;
-		}
-		group->moraleDebounce = level.time + 2000;
-	}
-	//mark this group as not having been run this frame
-	group->processed = qfalse;
-
-	return (qboolean)(group->numGroup>0);
-}
-
-// Morale tier from group state. Single source of truth — used by ST_GetCPFlags
-// (combat point aggression), ST_Commander (transition announcements), and the
-// d_moraleDebug overlay in cg_draw.cpp.
-// 0 ROUTED, 1 HOLDING, 2 ADVANCE, 3 FLANK, 4 RUSH
-int AI_GetGroupMoraleTier( const AIGroupInfo_t *group )
-{
-	if ( group->morale < 0 )
-	{
-		return 0;
-	}
-	const int boost = group->morale - group->numGroup;
-	if ( boost > 24 ) return 4;
-	if ( boost > 14 ) return 3;
-	if ( boost > 6 )  return 2;
-	return 1;
-}
-
+// once a frame for every live squad
 void AI_UpdateGroups( void )
 {
 	if ( d_noGroupAI->integer )
 	{
 		return;
 	}
-	//Clear all Groups
 	for ( int i = 0; i < MAX_FRAME_GROUPS; i++ )
 	{
-		if ( !level.groups[i].numGroup || AI_RefreshGroup( &level.groups[i] ) == qfalse )//level.groups[i].enemy == NULL ||
+		if ( !level.groups[i].numGroup || AI_SquadUpdate( &level.groups[i] ) == qfalse )
 		{
 			memset( &level.groups[i], 0, sizeof( level.groups[i] ) );
 		}
@@ -1008,105 +303,4 @@ qboolean AI_GroupContainsEntNum( AIGroupInfo_t *group, int entNum )
 		}
 	}
 	return qfalse;
-}
-//Overload
-
-/*
-void AI_GetGroup( AIGroupInfo_t &group, gentity_t *ent, int radius )
-{
-	if ( ent->client == NULL )
-		return;
-
-	vec3_t	temp, angles;
-
-	//FIXME: This is specialized code.. move?
-	if ( ent->enemy )
-	{
-		VectorSubtract( ent->enemy->currentOrigin, ent->currentOrigin, temp );
-		VectorNormalize( temp );	//FIXME: Needed?
-		vectoangles( temp, angles );
-	}
-	else
-	{
-		VectorCopy( ent->currentAngles, angles );
-	}
-
-	AI_GetGroup( group, ent->currentOrigin, ent->currentAngles, DEFAULT_RADIUS, radius, ent->client->playerTeam, ent, ent->enemy );
-}
-*/
-
-/*
--------------------------
-AI_DistributeAttack
--------------------------
-*/
-
-#define	MAX_RADIUS_ENTS		128
-
-gentity_t *AI_DistributeAttack( gentity_t *attacker, gentity_t *enemy, team_t team, int threshold )
-{
-	//Don't take new targets
-	if ( NPC->svFlags & SVF_LOCKEDENEMY )
-		return enemy;
-
-	int	numSurrounding = AI_GetGroupSize( enemy->currentOrigin, 48, team, attacker );
-
-	//First, see if we should look for the player
-	if ( enemy != &g_entities[0] )
-	{
-		int	aroundPlayer = AI_GetGroupSize( g_entities[0].currentOrigin, 48, team, attacker );
-
-		//See if we're above our threshold
-		if ( aroundPlayer < threshold )
-		{
-			return &g_entities[0];
-		}
-	}
-
-	//See if our current enemy is still ok
-	if ( numSurrounding < threshold )
-		return enemy;
-
-	//Otherwise we need to take a new enemy if possible
-	vec3_t	mins, maxs;
-
-	//Setup the bbox to search in
-	for ( int i = 0; i < 3; i++ )
-	{
-		mins[i] = enemy->currentOrigin[i] - 512;
-		maxs[i] = enemy->currentOrigin[i] + 512;
-	}
-
-	//Get the number of entities in a given space
-	gentity_t	*radiusEnts[ MAX_RADIUS_ENTS ];
-
-	int numEnts = gi.EntitiesInBox( mins, maxs, radiusEnts, MAX_RADIUS_ENTS );
-
-	//Cull this list
-	for ( int j = 0; j < numEnts; j++ )
-	{
-		//Validate clients
-		if ( radiusEnts[ j ]->client == NULL )
-			continue;
-
-		//Skip the requested avoid ent if present
-		if ( radiusEnts[ j ] == enemy )
-			continue;
-
-		//Must be on the same team
-		if ( radiusEnts[ j ]->client->playerTeam != enemy->client->playerTeam )
-			continue;
-
-		//Must be alive
-		if ( radiusEnts[ j ]->health <= 0 )
-			continue;
-
-		//Must not be overwhelmed
-		if ( AI_GetGroupSize( radiusEnts[j]->currentOrigin, 48, team, attacker ) > threshold )
-			continue;
-
-		return radiusEnts[j];
-	}
-
-	return NULL;
 }

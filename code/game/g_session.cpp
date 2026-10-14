@@ -66,7 +66,7 @@ void G_WriteClientSessionData( gclient_t *client ) {
 	gi.cvar_set( var, s2 );
 
 	// Throw all mission stats in to a string
-	s2 = va("%i %i %i %i %i %i %i %i %i %i %i %i",
+	s2 = va("%i %i %i %i %i %i %i %i %i %i %i %i %i %i",
 			client->sess.missionStats.secretsFound,
 			client->sess.missionStats.totalSecrets,
 			client->sess.missionStats.shotsFired,
@@ -78,7 +78,9 @@ void G_WriteClientSessionData( gclient_t *client ) {
 			client->sess.missionStats.legAttacksCnt,
 			client->sess.missionStats.armAttacksCnt,
 			client->sess.missionStats.torsoAttacksCnt,
-			client->sess.missionStats.otherAttacksCnt
+			client->sess.missionStats.otherAttacksCnt,
+			client->sess.missionStats.enemiesSubdued,
+			client->sess.missionStats.enemiesBypassed
 			);
 
 	var = va( "missionstats%i", client - level.clients );
@@ -152,7 +154,8 @@ void G_ReadSessionData( gclient_t *client ) {
 
 	var = va( "missionstats%i", client - level.clients );
 	gi.Cvar_VariableStringBuffer( var, s, sizeof(s) );
-	sscanf( s, "%i %i %i %i %i %i %i %i %i %i %i %i",
+	client->sess.missionStats.enemiesSubdued = client->sess.missionStats.enemiesBypassed = 0;//older session strings don't have them
+	sscanf( s, "%i %i %i %i %i %i %i %i %i %i %i %i %i %i",
 		&client->sess.missionStats.secretsFound,
 		&client->sess.missionStats.totalSecrets,
 		&client->sess.missionStats.shotsFired,
@@ -164,7 +167,9 @@ void G_ReadSessionData( gclient_t *client ) {
 		&client->sess.missionStats.legAttacksCnt,
 		&client->sess.missionStats.armAttacksCnt,
 		&client->sess.missionStats.torsoAttacksCnt,
-		&client->sess.missionStats.otherAttacksCnt);
+		&client->sess.missionStats.otherAttacksCnt,
+		&client->sess.missionStats.enemiesSubdued,
+		&client->sess.missionStats.enemiesBypassed);
 
 
 	var = va( "sessionpowers%i", client - level.clients );

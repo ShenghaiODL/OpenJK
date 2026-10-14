@@ -672,6 +672,11 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace, int hitLoc=HL_NONE )
 		VectorNormalize(trace->plane.normal);
 	}
 
+	if ( ent->owner && ent->owner->client && ent->s.weapon != WP_SABER )
+	{//anyone hostile standing near where it landed just had a close call
+		AI_NerveNearMiss( ent->currentOrigin, ent->owner, other, 96.0f );
+	}
+
 	if ( ent->owner && (other->takedamage||other->client) )
 	{
 		if ( !ent->lastEnemy || ent->lastEnemy == ent->owner )
@@ -1399,6 +1404,12 @@ void G_RunMissile( gentity_t *ent )
 	}
 
 	VectorCopy( ent->currentOrigin, oldOrg );
+
+	if ( ent->owner && ent->owner->client && ent->owner->client->playerTeam == TEAM_PLAYER
+		&& ent->s.weapon != WP_SABER && !( ( level.time / FRAMETIME ) % 3 ) )
+	{//the player's side's shots whistling past enemies (every third frame is plenty)
+		AI_NerveNearMiss( ent->currentOrigin, ent->owner, NULL, 64.0f );
+	}
 
 	// get current position
 	if ( ent->s.pos.trType == TR_INTERPOLATE )

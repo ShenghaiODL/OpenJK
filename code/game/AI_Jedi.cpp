@@ -106,6 +106,7 @@ extern float saberStyleMissileParryScale[];
 //Locals
 static void Jedi_Aggression( gentity_t *self, int change );
 qboolean Jedi_WaitingAmbush( gentity_t *self );
+static qboolean Jedi_TacticAllowsAttack( float enemy_dist );
 void Tavion_SithSwordRecharge( void );
 qboolean Rosh_BeingHealed( gentity_t *self );
 
@@ -4193,6 +4194,37 @@ static void Jedi_EvasionSaber( vec3_t enemy_movedir, float enemy_dist, vec3_t en
 
 	if ( NPC->enemy->client->ps.weaponTime && NPC->enemy->client->ps.weaponstate == WEAPON_FIRING )
 	{
+		// Read the swing once, when it starts: what kind of attack it is decides the answer,
+		// not a dice roll every frame. Heavy swings (strong/Desann styles, specials) get
+		// side-stepped by fighters good enough to read them; everything else gets blocked.
+		// A lower-skill fighter sometimes misreads a swing entirely and eats it.
+		static int		s_readMove[MAX_GENTITIES];
+		static int		s_readTime[MAX_GENTITIES];
+		static qboolean	s_misread[MAX_GENTITIES];
+		static qboolean	s_dodge[MAX_GENTITIES];
+		const int		n = NPC->s.number;
+		const playerState_t *eps = &NPC->enemy->client->ps;
+		if ( s_readMove[n] != eps->saberMove || level.time - s_readTime[n] > 1500 )
+		{
+			const int		skill = AI_JediBlockSkill( NPC );
+			const qboolean	heavy = (qboolean)( eps->saberAnimLevel == SS_STRONG || eps->saberAnimLevel == SS_DESANN
+										|| PM_SaberInSpecialAttack( eps->torsoAnim ) );
+			s_readMove[n] = eps->saberMove;
+			s_readTime[n] = level.time;
+			s_misread[n] = (qboolean)( Q_irand( 0, 9 ) >= 6 + skill + g_spskill->integer );
+			s_dodge[n] = (qboolean)( heavy && skill >= 3 && Q_irand( 0, 4 ) < skill - 1 );
+		}
+		if ( s_misread[n] )
+		{//didn't see that one coming
+			return;
+		}
+		if ( s_dodge[n] && !NPC->client->ps.weaponTime && !PM_InKnockDown( &NPC->client->ps )
+			&& Jedi_Strafe( 300, 600, 800, 1500, qfalse ) )
+		{//stepped out of the heavy one instead of taking it on the blade
+			s_dodge[n] = qfalse;
+			TIMER_Set( NPC, "parryTime", 300 );
+			return;
+		}
 		if ( (!NPC->client->ps.saberInFlight || (NPC->client->ps.dualSabers&&NPC->client->ps.saber[1].Active()) )
 			&& Jedi_SaberBlock() )
 		{
@@ -5061,8 +5093,9 @@ static void Jedi_CombatTimersUpdate( int enemy_dist )
 
 	if ( TIMER_Done( NPC, "noStrafe" ) && TIMER_Done( NPC, "strafeLeft" ) && TIMER_Done( NPC, "strafeRight" ) )
 	{
-		//FIXME: Maybe more likely to do this if aggression higher?  Or some other stat?
-		if ( !Q_irand( 0, 7 ) )
+		//waiting them out or circling: move about a lot more than when pressing
+		const int strafeOdds = ( NPCInfo->duelRole == JT_DEFEND || NPCInfo->duelRole == JT_KEEP_DISTANCE ) ? 2 : 7;
+		if ( !Q_irand( 0, strafeOdds ) )
 		{//start a strafe
 			if ( Jedi_Strafe( 1000, 3000, 0, 4000, qtrue ) )
 			{
@@ -5212,6 +5245,10 @@ static void Jedi_CombatIdle( int enemy_dist )
 {
 	if ( !TIMER_Done( NPC, "parryTime" ) )
 	{
+		return;
+	}
+	if ( NPCInfo->duelRole != JT_NONE && NPCInfo->duelRole != JT_TAUNT )
+	{//the taunt is a tactic now (AI_JediBrain.cpp), not a random roll every idle think
 		return;
 	}
 	if ( NPC->client->ps.saberInFlight )
@@ -5382,6 +5419,11 @@ static qboolean Jedi_AttackDecide( int enemy_dist )
 
 	if ( !TIMER_Done( NPC, "parryTime" ) )
 	{
+		return qfalse;
+	}
+
+	if ( !Jedi_TacticAllowsAttack( enemy_dist ) )
+	{//defending / circling / recovering: wait for an opening
 		return qfalse;
 	}
 
@@ -5831,6 +5873,124 @@ void RT_CheckJump( void )
 ////////////////////////////////////////////////////////////////////////////////////////
 //
 ////////////////////////////////////////////////////////////////////////////////////////
+/*
+-------------------------
+Jedi tactics (AI_JediBrain.cpp chooses, this carries it out)
+
+  Aggression is now an output: the tactic sets it each think, and the old aggression-driven
+  code (Jedi_CombatDistance's advance/retreat, the attack timers) follows from it. The old
+  event nudges (Jedi_Aggression on parry/hit/pain) still move it between rescores.
+-------------------------
+*/
+
+
+static void Jedi_TacticAggression( int tactic )
+{
+	int agg;
+	switch ( tactic )
+	{
+	case JT_PRESS:			agg = 5;	break;
+	case JT_DEFEND:			agg = 3;	break;
+	case JT_FORCE_OPENER:	agg = 3;	break;
+	case JT_SABER_THROW:	agg = 2;	break;
+	case JT_TAUNT:			agg = 2;	break;
+	case JT_KEEP_DISTANCE:
+	case JT_RECOVER:		agg = 1;	break;
+	default:				return;//JT_NONE: leave the vanilla value alone
+	}
+	if ( NPC->client->ps.forcePowersActive&(1<<FP_RAGE) )
+	{
+		agg = Q_max( agg, 4 );
+	}
+	NPCInfo->stats.aggression = agg;
+}
+
+// movement and one-shot actions; runs after Jedi_CombatDistance so it can override the spacing
+static void Jedi_TacticMove( int tactic, float enemy_dist )
+{
+	switch ( tactic )
+	{
+	case JT_KEEP_DISTANCE:
+		if ( enemy_dist < 140 )
+		{
+			Jedi_Retreat();
+		}
+		else if ( enemy_dist > 260 )
+		{
+			Jedi_Advance();
+		}
+		else if ( TIMER_Done( NPC, "strafeLeft" ) && TIMER_Done( NPC, "strafeRight" ) )
+		{//circle
+			Jedi_Strafe( 800, 1600, 200, 600, qtrue );
+		}
+		break;
+	case JT_RECOVER:
+		if ( enemy_dist < 220 )
+		{
+			Jedi_Retreat();
+		}
+		break;
+	case JT_PRESS:
+		if ( enemy_dist > 24 && !AI_JediEnemyOpen( NPC ) && TIMER_Done( NPC, "noRetreat" ) )
+		{
+			Jedi_Advance();
+		}
+		else if ( enemy_dist > 0 )
+		{
+			Jedi_Advance();
+		}
+		break;
+	case JT_FORCE_OPENER:
+		if ( TIMER_Done( NPC, "jediOpenerDebounce" ) )
+		{
+			TIMER_Set( NPC, "jediOpenerDebounce", Q_irand( 6000, 10000 ) );
+			if ( AI_JediEnemyOpen( NPC ) && enemy_dist < 200 && WP_ForcePowerUsable( NPC, FP_PUSH, 0 ) )
+			{//shove them while they're staggered
+				ForceThrow( NPC, qfalse );
+			}
+			else if ( enemy_dist > 160 && WP_ForcePowerUsable( NPC, FP_PULL, 0 ) )
+			{//drag them into reach
+				ForceThrow( NPC, qtrue );
+			}
+		}
+		AI_JediTacticDone( NPC );
+		break;
+	case JT_SABER_THROW:
+		if ( TIMER_Done( NPC, "saberThrowDebounce" ) && WP_ForcePowerUsable( NPC, FP_SABERTHROW, 0 )
+			&& !NPC->client->ps.saberInFlight && !(NPC->client->ps.saberEventFlags&SEF_INWATER) )
+		{
+			ucmd.buttons |= BUTTON_SABERTHROW;
+			TIMER_Set( NPC, "saberThrowDebounce", Q_irand( 6000, 10000 ) );
+		}
+		AI_JediTacticDone( NPC );
+		break;
+	case JT_TAUNT:
+		if ( TIMER_Done( NPC, "jediTauntDebounce" ) )
+		{
+			TIMER_Set( NPC, "jediTauntDebounce", Q_irand( 15000, 25000 ) );
+			Jedi_BattleTaunt();
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+// attacks are the PRESS tactic's job; the others only take the opening when it's handed to them
+static qboolean Jedi_TacticAllowsAttack( float enemy_dist )
+{
+	switch ( NPCInfo->duelRole )
+	{
+	case JT_DEFEND:
+	case JT_KEEP_DISTANCE:
+	case JT_RECOVER:
+	case JT_TAUNT:
+		return AI_JediEnemyOpen( NPC );
+	default:
+		return qtrue;
+	}
+}
+
 static void Jedi_Combat( void )
 {
 	vec3_t	enemy_dir, enemy_movedir, enemy_dest;
@@ -5839,6 +5999,10 @@ static void Jedi_Combat( void )
 
 	//See where enemy will be 300 ms from now
 	Jedi_SetEnemyInfo( enemy_dest, enemy_dir, &enemy_dist, enemy_movedir, &enemy_movespeed, 300 );
+
+	//What are we trying to do in this fight? (AI_JediBrain.cpp)
+	const int jediTactic = AI_JediTactic( NPC, enemy_dist );
+	Jedi_TacticAggression( jediTactic );
 
 	if ( NPC_Jumping( ) )
 	{//I'm in the middle of a jump, so just see if I should attack
@@ -5950,6 +6114,8 @@ static void Jedi_Combat( void )
 		//We call this even if lost enemy to keep him moving and to update the taunting behavior
 		//maintain a distance from enemy appropriate for our aggression level
 		Jedi_CombatDistance( enemy_dist );
+		//and whatever the tactic needs on top (circle, back off, the opener/throw/taunt)
+		Jedi_TacticMove( jediTactic, enemy_dist );
 	}
 
 	//if ( !enemy_lost )
@@ -6076,10 +6242,6 @@ void NPC_Jedi_Pain( gentity_t *self, gentity_t *inflictor, gentity_t *other, con
 		else
 		{
 			self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] = level.time + (3-g_spskill->integer)*200;//500
-		}
-		if ( !Q_irand( 0, 3 ) )
-		{//ouch... maybe switch up which saber power level we're using
-			Jedi_AdjustSaberAnimLevel( self, Q_irand( SS_FAST, SS_STRONG ) );
 		}
 		if ( !Q_irand( 0, 1 ) )//damage > 20 || self->health < 40 ||
 		{
@@ -6324,6 +6486,14 @@ static void Jedi_Patrol( void )
 				NPC_UpdateAngles( qtrue, qtrue );
 				return;
 			}
+		}
+	}
+	else if ( g_stealth && g_stealth->integer )
+	{//awareness (AI_Awareness.cpp) decides when they notice someone and sets the enemy;
+	 //while they're only suspicious, turn toward whatever it was
+		if ( NPCInfo->awareState >= AW_SUSPICIOUS && level.time - NPCInfo->lastKnownEnemyTime < 5000 )
+		{
+			NPC_FacePosition( NPCInfo->lastKnownEnemyPos, qtrue );
 		}
 	}
 	else if ( NPCInfo->scriptFlags&SCF_LOOK_FOR_ENEMIES )//NPCInfo->scriptFlags & SCF_CHASE_ENEMIES )
@@ -7692,7 +7862,6 @@ qboolean Jedi_InSpecialMove( void )
 }
 
 extern void NPC_BSST_Patrol( void );
-extern void NPC_BSSniper_Default( void );
 extern void G_UcmdMoveForDir( gentity_t *self, usercmd_t *cmd, vec3_t dir );
 void NPC_BSJedi_Default( void )
 {
@@ -7744,6 +7913,14 @@ void NPC_BSJedi_Default( void )
 	}
 
 	Jedi_CheckCloak();
+
+	if ( NPC->enemy && G_IsNeutralized( NPC->enemy ) && !(NPC->svFlags&SVF_LOCKEDENEMY) )
+	{//hands up / knocked out / running unarmed: not a target any more (the Jedi loop never
+	 //re-runs NPC_CheckEnemy while it's busy, so it would stare and throw sabers at them forever)
+		NPC->lastEnemy = NPC->enemy;
+		G_ClearEnemy( NPC );
+		NPC_CheckEnemy( qtrue, qfalse );
+	}
 
 	if( !NPC->enemy )
 	{//don't have an enemy, look for one

@@ -30,7 +30,14 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../game/anims.h"
 #include "../game/wp_saber.h"
 #include "../game/g_vehicles.h"
+#include "../game/NPC_neutral.h"
 #include "../Rufl/hstring.h"
+
+// dead, or knocked out and lying there (same pose, same no-head-tracking, eyes shut)
+static qboolean CG_BodyIsDown( const gentity_t *gent )
+{
+	return (qboolean)( gent->health <= 0 || ( gent->NPC && (gent->NPC->neutralFlags&NF_DOWNED) ) );
+}
 
 #define	LOOK_SWING_SCALE	0.5f
 #define	CG_SWINGSPEED		0.3f
@@ -2559,8 +2566,8 @@ static void CG_G2PlayerAngles( centity_t *cent, vec3_t legs[3], vec3_t angles )
 		AnglesToAxis( angles, legs );
 		return;
 	}
-	// Dead entity
-	if ( cent->gent && cent->gent->health <= 0 )
+	// Dead entity (or out cold: no head tracking on a body)
+	if ( cent->gent && CG_BodyIsDown( cent->gent ) )
 	{
 		if ( cent->gent->hipsBone != -1 )
 		{
@@ -5363,7 +5370,7 @@ static qboolean CG_G2PlayerHeadAnims( centity_t *cent )
 
 	int anim = -1;
 
-	if ( cent->gent->health <= 0 )
+	if ( CG_BodyIsDown( cent->gent ) )
 	{//Dead people close their eyes and don't make faces!
 		anim = FACE_DEAD;
 	}
@@ -5464,7 +5471,7 @@ int CG_PlayerHeadExtension( centity_t *cent, refEntity_t *head )
 	{//FIXME: When talking, look at talkTarget, if any
 		//ALSO: When talking, add a head bob/movement on syllables - when gi.VoiceVolume[] changes drastically
 
-		if ( cent->gent->health <= 0 )
+		if ( CG_BodyIsDown( cent->gent ) )
 		{//Dead people close their eyes and don't make faces!  They also tell no tales...  BUM BUM BAHHHHHHH!
 			//Make them always blink and frown
 			head->customSkin = ci->headSkin + 3;
@@ -5483,7 +5490,7 @@ int CG_PlayerHeadExtension( centity_t *cent, refEntity_t *head )
 		// deal with blink first
 
 		//Dead people close their eyes and don't make faces!  They also tell no tales...  BUM BUM BAHHHHHHH!
-		if ( cent->gent->health <= 0 )
+		if ( CG_BodyIsDown( cent->gent ) )
 		{
 			//Make them always blink and frown
 			head->customSkin = ci->headSkin + 3;
@@ -5637,25 +5644,26 @@ CG_GetPlayerLightLevel
 -------------------------
 */
 
+extern float CG_DynamicLightAt( const vec3_t pos );
 static void CG_GetPlayerLightLevel( centity_t *cent )
 {
-	vec3_t	ambient={0}, directed, lightDir;
+	vec3_t	ambient={0}, directed, lightDir, samplePos;
 
-	//Poll the renderer for the light level
+	//Poll the renderer for the light level -- at the chest, not the feet
 	if ( cent->currentState.clientNum == cg.snap->ps.clientNum )
 	{//hAX0R
 		ambient[0] = 666;
 	}
-	cgi_R_GetLighting( cent->lerpOrigin, ambient, directed, lightDir );
+	VectorCopy( cent->lerpOrigin, samplePos );
+	samplePos[2] += cent->gent->client ? cent->gent->client->ps.viewheight * 0.6f : 24.0f;
+	cgi_R_GetLighting( samplePos, ambient, directed, lightDir );
 
-	//Get the maximum value for the player
-	cent->gent->lightLevel = directed[0];
-
-	if ( directed[1] > cent->gent->lightLevel )
-		cent->gent->lightLevel = directed[1];
-
-	if ( directed[2] > cent->gent->lightLevel )
-		cent->gent->lightLevel = directed[2];
+	//What the AI sees: the directed light on them, half the ambient fill (it used to be the
+	//directed term only, which in rend2's mostly-ambient look read as pitch dark), and any
+	//dynamic lights on them right now (their own saber glow, a bolt going past, an explosion)
+	const float directedMax	= Q_max( directed[0], Q_max( directed[1], directed[2] ) );
+	const float ambientMax	= Q_max( ambient[0], Q_max( ambient[1], ambient[2] ) );
+	cent->gent->lightLevel = directedMax + ambientMax * 0.5f + CG_DynamicLightAt( samplePos );
 
 	if ( cent->gent->client->ps.weapon == WP_SABER && cent->gent->client->ps.SaberLength() > 0 )
 	{

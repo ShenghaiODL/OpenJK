@@ -224,6 +224,8 @@ stringID_table_t BSETTable[] =
 	ENUM2STRING(BSET_STUCK),//# script to run when blocked by a wall
 	ENUM2STRING(BSET_FFIRE),//# script to run when player shoots their own teammates
 	ENUM2STRING(BSET_FFDEATH),//# script to run when player kills a teammate
+	ENUM2STRING(BSET_MINDTRICK),//# script to run when player does a mind trick on this NPC
+	ENUM2STRING(BSET_SUBDUE),//# script to run when taken alive instead of killed
 	stringIDExpand("", BSET_INVALID),
 	{ "",				-1 }
 };
@@ -602,6 +604,8 @@ stringID_table_t setTable[] =
 	ENUM2STRING(SET_SKIN),
 	ENUM2STRING(SET_RADAR_ICON),
 	ENUM2STRING(SET_RADAR_OBJECT),
+	ENUM2STRING(SET_SUBDUESCRIPT),
+	ENUM2STRING(SET_SUBDUED),
 
 	{ "",	SET_ }
 };
@@ -1534,8 +1538,8 @@ void Blocked_Mover( gentity_t *ent, gentity_t *other ) {
 	{
 		// should we be doing anything special if a key blocks it... move it somehow..?
 	}
-	// if your not a client, or your a dead client remove yourself...
-	else if ( other->s.number && (!other->client || (other->client && other->health <= 0 && other->contents == CONTENTS_CORPSE && !other->message)) )
+	// if your not a client, or your a dead (or knocked-out) client remove yourself...
+	else if ( other->s.number && (!other->client || (other->client && G_IsDownedBody( other ) && (other->contents&CONTENTS_CORPSE) && !other->message)) )
 	{
 		if ( !IIcarusInterface::GetIcarus()->IsRunning( other->m_iIcarusID ) /*!other->taskManager || !other->taskManager->IsRunning()*/ )
 		{
@@ -4398,6 +4402,9 @@ static qboolean Q3_SetBehaviorSet( int entID, int toSet, const char *scriptname)
 		break;
 	case SET_MINDTRICKSCRIPT:
 		bSet = BSET_MINDTRICK;
+		break;
+	case SET_SUBDUESCRIPT:
+		bSet = BSET_SUBDUE;
 		break;
 	}
 
@@ -8826,6 +8833,7 @@ void	CQuake3GameInterface::Set( int taskID, int entID, const char *type_name, co
 	case SET_FFIRESCRIPT:
 	case SET_FFDEATHSCRIPT:
 	case SET_MINDTRICKSCRIPT:
+	case SET_SUBDUESCRIPT:
 		if( !Q3_SetBehaviorSet(entID, toSet, (char *) data) )
 			DebugPrint( WL_ERROR, "SetBehaviorSet: Invalid bSet %s\n", type_name );
 		break;
@@ -10435,6 +10443,9 @@ int		CQuake3GameInterface::GetFloat( int entID, const char *name, float *value )
 	case SET_UNDYING://## %t="BOOL_TYPES" # Can take damage down to 1 but not die
 		*value = (ent->flags&FL_UNDYING);
 		break;
+	case SET_SUBDUED://## %t="BOOL_TYPES" # NPC has been taken alive
+		*value = ( ent->NPC && ent->NPC->neutralState != 0 ) ? 1 : 0;
+		break;
 	case SET_NOAVOID://## %t="BOOL_TYPES" # Will not avoid other NPCs or architecture
 		if ( ent->NPC == NULL )
 		{
@@ -10827,6 +10838,9 @@ int		CQuake3GameInterface::GetString( int entID, const char *name, char **value 
 		break;
 	case SET_FFDEATHSCRIPT://## %s="NULL" !!"W:\game\base\scripts\!!#*.txt" # Script to run when player kills a teammate
 		*value = ent->behaviorSet[BSET_FFDEATH];
+		break;
+	case SET_SUBDUESCRIPT://## %s="NULL" !!"W:\game\base\scripts\!!#*.txt" # Script to run when taken alive instead of killed
+		*value = ent->behaviorSet[BSET_SUBDUE];
 		break;
 
 	//# #sep Standard strings
@@ -11498,6 +11512,7 @@ void	CQuake3GameInterface::PrecacheFromSet( const char *setname, const char *fil
 		case SET_FFIRESCRIPT:
 		case SET_FFDEATHSCRIPT:
 		case SET_MINDTRICKSCRIPT:
+		case SET_SUBDUESCRIPT:
 		case SET_CINEMATIC_SKIPSCRIPT:
 			PrecacheScript(filename);
 			break;

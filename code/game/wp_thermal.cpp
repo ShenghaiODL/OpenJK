@@ -429,6 +429,11 @@ gentity_t *WP_FireThermalDetonator( gentity_t *ent, qboolean alt_fire )
 	bolt->svFlags = SVF_USE_CURRENT_ORIGIN;
 	bolt->s.weapon = WP_THERMAL;
 
+	if ( ent->NPC )
+	{//the trooper AI's thermal-sidearm swap waits on this to know the grenade actually left the hand
+		TIMER_Set( ent, "thermalThrown", Q3_INFINITE );
+	}
+
 	if ( alt_fire )
 	{
 		bolt->methodOfDeath = MOD_THERMAL_ALT;

@@ -346,6 +346,15 @@ void G_DropKey( gentity_t *self )
 	VectorClear( dropped->s.pos.trDelta );
 	dropped->message = self->message;
 	self->message = NULL;
+	//and take it off the body (this used to only run for disintegrations, where there's no body left to care)
+	if ( self->ghoul2.size() && self->playerModel >= 0 )
+	{
+		gi.G2API_SetSurfaceOnOff( &self->ghoul2[self->playerModel], "l_arm_key", 0x00000002 );
+	}
+	if ( self->client )
+	{
+		self->client->ps.eFlags &= ~EF_FORCE_VISIBLE;
+	}
 }
 
 void ObjectDie (gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int damage, int meansOfDeath )
@@ -466,41 +475,8 @@ void G_CheckVictoryScript(gentity_t *self)
 // Known limit: scripts that wait on health <= 0 still won't see it as dead.
 //---------------------------------------------------------
 void G_FlagNPCAsKilled( gentity_t *self, gentity_t *attacker )
-{
-	if ( !self || !self->client || !self->NPC || self->health <= 0 )
-	{
-		return;
-	}
-
-	const qboolean wasEnemy = (qboolean)( self->client->playerTeam == TEAM_ENEMY || self->client->playerTeam == TEAM_FREE );
-
-	// its target(s), once
-	G_UseTargets( self, self );
-	self->target = NULL;
-	self->target2 = NULL;
-	self->target4 = NULL;
-
-	// its death script, once
-	if ( self->behaviorSet[BSET_DEATH] )
-	{
-		G_ActivateBehavior( self, BSET_DEATH );
-		self->behaviorSet[BSET_DEATH] = NULL;
-	}
-
-	if ( attacker && attacker->client && !attacker->s.number && wasEnemy )
-	{
-		attacker->client->sess.missionStats.enemiesKilled++;
-		G_CheckVictoryScript( attacker );
-	}
-
-	// marks it as already counted, and drives its reaction (timers are saved with the game)
-	TIMER_Set( self, "maimed", Q3_INFINITE );
-	// it's unarmed and stays that way (Track 9's flee logic would otherwise go looking for a gun)
-	TIMER_Set( self, "CheckForWeaponToPickup", Q3_INFINITE );
-	if ( attacker && attacker->client && attacker != self && !self->enemy )
-	{
-		G_SetEnemy( self, attacker );
-	}
+{//the hand-sever path: now just the maim flavour of the general non-lethal takedown (NPC_neutral.cpp)
+	G_Neutralize( self, attacker, NH_MAIM );
 }
 
 qboolean OnSameTeam( gentity_t *ent1, gentity_t *ent2 )
@@ -2672,6 +2648,10 @@ qboolean G_DoDismemberment( gentity_t *self, vec3_t point, int mod, int damage, 
 				break;
 			}
 			if ( doDismemberment )
+		{//whoever's watching won't forget this
+			AI_NerveWitness( self, NE_ALLY_DISMEMBERED, NULL );
+		}
+		if ( doDismemberment )
 			{
 				return G_Dismember( self, point, limbBone, rotateBone, limbName,
 					limbCapName, stubCapName, limbTagName, stubTagName,
@@ -3769,7 +3749,6 @@ player_die
 */
 void NPC_SetAnim(gentity_t	*ent,int setAnimParts,int anim,int setAnimFlags, int iBlend);
 extern void AI_DeleteSelfFromGroup( gentity_t *self );
-extern void AI_GroupMemberKilled( gentity_t *self );
 extern qboolean FlyingCreature( gentity_t *ent );
 extern void G_DrivableATSTDie( gentity_t *self );
 extern void JET_FlyStop( gentity_t *self );
@@ -3945,10 +3924,13 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 			self->client->noclip = false;
 		}
 		NPC_FreeCombatPoint( self->NPC->combatPoint );
+		{//the squad saw this (before we leave it, so the squad list is still intact)
+			const qboolean leader = (qboolean)( ( self->NPC->group && self->NPC->group->commander == self ) || self->NPC->rank >= RANK_LT );
+			AI_NerveWitness( self, leader ? NE_LEADER_KILLED : NE_ALLY_KILLED, attacker );
+		}
 		if ( self->NPC->group )
 		{
 			lastInGroup = (qboolean)(self->NPC->group->numGroup < 2);
-			AI_GroupMemberKilled( self );
 			AI_DeleteSelfFromGroup( self );
 		}
 
@@ -4039,6 +4021,11 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 	{
 		attacker->NPC->group->enemy = NULL;
 	}
+	if ( attacker && attacker->client && attacker != self && self->client && !OnSameTeam( attacker, self ) )
+	{//a kill steadies the killer's side: the killer, and anyone on their team who saw it
+		AI_NerveEvent( attacker, NE_ALLY_KILLS_ENEMY, 1.0f, self );
+		AI_NerveWitness( attacker, NE_ALLY_KILLS_ENEMY, self );
+	}
 	if ( self->s.weapon == WP_SABER )
 	{
 		holdingSaber = qtrue;
@@ -4077,7 +4064,6 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 					|| meansOfDeath == MOD_LASERTRIP_ALT
 					|| meansOfDeath == MOD_MELEE
 					|| meansOfDeath == MOD_FORCE_GRIP
-					|| meansOfDeath == MOD_KNOCKOUT
 					|| meansOfDeath == MOD_CRUSH
 					|| meansOfDeath == MOD_IMPACT
 					|| meansOfDeath == MOD_FALLING
@@ -4106,8 +4092,8 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 			Drop_Item( self, item, 0, qtrue );
 		}
 	}
-	//Use any target we had
-	if ( meansOfDeath != MOD_KNOCKOUT )
+	//Use any target we had (an NPC taken alive earlier already fired it, G_Neutralize)
+	if ( !self->NPC || !(self->NPC->neutralFlags&NF_TARGETS_FIRED) )
 	{
 		G_UseTargets( self, self );
 	}
@@ -4116,8 +4102,8 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 	{
 		if ( attacker->client && !attacker->s.number )
 		{
-			if ( self->client && !TIMER_Exists( self, "maimed" ) )
-			{//killed a client (a maimed NPC was already counted when it was taken out, G_FlagNPCAsKilled)
+			if ( self->client && !G_IsNeutralized( self ) )
+			{//killed a client (an NPC taken alive was already counted when it was taken out, G_Neutralize)
 				if ( self->client->playerTeam == TEAM_ENEMY
 					|| self->client->playerTeam == TEAM_FREE
 					|| (self->NPC && (self->NPC->charmedTime > level.time || self->NPC->darkCharmedTime > level.time) ) )
@@ -4130,7 +4116,10 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 				G_TrackWeaponUsage( attacker, inflictor, 30, meansOfDeath );
 			}
 		}
-		G_CheckVictoryScript(attacker);
+		if ( !G_IsNeutralized( self ) )
+		{//finishing off someone already taken alive isn't a second victory
+			G_CheckVictoryScript(attacker);
+		}
 		//player killing a jedi with a lightsaber spawns a matrix-effect entity
 		if ( d_slowmodeath->integer )
 		{
@@ -4248,7 +4237,8 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 		//&& self->s.number != 0
 		&& !( contents & CONTENTS_NODROP )
 		&& meansOfDeath != MOD_SNIPER
-		&& (!self->client||self->client->NPC_class!=CLASS_GALAKMECH))
+		&& (!self->client||self->client->NPC_class!=CLASS_GALAKMECH)
+		&& (!self->NPC || !(self->NPC->neutralFlags&NF_DROPPED_INV)) )//already dropped it when taken alive
 	{
 		TossClientItems( self );
 	}
@@ -4401,7 +4391,7 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 		}
 		//FIXME: verify we have this anim?
 		NPC_SetAnim( self, SETANIM_BOTH, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
-		if ( meansOfDeath == MOD_KNOCKOUT || meansOfDeath == MOD_MELEE )
+		if ( meansOfDeath == MOD_MELEE )
 		{
 			G_AddEvent( self, EV_JUMP, 0 );
 		}
@@ -4663,18 +4653,7 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 		}
 
 
-		if ( meansOfDeath == MOD_KNOCKOUT )
-		{
-			//FIXME: knock-out sound, and don't remove me
-			G_AddEvent( self, EV_JUMP, 0 );
-			G_UseTargets2( self, self, self->target2 );
-			G_AlertTeam( self, attacker, 512, 32 );
-			if ( self->NPC )
-			{//stick around for a while
-				self->NPC->timeOfDeath = level.time + 10000;
-			}
-		}
-		else if ( meansOfDeath == MOD_GAS || meansOfDeath == MOD_FORCE_DRAIN )
+		if ( meansOfDeath == MOD_GAS || meansOfDeath == MOD_FORCE_DRAIN )
 		{
 			G_AddEvent( self, EV_WATER_DROWN, 0 );
 			G_AlertTeam( self, attacker, 512, 32 );
@@ -4720,7 +4699,8 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 		}
 		else
 		{
-			if ( hitLoc == HL_HEAD
+			if ( meansOfDeath == MOD_SABER || meansOfDeath == MOD_MELEE//a quiet kill: only those who see it know
+				|| ( hitLoc == HL_HEAD
 				&& !(dflags&DAMAGE_RADIUS)
 				&& meansOfDeath!=MOD_REPEATER_ALT
 				&& meansOfDeath!=MOD_FLECHETTE_ALT
@@ -4734,7 +4714,7 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 				&& meansOfDeath!=MOD_LASERTRIP_ALT
 				&& meansOfDeath!=MOD_EXPLOSIVE
 				&& meansOfDeath!=MOD_EXPLOSIVE_SPLASH
-				&& meansOfDeath!=MOD_DESTRUCTION )
+				&& meansOfDeath!=MOD_DESTRUCTION ) )
 			{//no sound when killed by headshot (explosions don't count)
 				G_AlertTeam( self, attacker, 512, 0 );
 				if ( gi.VoiceVolume[self->s.number] )
@@ -4750,7 +4730,7 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 				}
 				else if ( cliff_fall != 2 )
 				{
-					if ( meansOfDeath == MOD_KNOCKOUT || meansOfDeath == MOD_MELEE )
+					if ( meansOfDeath == MOD_MELEE )
 					{
 						G_AddEvent( self, EV_JUMP, 0 );
 					}
@@ -4778,6 +4758,11 @@ extern void RunEmplacedWeapon( gentity_t *ent, usercmd_t **ucmd );
 			//FIXME: danger event so that others will run away from this area since it's obviously dangerous
 		}
 
+		if ( self->NPC && (self->NPC->neutralFlags&NF_DOWNED) )
+		{//already lying there out cold in a held death pose: finishing them off doesn't replay a death
+			anim = -2;
+			specialAnim = qtrue;
+		}
 		if ( anim >= 0 )//can be -1 if it fails, -2 if it's already in a death anim
 		{
 			NPC_SetAnim(self, SETANIM_BOTH, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD);
@@ -5619,7 +5604,6 @@ qboolean G_NonLocationSpecificDamage( int meansOfDeath )
 		|| meansOfDeath == MOD_LASERTRIP_ALT
 		|| meansOfDeath == MOD_MELEE
 		|| meansOfDeath == MOD_FORCE_GRIP
-		|| meansOfDeath == MOD_KNOCKOUT
 		|| meansOfDeath == MOD_CRUSH
 		|| meansOfDeath == MOD_EXPLOSIVE_SPLASH
 		|| meansOfDeath == MOD_DESTRUCTION )
@@ -5716,6 +5700,83 @@ dflags		these flags are used to control how T_Damage works
 	DAMAGE_NO_HIT_LOC		Damage not based on hit location
 ============
 */
+/*
+============
+G_UndyingThreshold
+
+An "undying" target just had its health taken below 1. Clamp it to 1, and run its death
+script only if it's genuinely undying (FL_UNDYING or raging) and only on the way *into*
+the threshold -- the script re-arms once health is observed above 1 again (see the start
+of G_Damage), so scripted recharges (scepter Tavion) still fire again.
+
+A plain DAMAGE_NO_KILL hit (kicks, the Kyle grapple) on a normal NPC never fires the
+death script: it used to, so kicking a death-scripted NPC down to 1 HP ran its script
+(t2_rancor prisoners failed the mission, hoth2 kill counters ticked) with the NPC alive.
+============
+*/
+/*
+-------------------------
+G_TryNonLethal
+
+  The hit that would have killed this NPC came from something meant to subdue (a kick, fists,
+  the stun baton, a full-charge DEMP2 shock, being pushed into a wall): if they can be taken
+  alive, they go out cold instead of dying. Lethal weapons never come through here.
+-------------------------
+*/
+static qboolean G_TryNonLethal( gentity_t *targ, gentity_t *attacker, int mod, int dflags )
+{
+	if ( !targ->NPC || !targ->client )
+	{
+		return qfalse;
+	}
+	qboolean subduing = (qboolean)( (dflags&DAMAGE_NONLETHAL) != 0 );
+	if ( !subduing && mod == MOD_MELEE )
+	{//fists, kicks, the baton, a staff or stick: blunt
+		subduing = qtrue;
+	}
+	if ( !subduing )
+	{
+		return qfalse;
+	}
+	// the blow has already taken them to 0 (or the no-kill clamp left them at 1); the neutralize
+	// code only works on the living, so stand them back up at 1 for the check
+	const int savedHealth = targ->health;
+	targ->health = 1;
+	if ( !G_CanNeutralize( targ, NH_KNOCKOUT ) )
+	{
+		targ->health = savedHealth;
+		return qfalse;
+	}
+	G_Neutralize( targ, attacker, NH_KNOCKOUT );
+	return qtrue;
+}
+
+static void G_UndyingThreshold( gentity_t *targ, int dflags )
+{
+	if ( targ->health >= 1 )
+	{
+		return;
+	}
+	targ->health = 1;
+
+	qboolean reallyUndying = (qboolean)( (targ->flags&FL_UNDYING)
+		|| ( targ->client && (targ->client->ps.forcePowersActive & (1 << FP_RAGE)) ) );
+	if ( !reallyUndying )
+	{//just a no-kill hit
+		return;
+	}
+	if ( TIMER_Exists( targ, "deathThresholdFired" ) )
+	{//already ran it for this trip to 1 HP
+		return;
+	}
+	TIMER_Set( targ, "deathThresholdFired", Q3_INFINITE );
+	if ( targ->NPC && (targ->NPC->aiFlags&NPCAI_ROSH) && Rosh_TwinPresent( targ ) )
+	{//NOTE: Rosh won't run his deathscript until he doesn't have the twins to heal him
+		return;
+	}
+	G_ActivateBehavior( targ, BSET_DEATH );
+}
+
 void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const vec3_t dir, const vec3_t point, int damage, int dflags, int mod, int hitLoc )
 {
 	gclient_t	*client;
@@ -6724,6 +6785,11 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 	{
 		alreadyDead = qtrue;
 	}
+	else if ( targ->health > 1 )
+	{//back above the undying threshold (healed, recharged, script set health) -- re-arm the death script
+		TIMER_Remove( targ, "deathThresholdFired" );
+	}
+	const int healthBefore = targ->health;
 
 	// Undying If:
 	//--------------------------------------------------------------------------
@@ -6797,11 +6863,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 			}
 			if ( targUndying  )
 			{
-				if(targ->health < 1)
-				{
-					G_ActivateBehavior( targ, BSET_DEATH );
-					targ->health = 1;
-				}
+				G_UndyingThreshold( targ, dflags );
 			}
 		}
 		else
@@ -6854,14 +6916,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 
 				if (targUndying)
 				{
-					if ( targ->health < 1 )
-					{
-						if ( targ->NPC == NULL || !(targ->NPC->aiFlags&NPCAI_ROSH) || !Rosh_TwinPresent( targ ) )
-						{//NOTE: Rosh won't run his deathscript until he doesn't have the twins to heal him
-							G_ActivateBehavior( targ, BSET_DEATH );
-						}
-						targ->health = 1;
-					}
+					G_UndyingThreshold( targ, dflags );
 				}
 				else if ( targ->health < 1 && attacker->client )
 				{	// The player or NPC just killed an enemy so increment the kills counter
@@ -6903,21 +6958,11 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 					targ->health = targ->health - take;
 					if ( !alreadyDead && ((((targ->flags&FL_UNDYING)||targ->client->ps.forcePowersActive & (1 << FP_RAGE)) && !(dflags&DAMAGE_NO_PROTECTION) && attacker->s.number != 0) || (dflags&DAMAGE_NO_KILL) ) )
 					{//guy is marked undying and we're not the player or we're in combat
-						if ( targ->health < 1 )
-						{
-							G_ActivateBehavior( targ, BSET_DEATH );
-
-							targ->health = 1;
-						}
+						G_UndyingThreshold( targ, dflags );
 					}
 					else if ( !alreadyDead && ((((targ->flags&FL_UNDYING)||targ->client->ps.forcePowersActive & (1 << FP_RAGE)) && !(dflags&DAMAGE_NO_PROTECTION) && !attacker->s.number && !targ->s.number) || (dflags&DAMAGE_NO_KILL)) )
 					{// player is undying and he's attacking himself, don't let him die
-						if ( targ->health < 1 )
-						{
-							G_ActivateBehavior( targ, BSET_DEATH );
-
-							targ->health = 1;
-						}
+						G_UndyingThreshold( targ, dflags );
 					}
 					else if ( targ->health < 0 )
 					{
@@ -6948,15 +6993,21 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 			g_lastClientDamaged = targ;
 		}
 
-		if ( targ->s.number == 0 && attacker && attacker->NPC && attacker->NPC->group )
-		{
-			AIGroupInfo_t *grp = attacker->NPC->group;
-			int boost = ( asave > 0 && take == 0 ) ? 1 : ( take > 0 ? 3 : 0 );
-			if ( boost > 0 )
-			{
-				grp->moraleAdjust += boost;
-				if ( grp->moraleAdjust > 30 ) grp->moraleAdjust = 30;
-			}
+		if ( !alreadyDead && take >= healthBefore && targ->health <= 1 && G_TryNonLethal( targ, attacker, mod, dflags ) )
+		{//the blow that would have finished them knocks them out instead; no death, no pain reaction
+			targ->health = 1;
+			targ->client->ps.stats[STAT_HEALTH] = 1;
+			return;
+		}
+
+		if ( targ->s.number == 0 && attacker && attacker->NPC && ( take > 0 || asave > 0 ) )
+		{//landed one on the player: the shooter and anyone who saw it feel better about this
+			AI_NerveEvent( attacker, NE_HURT_ENEMY, take > 0 ? 1.0f : 0.34f, targ );
+			AI_NerveWitness( attacker, NE_HURT_ENEMY, targ );
+		}
+		if ( targ->s.number == 0 && take > 0 )
+		{//the player's companions don't like seeing the player hurt
+			AI_NerveWitness( targ, NE_LEADER_HURT, attacker );
 		}
 
 		//TEMP HACK FOR PLAYER LOOK AT ENEMY CODE
@@ -6994,14 +7045,6 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 			}
 		}
 
-
-		if ( targ->health > 0 && targ->NPC && targ->NPC->surrenderTime > level.time )
-		{//he was surrendering, goes down with one hit
-			if (!targ->client || targ->client->NPC_class!=CLASS_BOBAFETT)
-			{
-				targ->health = 0;
-			}
-		}
 
 		if ( targ->health <= 0 )
 		{
@@ -7200,6 +7243,11 @@ void G_RadiusDamage ( const vec3_t origin, gentity_t *attacker, float damage, fl
 		}
 
 		points = damage * ( 1.0 - dist / radius );
+
+		if ( ent->NPC && ent->client && ent->health > 0 )
+		{//close enough to feel it
+			AI_NerveEvent( ent, NE_EXPLOSION_NEAR, 1.0f, attacker );
+		}
 
 		// Lessen damage to vehicles that are moving away from the explosion
 		if (ent->client && (ent->client->NPC_class==CLASS_VEHICLE || G_IsRidingVehicle(ent)))

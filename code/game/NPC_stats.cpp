@@ -2008,6 +2008,8 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 		stats->aggression	= 3;
 		stats->aim			= 3;
 		stats->weaponSkill	= 0;//not set: use g_npcWeaponSkill
+	stats->nerve		= 0;//not set: rank default (AI_NerveInit)
+	stats->blockSkill	= 0;//not set: rank default
 		stats->earshot		= 1024;
 		stats->evasion		= 3;
 		stats->hfov			= 90;
@@ -2909,6 +2911,74 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 					if ( NPC->NPC )
 					{
 						stats->weaponSkill = n;
+					}
+					continue;
+				}
+
+				// nerve: 0-100 base fear/confidence; entries without it get a rank default
+				if ( !Q_stricmp( token, "nerve" ) ) {
+					if ( COM_ParseInt( &p, &n ) ) {
+						SkipRestOfLine( &p );
+						continue;
+					}
+					if ( n < 1 || n > 100 ) {
+						gi.Printf( "bad %s in NPC '%s'\n", token, NPCName );
+						continue;
+					}
+					if ( NPC->NPC )
+					{
+						stats->nerve = n;
+					}
+					continue;
+				}
+
+				// blockSkill: 1-5 how well a saber user times blocks and dodges; rank default if missing
+				if ( !Q_stricmp( token, "blockSkill" ) ) {
+					if ( COM_ParseInt( &p, &n ) ) {
+						SkipRestOfLine( &p );
+						continue;
+					}
+					if ( n < 1 || n > 5 ) {
+						gi.Printf( "bad %s in NPC '%s'\n", token, NPCName );
+						continue;
+					}
+					if ( NPC->NPC )
+					{
+						stats->blockSkill = n;
+					}
+					continue;
+				}
+
+				// leash: how far from their leader a companion will fight before heading back (default 384)
+				if ( !Q_stricmp( token, "leash" ) ) {
+					if ( COM_ParseFloat( &p, &f ) ) {
+						SkipRestOfLine( &p );
+						continue;
+					}
+					if ( f < 0.0f ) {
+						gi.Printf( "bad %s in NPC '%s'\n", token, NPCName );
+						continue;
+					}
+					if ( NPC->NPC )
+					{
+						NPC->NPC->leash = f;
+					}
+					continue;
+				}
+
+				// aiProfile: which brain profile to fight with (trooper, officer, ally, sniper, grenadier,
+				// melee, rocket, mando, hazard); defaults from class and spawn weapon
+				if ( !Q_stricmp( token, "aiProfile" ) ) {
+					if ( COM_ParseString( &p, &value ) ) {
+						continue;
+					}
+					if ( NPC->NPC )
+					{
+						NPC->NPC->aiProfile = AI_Brain_ProfileIdByName( value );
+						if ( NPC->NPC->aiProfile == AIPROF_NONE )
+						{
+							gi.Printf( "bad aiProfile '%s' in NPC '%s'\n", value, NPCName );
+						}
 					}
 					continue;
 				}

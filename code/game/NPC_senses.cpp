@@ -713,6 +713,7 @@ qboolean G_CheckForDanger( gentity_t *self, int alertEvent )
 		{
 			if ( self->NPC )
 			{
+				AI_NerveEvent( self, NE_GRENADE_NEAR, 1.0f, level.alertEvents[alertEvent].owner );
 				if ( self->NPC->scriptFlags & SCF_DONT_FLEE )
 				{//can't flee
 					return qfalse;
@@ -773,6 +774,10 @@ void AddSoundEvent( gentity_t *owner, vec3_t position, float radius, alertEventL
 	if ( owner && owner->client && owner->client->NPC_class == CLASS_SAND_CREATURE )
 	{
 		return;
+	}
+	if ( owner && owner->s.number == 0 && g_stealthNoiseScale && g_stealthNoiseScale->value > 0 )
+	{//how loud the player is
+		radius *= g_stealthNoiseScale->value;
 	}
 
 	//FIXME: if owner is not a player or player ally, and there are no player allies present,

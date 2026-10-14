@@ -29,6 +29,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_functions.h"
 #include "g_navigator.h"
 #include "b_local.h"
+#include "anims.h"
+#include "wp_saber.h"
 #include "g_nav.h"
 
 #define ACT_ACTIVE		qtrue
@@ -1781,6 +1783,7 @@ Try and use an entity in the world, directly ahead of us
 */
 
 
+extern qboolean G_ReleaseEntity( gentity_t *grabber );
 void TryUse( gentity_t *ent )
 {
 	gentity_t	*target;
@@ -1806,6 +1809,13 @@ void TryUse( gentity_t *ent )
 
 	if ( ent->useDebounceTime > level.time )
 	{// shared lockout with weapon class swap — prevents alternation when both are in range
+		return;
+	}
+
+	if ( ent->s.number == 0 && ent->client->ps.heldClient < ENTITYNUM_WORLD )
+	{//dragging a body: let go
+		G_ReleaseEntity( ent );
+		ent->useDebounceTime = level.time + 500;
 		return;
 	}
 
@@ -1842,6 +1852,25 @@ void TryUse( gentity_t *ent )
 		// Attempt to board this vehicle.
 		target->m_pVehicle->m_pVehicleInfo->Board( target->m_pVehicle, ent );
 
+		return;
+	}
+
+	if ( ent->s.number == 0 && target->client && target->NPC && G_IsDownedBody( target )
+		&& target->client->ps.heldByClient >= ENTITYNUM_WORLD && !(target->flags&FL_DISINTEGRATED) )
+	{//a corpse or someone out cold: take hold and drag them out of sight (+use again lets go)
+		ent->client->ps.heldClient = target->s.number;
+		target->client->ps.heldByClient = ent->s.number;
+		target->owner = ent;
+		ent->useDebounceTime = level.time + 500;
+		return;
+	}
+
+	if ( ent->s.number == 0 && target->client && target->NPC && target->health > 0
+		&& target->client->playerTeam == ent->client->enemyTeam
+		&& AI_CanBeSnuckUpOn( target, ent ) )
+	{//sneaked up behind them: grab and choke them out (g_active.cpp; any weapon, a lit saber gets switched off)
+		G_StartSpyTakedown( ent, target );
+		ent->useDebounceTime = level.time + 1000;
 		return;
 	}
 
@@ -1897,6 +1926,19 @@ void G_ChangeMap (const char *mapname, const char *spawntarget, qboolean hub)
 	//ignore if player is dead
 	if (g_entities[0].client->ps.pm_type == PM_DEAD)
 		return;
+	{//stealth tally: enemies left behind who never found out you were there
+		int bypassed = 0;
+		for ( int i = MAX_CLIENTS; i < globals.num_entities; i++ )
+		{
+			const gentity_t *e = &g_entities[i];
+			if ( e->inuse && e->NPC && e->client && e->health > 0 && e->client->playerTeam == TEAM_ENEMY
+				&& !G_IsNeutralized( e ) && e->NPC->awareState < AW_ALERT && e->NPC->lastKnownEnemyTime == 0 )
+			{
+				bypassed++;
+			}
+		}
+		g_entities[0].client->sess.missionStats.enemiesBypassed += bypassed;
+	}
 	if ( killPlayerTimer )
 	{//can't go to next map if your allies have turned on you
 		return;

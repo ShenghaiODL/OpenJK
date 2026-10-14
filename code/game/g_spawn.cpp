@@ -325,6 +325,7 @@ field_t fields[] = {
 	{"ffirescript", FOFS(behaviorSet[BSET_FFIRE]), F_LSTRING},//name of script to run
 	{"ffdeathscript", FOFS(behaviorSet[BSET_FFDEATH]), F_LSTRING},//name of script to run
 	{"mindtrickscript", FOFS(behaviorSet[BSET_MINDTRICK]), F_LSTRING},//name of script to run
+	{"subduescript", FOFS(behaviorSet[BSET_SUBDUE]), F_LSTRING},//name of script to run when taken alive instead of killed (replaces deathscript for that case)
 	{"script_targetname", FOFS(script_targetname), F_LSTRING},//scripts look for this when "affecting"
 	//For NPCs
 	//{"playerTeam", FOFS(playerTeam), F_INT},
@@ -333,6 +334,9 @@ field_t fields[] = {
 	{"NPC_target", FOFS(NPC_target), F_LSTRING},
 	{"NPC_target2", FOFS(target2), F_LSTRING},//NPC_spawner only
 	{"NPC_target4", FOFS(target4), F_LSTRING},//NPC_spawner only
+	{"NPC_subduetarget", FOFS(NPC_subduetarget), F_LSTRING},//NPC_spawner only: fired instead of NPC_target when taken alive
+	{"squadname", FOFS(squadname), F_LSTRING},//NPC_spawner only: NPCs sharing it form a squad
+	{"nonlethal", FOFS(nonlethal), F_INT},//NPC_spawner only: 0 default, 1 never taken alive, 2 always taken alive when eligible
 	{"NPC_type", FOFS(NPC_type), F_LSTRING},
 	{"ownername", FOFS(ownername), F_LSTRING},
 	//for weapon_saber

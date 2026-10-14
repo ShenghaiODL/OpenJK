@@ -1024,6 +1024,137 @@ static void Svcmd_CustomSaber_f(void)
     }
 }
 
+/*
+npc_neutralize [entnum|targetname|crosshair] [maim|surrender|knockout|pacify|disarm|stealth]
+Takes an NPC alive through the non-lethal pipeline (debug). Default: the NPC under the
+crosshair, knocked out.
+*/
+extern int g_crosshairEntNum;
+static void Svcmd_NPCNeutralize_f( void )
+{
+	gentity_t	*ent = NULL;
+	const char	*who = gi.argc() > 1 ? gi.argv( 1 ) : "crosshair";
+	int			how = NH_KNOCKOUT;
+
+	if ( !Q_stricmp( who, "crosshair" ) )
+	{
+		if ( g_crosshairEntNum >= 0 && g_crosshairEntNum < ENTITYNUM_WORLD )
+		{
+			ent = &g_entities[g_crosshairEntNum];
+		}
+	}
+	else if ( who[0] >= '0' && who[0] <= '9' )
+	{
+		const int num = atoi( who );
+		if ( num >= 0 && num < ENTITYNUM_WORLD )
+		{
+			ent = &g_entities[num];
+		}
+	}
+	else
+	{
+		ent = G_Find( NULL, FOFS(targetname), who );
+	}
+
+	if ( gi.argc() > 2 )
+	{
+		const char *howName = gi.argv( 2 );
+		how = -1;
+		for ( int i = NH_MAIM; i < NH_NUM; i++ )
+		{
+			if ( !Q_stricmp( howName, G_NeutralHowName( i ) ) )
+			{
+				how = i;
+				break;
+			}
+		}
+		if ( how == -1 )
+		{
+			gi.Printf( "npc_neutralize: unknown method '%s' (maim, surrender, knockout, pacify, disarm, stealth)\n", howName );
+			return;
+		}
+	}
+
+	if ( !ent || !ent->inuse || !ent->NPC || !ent->client )
+	{
+		gi.Printf( "npc_neutralize: no NPC '%s'\n", who );
+		return;
+	}
+	if ( !G_CanNeutralize( ent, how ) )
+	{
+		gi.Printf( "npc_neutralize: %s (%d) can't be taken alive that way (%s)\n", ent->NPC_type, ent->s.number, G_NeutralHowName( how ) );
+		return;
+	}
+	G_Neutralize( ent, &g_entities[0], how );
+	gi.Printf( "npc_neutralize: %s (%d) -> %s\n", ent->NPC_type, ent->s.number, G_NeutralStateName( ent->NPC->neutralState ) );
+}
+
+/*
+npc_nerve [entnum|crosshair] <value|event name>
+Debug: set an NPC's nerve shock so the effective value becomes <value>, or fire a named nerve
+event at it ("hit", "near miss", "ally killed"...). No args: print the crosshair NPC's nerve.
+*/
+static void Svcmd_NPCNerve_f( void )
+{
+	gentity_t	*ent = NULL;
+	int			argBase = 1;
+
+	if ( gi.argc() > 1 && gi.argv( 1 )[0] >= '0' && gi.argv( 1 )[0] <= '9' && gi.argc() > 2 )
+	{
+		const int num = atoi( gi.argv( 1 ) );
+		if ( num >= 0 && num < ENTITYNUM_WORLD )
+		{
+			ent = &g_entities[num];
+		}
+		argBase = 2;
+	}
+	else if ( g_crosshairEntNum >= 0 && g_crosshairEntNum < ENTITYNUM_WORLD )
+	{
+		ent = &g_entities[g_crosshairEntNum];
+	}
+	if ( !ent || !ent->inuse || !ent->NPC || !ent->client )
+	{
+		gi.Printf( "npc_nerve: no NPC\n" );
+		return;
+	}
+
+	if ( gi.argc() > argBase )
+	{
+		const char *what = gi.argv( argBase );
+		if ( what[0] >= '0' && what[0] <= '9' )
+		{//set the effective value by adjusting shock
+			int sit;
+			AI_NerveEffective( ent, &sit );
+			ent->NPC->nerveShock = Com_Clamp( -100, 40, atoi( what ) - ent->NPC->nerveBase - sit );
+		}
+		else
+		{
+			int ev = -1;
+			for ( int i = 0; i < NE_NUM; i++ )
+			{
+				if ( !Q_stricmp( what, AI_NerveEventName( i ) ) )
+				{
+					ev = i;
+					break;
+				}
+			}
+			if ( ev < 0 )
+			{
+				gi.Printf( "npc_nerve: unknown event '%s'\n", what );
+				return;
+			}
+			AI_NerveEvent( ent, ev, 1.0f, &g_entities[0] );
+		}
+		AI_NerveUpdate( ent );
+	}
+
+	int officer, numbers, contagion, threat, wounds;
+	const int sit = AI_NerveSituational( ent, &officer, &numbers, &contagion, &threat, &wounds );
+	gi.Printf( "%s (%d): nerve %d = base %d + shock %d + situational %d (ldr%+d num%+d sq%+d thr%+d wnd%+d) -> %s\n",
+		ent->NPC_type, ent->s.number, AI_NerveEffective( ent ), ent->NPC->nerveBase, ent->NPC->nerveShock, sit,
+		officer, numbers, contagion, threat, wounds, AI_NerveTierName( AI_NerveTier( ent ) ) );
+}
+
 #define CMD_NONE				(0x00000000u)
 #define CMD_CHEAT				(0x00000001u)
 #define CMD_ALIVE				(0x00000002u)
@@ -1045,6 +1176,8 @@ static svcmd_t svcmds[] = {
 
 	{ "nav",						Svcmd_Nav_f,								CMD_CHEAT },
 	{ "npc",						Svcmd_NPC_f,								CMD_CHEAT },
+	{ "npc_neutralize",				Svcmd_NPCNeutralize_f,						CMD_CHEAT },
+	{ "npc_nerve",					Svcmd_NPCNerve_f,							CMD_CHEAT },
 	{ "use",						Svcmd_Use_f,								CMD_CHEAT },
 	{ "ICARUS",						Svcmd_ICARUS_f,								CMD_CHEAT },
 

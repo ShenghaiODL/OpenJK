@@ -206,6 +206,15 @@ w = cgi_R_Font_StrLenPixels(text, cgs.media.qhFontSmall, 0.8f);
 w = cgi_R_Font_StrLenPixels(text, cgs.media.qhFontSmall, 0.8f);
 	cgi_R_Font_DrawString(x, y, text, colorTable[CT_LTGOLD1], cgs.media.qhFontSmall, -1, 0.8f);
 	cgi_R_Font_DrawString(x+w,y, va("%d",cg_entities[0].gent->client->sess.missionStats.enemiesKilled), colorTable[CT_WHITE], cgs.media.qhFontSmall, -1, 0.8f);
+
+	if ( cg_entities[0].gent->client->sess.missionStats.enemiesSubdued )
+	{//taken alive (non-lethal)
+		y +=pad;
+		Q_strncpyz( text, "Enemies Subdued: ", sizeof(text) );
+		w = cgi_R_Font_StrLenPixels(text, cgs.media.qhFontSmall, 0.8f);
+		cgi_R_Font_DrawString(x, y, text, colorTable[CT_LTGOLD1], cgs.media.qhFontSmall, -1, 0.8f);
+		cgi_R_Font_DrawString(x+w,y, va("%d",cg_entities[0].gent->client->sess.missionStats.enemiesSubdued), colorTable[CT_WHITE], cgs.media.qhFontSmall, -1, 0.8f);
+	}
 	/*
 	cgi_SP_GetStringTextString( "SP_INGAME_SECRETAREAS_OF", text, sizeof(text) );
 	cgi_R_Font_DrawString(x+w,y, va("%d %s %d",

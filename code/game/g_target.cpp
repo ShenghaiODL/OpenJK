@@ -933,6 +933,7 @@ void set_mission_stats_cvars( void )
 	}
 
 	gi.cvar_set("ui_stats_enemieskilled", va("%d",client->sess.missionStats.enemiesKilled));	//pass this on to the menu
+	gi.cvar_set("ui_stats_subdued", va("%d",client->sess.missionStats.enemiesSubdued));	//taken alive
 
 	if (cg_entities[0].gent->client->sess.missionStats.totalSecrets)
 	{

@@ -1514,6 +1514,12 @@ typedef enum //# animNumber_e
 	BOTH_KYLE_PA_3,		//# hold 3
 	BOTH_PLAYER_PA_3,	//# player getting held 3
 	BOTH_PLAYER_PA_3_FLY,//# player getting thrown at end of hold 3
+	//stealth takedown from behind (JK Enhanced: frames in _humanoid/animation.cfg)
+	BOTH_SPY_GRAB,		//# attacker: grab
+	BOTH_SPY_KILL,		//# attacker: the choke/stab
+	BOTH_SPY_VICTIM,	//# victim: held through grab + kill
+	BOTH_SPY_VICTIM_DEAD,//# victim: end pose, held
+	BOTH_MELEE5,		//# the stealth knockout punch (JK Enhanced animation.cfg)
 	//Rancor
 	BOTH_BUCK_RIDER,	//# Rancor bucks when someone is on him
 	//WAMPA Grabbing enemy

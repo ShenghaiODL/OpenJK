@@ -65,16 +65,7 @@ typedef enum //# rank_e
 
 qboolean NPC_CheckPlayerTeamStealth( void );
 
-//AI_GRENADIER
-void NPC_BSGrenadier_Default( void );
-
-//AI_TUSKEN
-void NPC_BSTusken_Default( void );
-
-//AI_SNIPER
-void NPC_BSSniper_Default( void );
-
-//AI_STORMTROOPER
+//AI_STORMTROOPER (snipers, grenadiers and Tusken use it too, with a brain profile + AI_FireModules.cpp)
 void Saboteur_Decloak( gentity_t *self, int uncloakTime = 8000 );
 void NPC_BSST_Investigate( void );
 void NPC_BSST_Default( void );
@@ -167,6 +158,19 @@ public:
 	vec3_t		enemyLastSeenPos;
 	int			numState[ NUM_SQUAD_STATES ];
 	AIGroupMember_t member[ MAX_GROUP_MEMBERS ];
+	// squad coordination (AI_Squad.cpp)
+	int			squadId;
+	int			leaderNum;
+	int			formedTime;
+	int			avgNerve;
+	int			relocatingCount;
+	int			flankLeftNum;
+	int			flankRightNum;
+	int			coverRequestNum;
+	int			coverRequestTime;
+	int			duelLeadNum;
+	vec3_t		lastKnownEnemyPos;
+	int			lastKnownEnemyTime;
 
 
 	void sg_export(
@@ -190,6 +194,18 @@ public:
 		saved_game.write<float>(enemyLastSeenPos);
 		saved_game.write<int32_t>(numState);
 		saved_game.write<>(member);
+		saved_game.write<int32_t>(squadId);
+		saved_game.write<int32_t>(leaderNum);
+		saved_game.write<int32_t>(formedTime);
+		saved_game.write<int32_t>(avgNerve);
+		saved_game.write<int32_t>(relocatingCount);
+		saved_game.write<int32_t>(flankLeftNum);
+		saved_game.write<int32_t>(flankRightNum);
+		saved_game.write<int32_t>(coverRequestNum);
+		saved_game.write<int32_t>(coverRequestTime);
+		saved_game.write<int32_t>(duelLeadNum);
+		saved_game.write<float>(lastKnownEnemyPos);
+		saved_game.write<int32_t>(lastKnownEnemyTime);
 	}
 
 	void sg_import(
@@ -213,15 +229,40 @@ public:
 		saved_game.read<float>(enemyLastSeenPos);
 		saved_game.read<int32_t>(numState);
 		saved_game.read<>(member);
+		saved_game.read<int32_t>(squadId);
+		saved_game.read<int32_t>(leaderNum);
+		saved_game.read<int32_t>(formedTime);
+		saved_game.read<int32_t>(avgNerve);
+		saved_game.read<int32_t>(relocatingCount);
+		saved_game.read<int32_t>(flankLeftNum);
+		saved_game.read<int32_t>(flankRightNum);
+		saved_game.read<int32_t>(coverRequestNum);
+		saved_game.read<int32_t>(coverRequestTime);
+		saved_game.read<int32_t>(duelLeadNum);
+		saved_game.read<float>(lastKnownEnemyPos);
+		saved_game.read<int32_t>(lastKnownEnemyTime);
 	}
 }; // AIGroupInfo_t
 
 
-int	AI_GetGroupSize( vec3_t origin, int radius, team_t playerTeam, gentity_t *avoid = NULL );
-int AI_GetGroupSize( gentity_t *ent, int radius );
+// squads (AI_Squad.cpp)
+qboolean	AI_SquadEligible( gentity_t *ent );
+void		AI_SquadJoin( gentity_t *self );
+qboolean	AI_SquadUpdate( AIGroupInfo_t *group );
+int			AI_SquadSlotsFree( const AIGroupInfo_t *group );
+void		AI_SquadRequestCover( gentity_t *mover );
+int			AI_SquadFlankers( const AIGroupInfo_t *group, const gentity_t *except );
 
-void AI_GetGroup( gentity_t *self );
-
-gentity_t *AI_DistributeAttack( gentity_t *attacker, gentity_t *enemy, team_t team, int threshold );
+// member-list primitives (AI_Utils.cpp)
+void		AI_InsertGroupMember( AIGroupInfo_t *group, gentity_t *member );
+void		AI_DeleteGroupMember( AIGroupInfo_t *group, int memberNum );
+void		AI_DeleteSelfFromGroup( gentity_t *self );
+void		AI_SetNewGroupCommander( AIGroupInfo_t *group );
+void		AI_SortGroupByPathCostToEnemy( AIGroupInfo_t *group );
+void		AI_SetClosestBuddy( AIGroupInfo_t *group );
+void		AI_GroupUpdateEnemyLastSeen( AIGroupInfo_t *group, vec3_t spot );
+void		AI_GroupUpdateSquadstates( AIGroupInfo_t *group, gentity_t *member, int newSquadState );
+qboolean	AI_GroupContainsEntNum( AIGroupInfo_t *group, int entNum );
+void		AI_UpdateGroups( void );
 
 #endif	//__AI__

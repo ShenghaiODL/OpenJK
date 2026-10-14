@@ -39,6 +39,7 @@ extern void NPC_SetLookTarget( gentity_t *self, int entNum, int clearTime );
 extern qboolean Jedi_WaitingAmbush( gentity_t *self );
 extern void Jedi_Ambush( gentity_t *self );
 extern qboolean G_EntIsBreakable( int entityNum, gentity_t *breaker );
+extern qboolean G_ValidEnemy( gentity_t *self, gentity_t *enemy );
 
 extern qboolean PM_SaberInSpecialAttack( int anim );
 extern qboolean PM_SpinningSaberAnim( int anim );
@@ -107,6 +108,23 @@ static void NPC_CheckAttacker( gentity_t *other, int mod )
 	//Don't take the same enemy again
 	if ( other == NPC->enemy )
 		return;
+
+	if ( other->s.number >= MAX_CLIENTS && other->client && G_ValidEnemy( NPC, other ) )
+	{//shot by an enemy NPC (the player's allies) while busy with someone else: they get our
+	 //attention if our current target is out of sight or further away, or just by being persistent
+		const float dOther = DistanceSquared( NPC->currentOrigin, other->currentOrigin );
+		const float dCur   = DistanceSquared( NPC->currentOrigin, NPC->enemy->currentOrigin );
+		if ( !gi.inPVS( NPC->currentOrigin, NPC->enemy->currentOrigin )
+			|| ( NPC->NPC && level.time - NPC->NPC->enemyLastSeenTime > 2000 )
+			|| dOther < dCur
+			|| !Q_irand( 0, 2 ) )
+		{
+			NPC->lastEnemy = NPC->enemy;
+			G_ClearEnemy( NPC );
+			G_SetEnemy( NPC, other );
+		}
+		return;
+	}
 
 	if ( NPC->client->ps.weapon == WP_SABER )
 	{//I'm a jedi
@@ -441,6 +459,11 @@ void NPC_Pain( gentity_t *self, gentity_t *inflictor, gentity_t *other, const ve
 	//	}
 	}
 
+	if ( damage > 0 && self->max_health > 0 && ( !other->client || otherTeam != self->client->playerTeam ) )
+	{//getting hurt rattles you in proportion to how bad it was
+		AI_NerveEvent( self, NE_HIT, Q_min( 1.0f, (float)damage / (float)self->max_health ), other );
+	}
+
 	if ( self->client->playerTeam
 		&& other->client
 		&& otherTeam == self->client->playerTeam
@@ -605,8 +628,8 @@ void NPC_Touch(gentity_t *self, gentity_t *other, trace_t *trace)
 	SaveNPCGlobals();
 	SetNPCGlobals( self );
 
-	if ( self->message && self->health <= 0 )
-	{//I am dead and carrying a key
+	if ( self->message && ( G_IsDownedBody( self ) || G_IsNeutralized( self ) ) )
+	{//I am dead (or out of the fight) and still carrying a key
 		if ( other && player && player->health > 0 && other == player )
 		{//player touched me
 			char *text;

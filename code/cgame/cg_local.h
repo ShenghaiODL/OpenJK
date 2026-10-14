@@ -579,6 +579,8 @@ extern	vmCvar_t		cg_drawFPS;
 extern	vmCvar_t		cg_drawSnapshot;
 extern	vmCvar_t		cg_drawAmmoWarning;
 extern	vmCvar_t		cg_drawCrosshair;
+extern	vmCvar_t		cg_drawAwareness;
+extern	vmCvar_t		cg_drawLightMeter;
 extern	vmCvar_t		cg_dynamicCrosshair;
 extern	vmCvar_t		cg_crosshairForceHint;
 extern	vmCvar_t		cg_crosshairIdentifyTarget;

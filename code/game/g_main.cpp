@@ -209,6 +209,9 @@ cvar_t	*g_debugMelee;
 cvar_t	*g_debugNPCFire;
 cvar_t	*g_debugAim;
 cvar_t	*g_npcWeaponSkill;
+cvar_t	*g_nonLethal;
+cvar_t	*g_mindTrickPacify;
+cvar_t	*g_npcBlockCost;
 cvar_t	*g_npcDamageEasy;
 cvar_t	*g_npcDamageNormal;
 cvar_t	*g_npcDamageHard;
@@ -724,6 +727,12 @@ void G_InitCvars( void ) {
 	g_debugAim = gi.cvar( "g_debugAim", "0", 0 );//draws the player's crosshair ray / corrected bolt path per shot (WP_MissileTargetHint)
 	// Blaster pass: NPCs fire with the player's weapon profile; these tune how
 	g_npcWeaponSkill = gi.cvar( "g_npcWeaponSkill", "3", CVAR_ARCHIVE );//default 1-5 gun skill for NPCs whose .npc entry has no weaponSkill
+	g_nonLethal = gi.cvar( "g_nonLethal", "1", CVAR_ARCHIVE );//0 = NPCs can't be taken alive (maim, knockout, surrender all become ordinary damage)
+	g_mindTrickPacify = gi.cvar( "g_mindTrickPacify", "1", CVAR_ARCHIVE );//1 = mind trick 3 makes an enemy give up and leave; 0 = the old temporary side-switch
+	g_npcBlockCost = gi.cvar( "g_npcBlockCost", "0.5", CVAR_ARCHIVE );//saber NPCs pay this fraction of the player's Force cost to block a swing (bosses half again); 0 = free
+	g_stealth = gi.cvar( "g_stealth", "1", CVAR_ARCHIVE );//1 = NPCs notice you in stages (AI_Awareness.cpp); 0 = the old instant spot
+	g_stealthLightScale = gi.cvar( "g_stealthLightScale", "1.0", CVAR_ARCHIVE );//how much being lit counts against you
+	g_stealthNoiseScale = gi.cvar( "g_stealthNoiseScale", "1.0", CVAR_ARCHIVE );//how far the player's footsteps etc. carry
 	g_npcDamageEasy = gi.cvar( "g_npcDamageEasy", "0.4", CVAR_ARCHIVE );//NPC bolt damage = player damage x this, per difficulty
 	g_npcDamageNormal = gi.cvar( "g_npcDamageNormal", "0.6", CVAR_ARCHIVE );
 	g_npcDamageHard = gi.cvar( "g_npcDamageHard", "0.8", CVAR_ARCHIVE );
@@ -1136,9 +1145,9 @@ static void G_CheckSpecialPersistentEvents( gentity_t *ent )
 		if( ent->owner && ent->owner->client )
 		{
 			if ( ent->owner->client->ps.SaberLength() > 0 )
-			{//it's on
-				//sight event
-				AddSightEvent( ent->owner, ent->currentOrigin, 512, AEL_DISCOVERED );
+			{//it's on: a beacon, but seeing a glow isn't the same as seeing you (the blade also
+			 //lights you up for the sight rating, so up close it still gives you away fast)
+				AddSightEvent( ent->owner, ent->currentOrigin, 256, AEL_SUSPICIOUS, 100 );
 			}
 		}
 	}

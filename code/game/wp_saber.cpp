@@ -53,6 +53,7 @@ static int		numVictims = 0;
 extern cvar_t	*g_sex;
 extern cvar_t	*g_timescale;
 extern cvar_t	*g_dismemberment;
+extern cvar_t	*g_mindTrickPacify;
 extern cvar_t	*g_debugSaberLock;
 extern cvar_t	*g_saberLockRandomNess;
 extern cvar_t	*d_slowmodeath;
@@ -1887,6 +1888,10 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 						if ( victim->client && victim->NPC && victim->s.number >= MAX_CLIENTS
 							&& !saberFighter
 							&& victim->health > 1
+							//a real swing (or a thrown blade), not the idle blade brushing them
+							&& ( ent->client->ps.saberInFlight
+								|| PM_SaberInAttack( ent->client->ps.saberMove )
+								|| PM_SaberInSpecialAttack( ent->client->ps.torsoAnim ) )
 							&& (dFlags&DAMAGE_DISMEMBER)
 							&& ( hitDismemberLoc[i] == HL_HAND_RT || hitDismemberLoc[i] == HL_HAND_LT )
 							&& victim->locationDamage[hitDismemberLoc[i]] < Q3_INFINITE//hand still attached
@@ -1905,17 +1910,14 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 						G_Damage( victim, inflictor, ent, dmgDir[i], dmgSpot[i], damage, dFlags, MOD_SABER, hitDismemberLoc[i] );
 						if ( severHand && victim->health > 0 )
 						{
-							// disarm first, so the gun falls as a real pickup instead of being copied onto the hand
-							if ( victim->s.weapon != WP_NONE && victim->s.weapon != WP_MELEE && victim->s.weapon != WP_SABER )
-							{
-								WP_DropWeapon( victim, NULL );
-							}
+							// take them out of the fight first: G_Neutralize drops the gun as a real pickup
+							// (so it isn't copied onto the hand) and does the mission bookkeeping
+							G_FlagNPCAsKilled( victim, ent );
 							// cut it off the living body (force: skip the damage-threshold check), then
 							// allow a later killing blow to dismember again
 							victim->client->dismembered = false;
 							G_DoDismemberment( victim, dmgSpot[i], MOD_SABER, damage, hitDismemberLoc[i], qtrue );
 							victim->client->dismembered = false;
-							G_FlagNPCAsKilled( victim, ent );
 							// cry out (their own pain100 or death scream), then a moment of shock in a held
 							// pain anim before NPC_RunBehavior takes them to hands-up and/or running away
 							if ( Q_irand( 0, 1 ) )
@@ -4373,7 +4375,10 @@ void WP_PerfectParrySuccess( gentity_t *self, vec3_t impactPoint, vec3_t normal 
 {
 	self->client->ps.perfectParryDebounce = 0;
 	self->client->ps.saberBlockStartTime = 0;
-	g_perfectParryFlashTime = level.time;
+	if ( self->s.number == 0 )
+	{//the crosshair flash is the player's (NPCs land perfect parries too, AI_JediBrain.cpp)
+		g_perfectParryFlashTime = level.time;
+	}
 	G_SoundOnEnt( self, CHAN_ITEM, "sound/items/respawn1.wav" );
 	G_PlayEffect( "saber/saber_block", impactPoint, normal );
 }
@@ -4425,6 +4430,8 @@ void G_DamageGuard( gentity_t *victim, gentity_t *attacker, int amount )
 	}
 }
 
+int WP_SaberBlockForceCost( gentity_t *self, qboolean missileBlock );
+extern cvar_t *g_npcBlockCost;
 qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, int bladeNum )
 {
 	if ( !victim || !victim->client || !attacker )
@@ -4433,6 +4440,14 @@ qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, in
 	}
 	if ( victim->NPC && victim->NPC->guardBreakTime > level.time )
 	{//guard-broken — defenseless until the window lapses
+		return qfalse;
+	}
+	// Saber NPCs play by the player's rules: blocking a swing costs Force, and with none left
+	// the block doesn't hold (their guard is still their stagger meter on top of this)
+	const qboolean npcSaber = (qboolean)( victim->NPC && victim->s.number >= MAX_CLIENTS
+		&& victim->client->ps.weapon == WP_SABER && victim->client->ps.forcePowerMax > 0 );
+	if ( npcSaber && victim->client->ps.forcePower <= 0 )
+	{
 		return qfalse;
 	}
 	if ( Rosh_BeingHealed( victim ) )
@@ -4497,6 +4512,29 @@ qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, in
 				victim->NPC->lastBlockDir = victim->client->ps.saberBlocked;
 			}
 			G_DamageGuard( victim, attacker, gdmg );
+		}
+
+		// pay for it (once per swing: a blade stays in contact over several frames)
+		if ( npcSaber && victim->NPC->blockDebounce < level.time && !WP_NPCPerfectParry( victim ) )
+		{
+			float scale = g_npcBlockCost ? g_npcBlockCost->value : 0.5f;
+			if ( (victim->NPC->aiFlags&NPCAI_BOSS_CHARACTER) )
+			{
+				scale *= 0.5f;
+			}
+			const int cost = (int)( WP_SaberBlockForceCost( victim, qfalse ) * scale );
+			if ( cost > 0 )
+			{
+				WP_ForcePowerDrain( victim, FP_SABER_DEFENSE, cost );
+				victim->client->ps.forcePowerRegenDebounceTime = level.time + 1500;
+			}
+			victim->NPC->blockDebounce = level.time + 400;
+		}
+		// the player gets a riposte: attack right off a (non-perfect) block and the parry
+		// recovery is skipped (G_CheckClampUcmd)
+		if ( victim->s.number == 0 && !WP_InPerfectParryWindow( victim ) )
+		{
+			TIMER_Set( victim, "riposteWindow", 300 );
 		}
 
 		//since it was parried, take away any damage done
@@ -5762,7 +5800,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 							ent->client->ps.saberEventFlags |= SEF_BLOCKED;
 						}
 						//base parry breaks on animation (saber attack level), not FP_SABER_OFFENSE
-						if ( WP_InPerfectParryWindow( hitOwner )//timed perfect parry always knocks the attack away
+						if ( WP_InPerfectParryWindow( hitOwner ) || WP_NPCPerfectParry( hitOwner )//timed perfect parry always knocks the attack away (NPCs: AI_JediBrain.cpp)
 							|| ( entPowerLevel < FORCE_LEVEL_3
 							//&& ent->client->ps.forcePowerLevel[FP_SABER_OFFENSE] < FORCE_LEVEL_3//if you have high saber offense, you cannot have your attack knocked away, regardless of what style you're using?
 							//&& hitOwner->client->ps.saberAnimLevel != FORCE_LEVEL_5
@@ -5776,7 +5814,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 							//make them go into a broken parry
 							ent->client->ps.saberBounceMove = PM_BrokenParryForAttack( ent->client->ps.saberMove );
 							ent->client->ps.saberBlocked = BLOCKED_PARRY_BROKEN;
-							if ( WP_InPerfectParryWindow( hitOwner ) )
+							if ( WP_InPerfectParryWindow( hitOwner ) || WP_NPCPerfectParry( hitOwner ) )
 							{//timed perfect parry — big composure hit + distinct feedback, and reset the tap cooldown
 								G_DamageGuard( ent, hitOwner, 25 );
 								WP_PerfectParrySuccess( hitOwner, saberHitLocation, saberHitNormal );
@@ -6067,7 +6105,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 					{//saber collided when not attacking, parry it
 						if ( !PM_SaberInBrokenParry( hitOwner->client->ps.saberMove ) )
 						{//not currently in a broken parry
-							if ( ent->client->ps.saberInFlight && WP_InPerfectParryWindow( hitOwner ) )
+							if ( ent->client->ps.saberInFlight && ( WP_InPerfectParryWindow( hitOwner ) || WP_NPCPerfectParry( hitOwner ) ) )
 							{//a perfectly-timed block against a thrown saber disarms the thrower
 								WP_PerfectParrySuccess( hitOwner, saberHitLocation, saberHitNormal );
 								vec3_t throwDir;
@@ -9009,6 +9047,18 @@ void WP_DropWeapon( gentity_t *dropper, vec3_t velocity )
 	{
 		return;
 	}
+	if ( dropper->NPC && dropper->health > 0 )
+	{//losing your gun is a bad moment
+		AI_NerveEvent( dropper, NE_DISARMED, 1.0f, NULL );
+		AI_NerveWitness( dropper, NE_DISARMED, NULL );
+		if ( dropper->s.number >= MAX_CLIENTS && !G_IsNeutralized( dropper )
+			&& AI_NerveTier( dropper ) != NT_STEADY
+			&& dropper->s.weapon != WP_NONE && dropper->s.weapon != WP_MELEE && dropper->s.weapon != WP_SABER
+			&& G_CanNeutralize( dropper, NH_DISARM ) )
+		{//disarmed and already rattled: that's the end of their fight (shock, then hands up or run)
+			G_Neutralize( dropper, dropper->enemy, NH_DISARM );
+		}
+	}
 	int	replaceWeap = WP_NONE;
 	int oldWeap = dropper->s.weapon;
 	gentity_t *weapon = TossClientItems( dropper );
@@ -10138,6 +10188,12 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 					continue;
 				}
 
+				if ( push_list[x]->NPC && !OnSameTeam( self, push_list[x] ) )
+				{//being thrown around by the Force is unnerving, for them and for whoever saw it
+					AI_NerveEvent( push_list[x], NE_FORCE_ON_ME, 1.0f, self );
+					AI_NerveWitness( push_list[x], NE_FORCE_ON_ME, self );
+				}
+
 				G_KnockOffVehicle( push_list[x], self, pull );
 
 				if ( !pull
@@ -11253,8 +11309,9 @@ void ForceTelepathy( gentity_t *self )
 					)
 				{//turn them to our side
 					//if mind trick 3 and aiming at an enemy need more force power
-					override = 50;
-					if ( self->client->ps.forcePower < 50 )
+					const qboolean pacify = (qboolean)( g_mindTrickPacify->integer && G_CanNeutralize( traceEnt, NH_PACIFY ) );
+					override = pacify ? 75 : 50;//putting someone out for good costs most of the pool
+					if ( self->client->ps.forcePower < override )
 					{
 						return;
 					}
@@ -11262,18 +11319,25 @@ void ForceTelepathy( gentity_t *self )
 					{
 						G_ClearEnemy( traceEnt );
 					}
-					if ( traceEnt->NPC )
-					{
-						//traceEnt->NPC->tempBehavior = BS_FOLLOW_LEADER;
-						traceEnt->client->leader = self;
+					if ( pacify )
+					{//they're done: out cold where they stand (counts as subdued)
+						G_Neutralize( traceEnt, self, NH_PACIFY );
 					}
-					//FIXME: maybe pick an enemy right here?
-					//FIXME: does nothing to TEAM_FREE and TEAM_NEUTRALs!!!
-					team_t	saveTeam = traceEnt->client->enemyTeam;
-					traceEnt->client->enemyTeam = traceEnt->client->playerTeam;
-					traceEnt->client->playerTeam = saveTeam;
-					//FIXME: need a *charmed* timer on this...?  Or do TEAM_PLAYERS assume that "confusion" means they should switch to team_enemy when done?
-					traceEnt->NPC->charmedTime = level.time + mindTrickTime[self->client->ps.forcePowerLevel[FP_TELEPATHY]];
+					else
+					{//the old way: they fight for us for a while
+						if ( traceEnt->NPC )
+						{
+							//traceEnt->NPC->tempBehavior = BS_FOLLOW_LEADER;
+							traceEnt->client->leader = self;
+						}
+						//FIXME: maybe pick an enemy right here?
+						//FIXME: does nothing to TEAM_FREE and TEAM_NEUTRALs!!!
+						team_t	saveTeam = traceEnt->client->enemyTeam;
+						traceEnt->client->enemyTeam = traceEnt->client->playerTeam;
+						traceEnt->client->playerTeam = saveTeam;
+						//FIXME: need a *charmed* timer on this...?  Or do TEAM_PLAYERS assume that "confusion" means they should switch to team_enemy when done?
+						traceEnt->NPC->charmedTime = level.time + mindTrickTime[self->client->ps.forcePowerLevel[FP_TELEPATHY]];
+					}
 					if ( traceEnt->ghoul2.size() && traceEnt->headBolt != -1 )
 					{//FIXME: what if already playing effect?
 						G_PlayEffect( G_EffectIndex( "force/confusion" ), traceEnt->playerModel, traceEnt->headBolt, traceEnt->s.number, traceEnt->currentOrigin, mindTrickTime[self->client->ps.forcePowerLevel[FP_TELEPATHY]], qtrue );
@@ -11283,6 +11347,7 @@ void ForceTelepathy( gentity_t *self )
 				{//just confuse them
 					//somehow confuse them?  Set don't fire to true for a while?  Drop their aggression?  Maybe just take their enemy away and don't let them pick one up for a while unless shot?
 					traceEnt->NPC->confusionTime = level.time + mindTrickTime[self->client->ps.forcePowerLevel[FP_TELEPATHY]];//confused for about 10 seconds
+					AI_AwarenessReset( traceEnt, 0 );//and whatever they'd noticed of you is gone
 					if ( traceEnt->ghoul2.size() && traceEnt->headBolt != -1 )
 					{//FIXME: what if already playing effect?
 						G_PlayEffect( G_EffectIndex( "force/confusion" ), traceEnt->playerModel, traceEnt->headBolt, traceEnt->s.number, traceEnt->currentOrigin, mindTrickTime[self->client->ps.forcePowerLevel[FP_TELEPATHY]], qtrue );
@@ -11601,6 +11666,11 @@ void ForceGrip( gentity_t *self )
 	//FIXME: rule out other things?
 	//FIXME: Jedi resist, like the push and pull?
 	self->client->ps.forceGripEntityNum = traceEnt->s.number;
+	if ( traceEnt->NPC && !OnSameTeam( self, traceEnt ) )
+	{
+		AI_NerveEvent( traceEnt, NE_FORCE_ON_ME, 1.0f, self );
+		AI_NerveWitness( traceEnt, NE_FORCE_ON_ME, self );
+	}
 	if ( traceEnt->client )
 	{
 		Vehicle_t *pVeh;
@@ -11828,6 +11898,11 @@ void ForceLightningDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, flo
 		if ( !traceEnt->client || traceEnt->client->playerTeam != self->client->playerTeam || self->enemy == traceEnt || traceEnt->enemy == self )
 		{//an enemy or object
 			G_DamageGuard( traceEnt, self, 4 );	//lightning wears down saber guard per zap tick
+			if ( traceEnt->NPC )
+			{//(debounced, so the per-tick calls don't pile up)
+				AI_NerveEvent( traceEnt, NE_FORCE_ON_ME, 1.0f, self );
+				AI_NerveWitness( traceEnt, NE_FORCE_ON_ME, self );
+			}
 			int	dmg;
 			//FIXME: check for client using FP_ABSORB
 			if ( self->client->ps.forcePowerLevel[FP_LIGHTNING] > FORCE_LEVEL_2 )
@@ -12533,6 +12608,11 @@ void ForceDrainDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, vec3_t 
 			&& (!OnSameTeam(self, traceEnt)||self->enemy==traceEnt)//don't drain an ally unless that is actually my current enemy
 			&& self->client->ps.forceDrainTime < level.time )
 		{//an enemy or object
+			if ( traceEnt->NPC )
+			{
+				AI_NerveEvent( traceEnt, NE_FORCE_ON_ME, 1.0f, self );
+				AI_NerveWitness( traceEnt, NE_FORCE_ON_ME, self );
+			}
 			int modPowerLevel = -1;
 			int	dmg = self->client->ps.forcePowerLevel[FP_DRAIN] + 1;
 			int dflags = (DAMAGE_NO_ARMOR|DAMAGE_NO_KNOCKBACK|DAMAGE_NO_HIT_LOC);//|DAMAGE_NO_KILL);

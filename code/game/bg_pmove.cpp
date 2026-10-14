@@ -8429,7 +8429,11 @@ static void PM_Footsteps( void )
 				{
 					PM_SetAnim(pm,SETANIM_LEGS,BOTH_CROUCH1WALK,setAnimFlags);
 				}
-				if ( !Q_irand( 0, 19 ) )
+				if ( pm->gent && pm->gent->s.number == 0 )
+				{//the player's sneak: quiet, but consistent, so stealth is about distance, not dice
+					AddSoundEvent( pm->gent, pm->ps->origin, 24, AEL_MINOR, qtrue, qtrue );
+				}
+				else if ( !Q_irand( 0, 19 ) )
 				{//5% chance of making an alert
 					AddSoundEvent( pm->gent, pm->ps->origin, 16, AEL_MINOR, qtrue, qtrue );
 				}
@@ -8635,6 +8639,10 @@ static void PM_Footsteps( void )
 					&& pm->gent->client->playerTeam != TEAM_PLAYER )
 				{
 					footstep = qtrue;
+				}
+				else if ( pm->gent && pm->gent->s.number == 0 )
+				{//the player walking: a small, steady noise (crouch-walking is quieter, see above)
+					AddSoundEvent( pm->gent, pm->ps->origin, 64, AEL_MINOR, qtrue, qtrue );
 				}
 				else if ( !Q_irand( 0, 9 ) )
 				{//10% chance of a small alert, mainly for the sand_creature

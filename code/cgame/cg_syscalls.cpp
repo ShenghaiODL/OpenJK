@@ -323,7 +323,43 @@ void	cgi_R_AddPolyToScene( qhandle_t hShader , int numVerts, const polyVert_t *v
 	Q_syscall( CG_R_ADDPOLYTOSCENE, hShader, numVerts, verts );
 }
 
+// the dynamic lights added this frame, kept so the stealth light level can count them
+// (saber glow, blaster bolts, explosions): the light grid alone knows nothing about them
+#define MAX_TRACKED_DLIGHTS 32
+static struct { vec3_t org; float intensity; float brightness; int time; } s_dlights[MAX_TRACKED_DLIGHTS];
+static int s_numDlights = 0;
+
+float CG_DynamicLightAt( const vec3_t pos )
+{
+	float total = 0;
+	for ( int i = 0; i < s_numDlights; i++ )
+	{
+		if ( s_dlights[i].time != cg.time || s_dlights[i].intensity <= 0 )
+		{
+			continue;
+		}
+		const float d = Distance( pos, s_dlights[i].org );
+		if ( d < s_dlights[i].intensity )
+		{
+			total += ( 1.0f - d / s_dlights[i].intensity ) * s_dlights[i].brightness * 255.0f;
+		}
+	}
+	return total;
+}
+
 void	cgi_R_AddLightToScene( const vec3_t org, float intensity, float r, float g, float b ) {
+	if ( s_numDlights && s_dlights[0].time != cg.time )
+	{//new frame
+		s_numDlights = 0;
+	}
+	if ( s_numDlights < MAX_TRACKED_DLIGHTS )
+	{
+		VectorCopy( org, s_dlights[s_numDlights].org );
+		s_dlights[s_numDlights].intensity = intensity;
+		s_dlights[s_numDlights].brightness = Q_max( r, Q_max( g, b ) );
+		s_dlights[s_numDlights].time = cg.time;
+		s_numDlights++;
+	}
 	Q_syscall( CG_R_ADDLIGHTTOSCENE, org, PASSFLOAT(intensity), PASSFLOAT(r), PASSFLOAT(g), PASSFLOAT(b) );
 }
 

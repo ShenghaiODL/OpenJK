@@ -642,7 +642,7 @@ void NPC_BSFollowLeader_UpdateEnemy(void)
 	}
 	else
 	{
-		if ( NPC->enemy->health <= 0 || (NPC->enemy->flags&FL_NOTARGET) )
+		if ( NPC->enemy->health <= 0 || (NPC->enemy->flags&FL_NOTARGET) || G_IsNeutralized( NPC->enemy ) )
 		{
 			G_ClearEnemy( NPC );
 			if ( NPCInfo->enemyCheckDebounceTime > level.time + 1000 )
@@ -658,6 +658,11 @@ void NPC_BSFollowLeader_UpdateEnemy(void)
 }
 
 
+// a companion with an enemy fights through the trooper loop + brain like any other gunner;
+// the brain knows about the leader (leash, REGROUP) so they don't wander off. Saber users
+// still go hunt. Returns true when the follow movement below should be skipped.
+extern void NPC_BSST_Attack( void );
+extern void NPC_CheckGetNewWeapon( void );
 bool NPC_BSFollowLeader_AttackEnemy(void)
 {
 	if ( NPC->client->ps.weapon == WP_SABER )//|| NPCInfo->confusionTime>level.time )
@@ -669,45 +674,18 @@ bool NPC_BSFollowLeader_AttackEnemy(void)
 			NPC_UpdateAngles(qtrue, qtrue);
 			return true;
 		}
+		return false;
 	}
 
-	enemyVisibility = NPC_CheckVisibility ( NPC->enemy, CHECK_FOV|CHECK_SHOOT );//CHECK_360|CHECK_PVS|
-	if ( enemyVisibility > VIS_PVS )
-	{//face
-		vec3_t	enemy_org, muzzle, delta, angleToEnemy;
+	NPC_CheckGetNewWeapon();
+	NPC_BSST_Attack();
 
-		CalcEntitySpot( NPC->enemy, SPOT_HEAD, enemy_org );
-		NPC_AimWiggle( enemy_org );
-
-		CalcEntitySpot( NPC, SPOT_WEAPON, muzzle );
-
-		VectorSubtract( enemy_org, muzzle, delta);
-		vectoangles( delta, angleToEnemy );
-		VectorNormalize( delta );
-
-		NPCInfo->desiredYaw = angleToEnemy[YAW];
-		NPCInfo->desiredPitch = angleToEnemy[PITCH];
-		NPC_UpdateFiringAngles( qtrue, qtrue );
-
-		if ( enemyVisibility >= VIS_SHOOT )
-		{//shoot
-			NPC_AimAdjust( 2 );
-			if ( NPC_GetHFOVPercentage( NPC->enemy->currentOrigin, NPC->currentOrigin, NPC->client->ps.viewangles, NPCInfo->stats.hfov ) > 0.6f
-				&& NPC_GetHFOVPercentage( NPC->enemy->currentOrigin, NPC->currentOrigin, NPC->client->ps.viewangles, NPCInfo->stats.vfov ) > 0.5f )
-			{//actually withing our front cone
-				WeaponThink( qtrue );
-			}
-		}
-		else
-		{
-			NPC_AimAdjust( 1 );
-		}
-
-		//NPC_CheckCanAttack(1.0, qfalse);
-	}
-	else
+	// The brain only moves them if it's allowed to (SCF_CHASE_ENEMIES; scripted companions
+	// often have it off) and has somewhere to go. Otherwise the follow movement below runs
+	// as it always did, so they keep up with the leader while shooting.
+	if ( (NPCInfo->scriptFlags&SCF_CHASE_ENEMIES) && NPCInfo->goalEntity && NPCInfo->goalEntity != NPC->client->leader )
 	{
-		NPC_AimAdjust( -1 );
+		return true;
 	}
 	return false;
 }
@@ -1038,9 +1016,27 @@ void NPC_BSRemove (void)
 	}//FIXME: else allow for out of FOV???
 }
 
+extern void G_AddVoiceEvent( gentity_t *self, int event, int speakDebounceTime );
 void NPC_BSSearch (void)
 {
 	NPC_CheckAlertEvents(qtrue, qtrue, -1, qfalse, AEL_DANGER, qfalse);
+
+	if ( TIMER_Exists( NPC, "searchGiveUp" ) && TIMER_Done( NPC, "searchGiveUp" ) )
+	{//looked long enough: back to whatever we were doing (it used to go on forever)
+		TIMER_Remove( NPC, "searchGiveUp" );
+		AI_AwarenessReset( NPC, 0.2f );
+		G_AddVoiceEvent( NPC, Q_irand( EV_GIVEUP1, EV_GIVEUP4 ), 3000 );
+		if ( NPCInfo->tempBehavior == BS_SEARCH )
+		{
+			NPCInfo->tempBehavior = BS_DEFAULT;
+		}
+		else
+		{
+			NPCInfo->behaviorState = BS_DEFAULT;
+		}
+		NPC_UpdateAngles( qtrue, qtrue );
+		return;
+	}
 	//FIXME: do something with these alerts...?
 	//FIXME: do the Stormtrooper alert reaction?  (investigation)
 	if ( (NPCInfo->scriptFlags&SCF_LOOK_FOR_ENEMIES)
@@ -1208,6 +1204,7 @@ void NPC_BSSearchStart( int homeWp, bState_t bState )
 	NPCInfo->tempBehavior = bState;
 	NPCInfo->aiFlags |= NPCAI_ENROUTE_TO_HOMEWP;
 	NPCInfo->investigateDebounceTime = 0;
+	TIMER_Set( NPC, "searchGiveUp", Q_irand( 20000, 40000 ) );
 	NAV::GetNodePosition(homeWp, NPCInfo->tempGoal->currentOrigin);
 	NPCInfo->tempGoal->waypoint = homeWp;
 	//gi.Printf("\nHeading for wp %d...\n", NPCInfo->homeWp);
@@ -1587,7 +1584,21 @@ qboolean NPC_CheckSurrender( void )
 	// preempt that entirely, since this function can get reached well before the flee timers do.
 	qboolean moraleRouted = (qboolean)( g_moraleSurrender->integer
 		&& NPC->s.weapon != WP_NONE
-		&& NPCInfo && NPCInfo->group && AI_GetGroupMoraleTier( NPCInfo->group ) == 0 );
+		&& NPCInfo && AI_NerveTier( NPC ) == NT_BROKEN );
+	if ( moraleRouted
+		&& NPC->client->playerTeam != TEAM_PLAYER
+		&& TIMER_Exists( NPC, "nerveBrokenHold" ) && TIMER_Done( NPC, "nerveBrokenHold" )//broken for a while, not just a bad second
+		&& TIMER_Done( NPC, "nerveBreakCheck" ) )
+	{//nerve gone: now and then one of them actually gives up for good (drops the gun, runs or
+	//puts their hands up, and counts as taken out of the fight)
+		TIMER_Set( NPC, "nerveBreakCheck", 3000 );
+		if ( !Q_irand( 0, 3 ) && G_CanNeutralize( NPC, NH_SURRENDER ) )
+		{
+			G_Neutralize( NPC, NPC->enemy, NH_DISARM );
+			NPC_UpdateAngles( qtrue, qtrue );
+			return qtrue;
+		}
+	}
 	if ( !g_AIsurrender->integer
 		&& NPC->client->NPC_class != CLASS_UGNAUGHT
 		&& NPC->client->NPC_class != CLASS_JAWA
@@ -1709,6 +1720,106 @@ void NPC_JawaFleeSound( void )
 	}
 }
 
+/*
+-------------------------
+NPC_FindFleeSpot
+
+  Somewhere to run to when the combat-point searches came up empty (lots of maps have
+  no combat points at all). Tries the nav graph first (farthest neighbor from the danger,
+  two hops), then plain traces straight away from it. Returns the spot in outPos.
+-------------------------
+*/
+qboolean NPC_FindFleeSpot( const vec3_t dangerPosIn, vec3_t outPos )
+{
+	vec3_t	dangerPos;//the NAV helpers want a real array reference, not a decayed pointer
+	VectorCopy( dangerPosIn, dangerPos );
+	float	bestDist2 = DistanceSquared( NPC->currentOrigin, dangerPos );
+
+	// 1) nav graph: the neighbor farthest from the danger, then that node's farthest neighbor
+	NAV::TNodeHandle here = NAV::GetNearestNode( NPC );
+	NAV::TNodeHandle best = WAYPOINT_NONE;
+	if ( here != WAYPOINT_NONE && here > 0 )
+	{
+		NAV::TNodeHandle hop = here;
+		for ( int h = 0; h < 2; h++ )
+		{
+			hop = NAV::ChooseFarthestNeighbor( hop, dangerPos );
+			if ( hop == WAYPOINT_NONE || hop <= 0 )
+			{
+				break;
+			}
+			float d2 = DistanceSquared( NAV::GetNodePosition( hop ), dangerPos );
+			if ( d2 > bestDist2 )
+			{
+				best = hop;
+				bestDist2 = d2;
+			}
+		}
+	}
+	if ( best != WAYPOINT_NONE )
+	{
+		VectorCopy( NAV::GetNodePosition( best ), outPos );
+		return qtrue;
+	}
+
+	// 2) no graph to use: probe eight directions and take the longest clear run away from the danger
+	vec3_t	away;
+	VectorSubtract( NPC->currentOrigin, dangerPos, away );
+	away[2] = 0;
+	if ( VectorNormalize( away ) < 1.0f )
+	{//standing on it, any direction is away
+		AngleVectors( NPC->currentAngles, away, NULL, NULL );
+		away[2] = 0;
+		VectorNormalize( away );
+	}
+
+	float	bestScore = 0.0f;
+	for ( int d = 0; d < 8; d++ )
+	{
+		vec3_t	scanAngles = { 0, d * 45.0f, 0 };
+		vec3_t	dir, end, candidate;
+		trace_t	tr;
+
+		AngleVectors( scanAngles, dir, NULL, NULL );
+		float dot = DotProduct( dir, away );
+		if ( dot < 0.2f )
+		{//don't run toward the danger
+			continue;
+		}
+
+		VectorMA( NPC->currentOrigin, 256.0f, dir, end );
+		gi.trace( &tr, NPC->currentOrigin, NPC->mins, NPC->maxs, end, NPC->s.number, NPC->clipmask, (EG2_Collision)0, 0 );
+		if ( tr.startsolid )
+		{
+			continue;
+		}
+		float run = tr.fraction * 256.0f;
+		if ( run < 96.0f )
+		{//not enough room to be worth it
+			continue;
+		}
+		VectorMA( NPC->currentOrigin, run - 16.0f, dir, candidate );
+
+		//must have ground under it (no running off ledges)
+		VectorCopy( candidate, end );
+		end[2] -= 64.0f;
+		gi.trace( &tr, candidate, NPC->mins, NPC->maxs, end, NPC->s.number, NPC->clipmask, (EG2_Collision)0, 0 );
+		if ( tr.fraction >= 1.0f || tr.startsolid )
+		{
+			continue;
+		}
+
+		float score = run * ( 0.5f + 0.5f * dot );
+		if ( score > bestScore )
+		{
+			bestScore = score;
+			VectorCopy( tr.endpos, outPos );
+		}
+	}
+
+	return (qboolean)( bestScore > 0.0f );
+}
+
 extern gentity_t *NPC_SearchForWeapons( void );
 extern qboolean G_CanPickUpWeapons( gentity_t *other );
 qboolean NPC_BSFlee( void )
@@ -1779,7 +1890,7 @@ qboolean NPC_BSFlee( void )
 		&& TIMER_Done( NPC, "meleeFallback" ) )
 	{
 		qboolean facingActiveSaber = (qboolean)( NPC->enemy && NPC->enemy->client && NPC->enemy->client->ps.weapon == WP_SABER && NPC->enemy->client->ps.SaberActive() );
-		qboolean moraleRouted = (qboolean)( g_moraleSurrender->integer && NPCInfo->group && AI_GetGroupMoraleTier( NPCInfo->group ) == 0 );
+		qboolean moraleRouted = (qboolean)( g_moraleSurrender->integer && AI_NerveTier( NPC ) == NT_BROKEN );
 		if ( NPC_CanSurrender() && ( g_AIsurrender->integer || moraleRouted || facingActiveSaber ) )
 		{//give up instead of a hopeless fight
 			NPC_Surrender();
@@ -1893,7 +2004,7 @@ qboolean NPC_BSFlee( void )
 	{
 		// Time To Surrender?
 		//--------------------
-		if ( TIMER_Done( NPC, "panic" ) )
+		if ( TIMER_Done( NPC, "panic" ) && TIMER_Done( NPC, "fleeGrace" ) )
 		{
 			//done panicking, time to realize we're dogmeat, if we haven't been able to flee for a few seconds
 			if ((level.time-NPC->lastMoveTime)>3000
@@ -1922,6 +2033,15 @@ qboolean NPC_BSFlee( void )
 				NPC_SetCombatPoint(escapePoint);
 				NPC_SetMoveGoal(NPC, level.combatPoints[escapePoint].origin, 8, qtrue, escapePoint);
 			}
+			else
+			{//no combat points to run to -- find somewhere away from them anyway
+				vec3_t fleeSpot;
+				if ( NPC_FindFleeSpot( NPC->enemy->currentOrigin, fleeSpot ) )
+				{
+					NPC_JawaFleeSound();
+					NPC_SetMoveGoal( NPC, fleeSpot, 8, qtrue, -1 );
+				}
+			}
 		}
 	}
 
@@ -1947,23 +2067,37 @@ qboolean NPC_BSFlee( void )
 	return qfalse;
 }
 
-void NPC_StartFlee( gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int fleeTimeMin, int fleeTimeMax )
+//returns qfalse when it couldn't start a flee at all (script forbids it, or a flee script took
+//over instead), so callers can do something else rather than leaving the NPC frozen
+qboolean NPC_StartFlee( gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int fleeTimeMin, int fleeTimeMax )
 {
 	if ( Q3_TaskIDPending( NPC, TID_MOVE_NAV ) )
 	{//running somewhere that a script requires us to go, don't interrupt that!
-		return;
+		if ( debugNPCAI->integer )
+		{
+			gi.Printf( "%s: can't flee, scripted move pending\n", NPC->NPC_type );
+		}
+		return qfalse;
 	}
 
 	if (NPCInfo->scriptFlags & SCF_DONT_FLEE )	// no flee for you
 	{
-		return;
+		if ( debugNPCAI->integer )
+		{
+			gi.Printf( "%s: can't flee, SCF_DONT_FLEE\n", NPC->NPC_type );
+		}
+		return qfalse;
 	}
 
 
 	//if have a fleescript, run that instead
 	if ( G_ActivateBehavior( NPC, BSET_FLEE ) )
 	{
-		return;
+		if ( debugNPCAI->integer )
+		{
+			gi.Printf( "%s: flee script ran instead of fleeing\n", NPC->NPC_type );
+		}
+		return qfalse;
 	}
 
 	//FIXME: play a flee sound?  Appropriate to situation?
@@ -2014,11 +2148,26 @@ void NPC_StartFlee( gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int f
 		NPC_SetMoveGoal( NPC, level.combatPoints[cp].origin, 8, qtrue, cp );
 	}
 	else
-	{//couldn't find a place to hide
-		//FIXME: re-implement the old BS_FLEE behavior of following any the waypoint edge
-		//			that leads away from the danger point.
-		NPC_SetMoveGoal( NPC, NPC->currentOrigin, 0/*goalRadius*/, qtrue, cp );
+	{//no combat point to hide at -- run somewhere away from the danger anyway
+		vec3_t fleeSpot;
+		if ( NPC_FindFleeSpot( dangerPoint, fleeSpot ) )
+		{
+			NPC_SetMoveGoal( NPC, fleeSpot, 8, qtrue, -1 );
+		}
+		else
+		{
+			if ( debugNPCAI->integer )
+			{
+				gi.Printf( "%s: fleeing but nowhere to run\n", NPC->NPC_type );
+			}
+			NPC_SetMoveGoal( NPC, NPC->currentOrigin, 0/*goalRadius*/, qtrue, cp );
+		}
 	}
+
+	//the stuck check in NPC_BSFlee compares against lastMoveTime; seed it so standing still
+	//before the flee (shock, cover) doesn't count as "couldn't run" the instant we start
+	NPC->lastMoveTime = level.time;
+	TIMER_Set( NPC, "fleeGrace", 2000 );
 
 	if ( dangerLevel > AEL_DANGER//geat danger always makes people turn and run
 		|| NPC->s.weapon == WP_NONE	//melee/unarmed guys turn and run, others keep facing you and shooting
@@ -2044,20 +2193,22 @@ void NPC_StartFlee( gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int f
 	//first, rather than racing straight past them to melee almost every time
 		TIMER_Set( NPC, "meleeFallback", Q_irand( 9000, 13000 ) );
 	}
+	return qtrue;
 }
 
-void G_StartFlee( gentity_t *self, gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int fleeTimeMin, int fleeTimeMax )
+qboolean G_StartFlee( gentity_t *self, gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int fleeTimeMin, int fleeTimeMax )
 {
 	if ( !self->NPC )
 	{//player
-		return;
+		return qfalse;
 	}
 	SaveNPCGlobals();
 	SetNPCGlobals( self );
 
-	NPC_StartFlee( enemy, dangerPoint, dangerLevel, fleeTimeMin, fleeTimeMax );
+	qboolean started = NPC_StartFlee( enemy, dangerPoint, dangerLevel, fleeTimeMin, fleeTimeMax );
 
 	RestoreNPCGlobals();
+	return started;
 }
 
 void NPC_BSEmplaced( void )

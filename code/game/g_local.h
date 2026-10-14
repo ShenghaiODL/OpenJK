@@ -489,6 +489,7 @@ void G_Throw( gentity_t *targ, const vec3_t newDir, float push );
 #define DAMAGE_NO_KILL			0x00000800	// do damage, but don't kill them
 #define DAMAGE_HEAVY_WEAP_CLASS	0x00001000	// doing heavy weapon type damage, certain objects may only take damage by missiles containing this flag
 #define DAMAGE_CUSTOM_HUD		0x00002000	// really dumb, but....
+#define DAMAGE_NONLETHAL		0x00004000	// a blow meant to subdue (kick, stun baton, full-charge DEMP2, a push into a wall): the hit that would kill an NPC knocks it out instead
 #define	DAMAGE_IMPACT_DIE		0x00004000	// if a vehicle hits a wall it should instantly die
 #define	DAMAGE_DIE_ON_IMPACT	0x00008000	// ignores force-power based protection
 #define	DAMAGE_SABER_KNOCKBACK1 0x00010000	// scale knockback based on saber1's knockbackScale value
@@ -733,5 +734,12 @@ std::vector<std::pair<std::string, int>> TIMER_List(gentity_t* ent);
 
 float NPC_GetHFOVPercentage( vec3_t spot, vec3_t from, vec3_t facing, float hFOV );
 float NPC_GetVFOVPercentage( vec3_t spot, vec3_t from, vec3_t facing, float vFOV );
+
+// non-lethal "taken alive" NPC state and per-NPC nerve; they need gentity_t, so they live at the end
+#include "NPC_neutral.h"
+#include "AI_Nerve.h"
+#include "AI_Brain.h"
+#include "AI_Awareness.h"
+#include "AI_JediBrain.h"
 
 #endif//#ifndef __G_LOCAL_H__

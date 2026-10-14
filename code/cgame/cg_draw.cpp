@@ -2513,6 +2513,21 @@ void CG_DrawHealthBar(centity_t *cent, float chX, float chY, float chW, float ch
 			CG_FillRect( x+1.0f, y+chH+2.0f, (gPercent*chW)-1.0f, gH-1.0f, gColor );
 		}
 	}
+
+	// Force pool — blue, under the guard bar, for saber fighters: their blocks cost Force now
+	// (wp_saber.cpp WP_SaberParry), so this is what tells you they're about to run dry
+	if ( cent->gent->NPC && cent->gent->client && cent->gent->client->ps.weapon == WP_SABER && cent->gent->client->ps.forcePowerMax > 0 )
+	{
+		const float fH = chH * 0.6f;
+		const float fY = y + chH + 1.0f + ( cent->gent->NPC->guardMax > 0 ? chH * 0.6f + 1.0f : 0.0f );
+		const float fPercent = Com_Clamp( 0.0f, 1.0f, (float)cent->gent->client->ps.forcePower / (float)cent->gent->client->ps.forcePowerMax );
+		vec4_t fColor = { 0.25f, 0.5f, 1.0f, 0.55f };
+		CG_DrawRect( x, fY, chW, fH, 1.0f, colorTable[CT_BLACK] );
+		if ( fPercent > 0 )
+		{
+			CG_FillRect( x+1.0f, fY+1.0f, (fPercent*chW)-1.0f, fH-1.0f, fColor );
+		}
+	}
 }
 
 #define MAX_HEALTH_BAR_ENTS 32
@@ -2538,6 +2553,35 @@ void CG_DrawHealthBars( void )
 				CG_DrawHealthBar( cent, chX, chY, HEALTH_BAR_WIDTH * cgs.widthRatioCoef, HEALTH_BAR_HEIGHT );
 			}
 		}
+	}
+}
+
+// Your duel target's bars (health, guard, Force) without needing Force Sight: the saber
+// fighter you're fighting, while they're close and in view. Everyone else still needs Sight.
+void CG_DrawDuelTargetBars( void )
+{
+	const gentity_t *pl = &g_entities[0];
+	if ( !pl->client || !pl->enemy )
+	{
+		return;
+	}
+	const gentity_t *t = pl->enemy;
+	if ( !t->inuse || !t->client || !t->NPC || t->health <= 0 || t->client->ps.weapon != WP_SABER )
+	{
+		return;
+	}
+	if ( DistanceSquared( t->currentOrigin, cg.refdef.vieworg ) > 768.0f * 768.0f || !gi.inPVS( t->currentOrigin, cg.refdef.vieworg ) )
+	{
+		return;
+	}
+	centity_t *cent = &cg_entities[t->s.number];
+	vec3_t pos;
+	float chX = 0, chY = 0;
+	VectorCopy( cent->lerpOrigin, pos );
+	pos[2] += t->maxs[2] + HEALTH_BAR_HEIGHT + 8;
+	if ( CG_WorldCoordToScreenCoordFloat( pos, &chX, &chY ) )
+	{
+		CG_DrawHealthBar( cent, chX, chY, HEALTH_BAR_WIDTH * cgs.widthRatioCoef, HEALTH_BAR_HEIGHT );
 	}
 }
 
@@ -2621,31 +2665,34 @@ void CG_ClearHealthBarEnts( void )
 /*
 ================================================================================
 
-MORALE DEBUG (d_moraleDebug 1)
+AI DEBUG (d_aiDebug 1-3)
 
-Floats group morale/tier info over each squad commander and the current squad
-state over every other living member. Reads level.groups directly (game and
-cgame share the SP module).
+Floats nerve info over every living NPC: effective nerve with its base, shock and
+situational parts, the tier, the squad state. Level 2 adds the brain's action and
+scores (once there is one), level 3 the last nerve event. Reads the game structs
+directly (game and cgame share the SP module).
 
 ================================================================================
 */
-#define MORALE_DEBUG_RANGE 4096.0f
+#include "../game/AI_Nerve.h"
+#include "../game/AI_Brain.h"
+#include "../game/AI_Awareness.h"
+#include "../game/AI_JediBrain.h"
+#define AI_DEBUG_RANGE 4096.0f
 
-static const char *moraleTierNames[5] = { "ROUTED", "HOLDING", "ADVANCE", "FLANK", "RUSH" };
-static const vec4_t moraleTierColors[5] =
+static const vec4_t nerveTierColors[NT_NUM] =
 {
-	{ 1.0f, 0.2f, 0.2f, 1.0f },	// 0 ROUTED  — red
-	{ 1.0f, 0.6f, 0.2f, 1.0f },	// 1 HOLDING — orange
-	{ 1.0f, 1.0f, 0.3f, 1.0f },	// 2 ADVANCE — yellow
-	{ 0.3f, 1.0f, 0.3f, 1.0f },	// 3 FLANK   — green
-	{ 0.3f, 0.9f, 1.0f, 1.0f },	// 4 RUSH    — cyan
+	{ 0.3f, 1.0f, 0.3f, 1.0f },	// STEADY   — green
+	{ 1.0f, 1.0f, 0.3f, 1.0f },	// SHAKEN   — yellow
+	{ 1.0f, 0.6f, 0.2f, 1.0f },	// BREAKING — orange
+	{ 1.0f, 0.2f, 0.2f, 1.0f },	// BROKEN   — red
 };
 static const char *squadStateNames[NUM_SQUAD_STATES] =
 {
 	"IDLE", "SHOOT", "RETREAT", "COVER", "MOVE", "POINT", "SCOUT"
 };
 
-static void CG_DrawMoraleLabel( const gentity_t *ent, const char *text, const vec4_t color )
+static void CG_DrawAILabel( const gentity_t *ent, const char *text, const vec4_t color, int line )
 {
 	vec3_t pos;
 	float x, y;
@@ -2653,7 +2700,7 @@ static void CG_DrawMoraleLabel( const gentity_t *ent, const char *text, const ve
 	VectorCopy( ent->currentOrigin, pos );
 	pos[2] += ent->maxs[2] + 20;
 
-	if ( DistanceSquared( pos, cg.refdef.vieworg ) > MORALE_DEBUG_RANGE*MORALE_DEBUG_RANGE )
+	if ( DistanceSquared( pos, cg.refdef.vieworg ) > AI_DEBUG_RANGE*AI_DEBUG_RANGE )
 	{
 		return;
 	}
@@ -2664,43 +2711,139 @@ static void CG_DrawMoraleLabel( const gentity_t *ent, const char *text, const ve
 
 	const float scale = 0.7f;
 	const float w = cgi_R_Font_StrLenPixels( text, cgs.media.qhFontSmall, scale, cgs.widthRatioCoef );
-	cgi_R_Font_DrawString( x - w*0.5f, y, text, color, cgs.media.qhFontSmall, -1, scale, cgs.widthRatioCoef );
+	cgi_R_Font_DrawString( x - w*0.5f, y + line * 10.0f, text, color, cgs.media.qhFontSmall, -1, scale, cgs.widthRatioCoef );
 }
 
-void CG_DrawMoraleDebug( void )
+/*
+-------------------------
+CG_DrawAwareness
+
+  A small mark over enemies who are on to something: "?" while suspicious, "!" while they
+  search. Nothing while they're unaware (you don't get a free radar) or fighting.
+-------------------------
+*/
+void CG_DrawAwareness( void )
 {
-	for ( int g = 0; g < MAX_FRAME_GROUPS; g++ )
+	static const vec4_t suspiciousColor	= { 1.0f, 0.9f, 0.3f, 0.9f };
+	static const vec4_t searchingColor	= { 1.0f, 0.4f, 0.2f, 1.0f };
+	const gentity_t *pl = &g_entities[0];
+
+	for ( int i = MAX_CLIENTS; i < MAX_GENTITIES; i++ )
 	{
-		const AIGroupInfo_t *group = &level.groups[g];
-		if ( !group->numGroup )
+		gentity_t *ent = &g_entities[i];
+		if ( !ent->inuse || !ent->NPC || !ent->client || ent->health <= 0 || ent->enemy || G_IsNeutralized( ent ) )
+		{
+			continue;
+		}
+		if ( ent->client->playerTeam != pl->client->enemyTeam || ent->NPC->awareState < AW_SUSPICIOUS || ent->NPC->awareState >= AW_ALERT )
+		{
+			continue;
+		}
+		if ( DistanceSquared( ent->currentOrigin, cg.refdef.vieworg ) > 1024.0f * 1024.0f || !gi.inPVS( ent->currentOrigin, cg.refdef.vieworg ) )
+		{
+			continue;
+		}
+		CG_DrawAILabel( ent, ent->NPC->awareState == AW_SEARCHING ? "!" : "?", ent->NPC->awareState == AW_SEARCHING ? searchingColor : suspiciousColor, 0 );
+	}
+}
+
+/*
+-------------------------
+CG_DrawLightMeter
+
+  While crouched: how lit you are, as a bar above the bottom edge. Dark = safe.
+-------------------------
+*/
+void CG_DrawLightMeter( void )
+{
+	const gentity_t *pl = &g_entities[0];
+	if ( !pl->client || !(pl->client->ps.pm_flags&PMF_DUCKED) || cg.zoomMode )
+	{
+		return;
+	}
+	const float frac = Com_Clamp( 0.0f, 1.0f, pl->lightLevel / 255.0f );
+	const float w = 80.0f, h = 6.0f;
+	const float x = 320.0f - w * 0.5f, y = 440.0f;
+	vec4_t back = { 0.0f, 0.0f, 0.0f, 0.5f };
+	vec4_t fill = { 0.3f + 0.7f * frac, 0.9f - 0.6f * frac, 0.3f, 0.8f };
+	CG_FillRect( x - 1, y - 1, w + 2, h + 2, back );
+	CG_FillRect( x, y, w * frac, h, fill );
+}
+
+void CG_DrawAIDebug( void )
+{
+	const int level_ = d_aiDebug->integer;
+	for ( int i = 0; i < MAX_GENTITIES; i++ )
+	{
+		gentity_t *ent = &g_entities[i];
+		if ( !ent->inuse || !ent->NPC || !ent->client || ent->health <= 0 )
+		{
+			continue;
+		}
+		if ( !gi.inPVS( ent->currentOrigin, cg.refdef.vieworg ) )
 		{
 			continue;
 		}
 
-		// Live tier via the game's shared formula, so the display always matches behavior
-		// even when ST_Commander hasn't run a transition yet.
-		const int tier = AI_GetGroupMoraleTier( group );
-		const float *color = moraleTierColors[tier];
+		int officer, numbers, contagion, threat, wounds;
+		const int sit = AI_NerveSituational( ent, &officer, &numbers, &contagion, &threat, &wounds );
+		const int tier = AI_NerveTier( ent );
+		const float *color = nerveTierColors[tier];
+		const char *state = ent->NPC->squadState < NUM_SQUAD_STATES ? squadStateNames[ent->NPC->squadState] : "?";
+		int line = 0;
 
-		for ( int i = 0; i < group->numGroup; i++ )
+		CG_DrawAILabel( ent, va( "N:%i (b%i s%+i x%+i) %s %s%s", AI_NerveEffective( ent ), ent->NPC->nerveBase, ent->NPC->nerveShock, sit,
+			AI_NerveTierName( tier ), state, G_IsNeutralized( ent ) ? va( " [%s]", G_NeutralStateName( ent->NPC->neutralState ) ) : "" ), color, line++ );
+		if ( level_ >= 2 )
+		{//the brain: what it's doing, how long it's committed, and the runners-up
+			const aiDebug_t *dbg = AI_Brain_GetDebug( ent->s.number );
+			if ( dbg && ent->NPC->aiAction != AA_NONE )
+			{
+				int top[3] = { -1, -1, -1 };
+				for ( int a = 1; a < AA_NUM; a++ )
+				{
+					if ( a == ent->NPC->aiAction || dbg->score[a] <= 0 )
+					{
+						continue;
+					}
+					for ( int t = 0; t < 3; t++ )
+					{
+						if ( top[t] < 0 || dbg->score[a] > dbg->score[top[t]] )
+						{
+							for ( int u = 2; u > t; u-- ) top[u] = top[u-1];
+							top[t] = a;
+							break;
+						}
+					}
+				}
+				const int holdLeft = Q_max( 0, ent->NPC->aiActionHoldUntil - level.time );
+				CG_DrawAILabel( ent, va( "> %s %.2f (%.1fs)", AI_Brain_ActionName( ent->NPC->aiAction ), dbg->score[ent->NPC->aiAction], holdLeft * 0.001f ), color, line++ );
+				if ( top[0] >= 0 )
+				{
+					CG_DrawAILabel( ent, va( "%s %.2f%s%s%s%s", AI_Brain_ActionName( top[0] ), dbg->score[top[0]],
+						top[1] >= 0 ? " | " : "", top[1] >= 0 ? va( "%s %.2f", AI_Brain_ActionName( top[1] ), dbg->score[top[1]] ) : "",
+						top[2] >= 0 ? " | " : "", top[2] >= 0 ? va( "%s %.2f", AI_Brain_ActionName( top[2] ), dbg->score[top[2]] ) : "" ), color, line++ );
+				}
+			}
+			if ( ent->NPC->group )
+			{
+				CG_DrawAILabel( ent, va( "squad %i (%i) slots %i%s", ent->NPC->group->squadId, ent->NPC->group->numGroup, AI_SquadSlotsFree( ent->NPC->group ),
+					ent->NPC->group->commander == ent ? " LEAD" : "" ), color, line++ );
+			}
+		}
+		if ( level_ >= 2 && ent->client->ps.weapon == WP_SABER && ent->NPC->duelRole != JT_NONE )
+		{//the duel layer: tactic, Force, guard, the aggression it produced, block skill
+			CG_DrawAILabel( ent, va( "J: %s  F%d G%d agg%d bs%d", AI_JediTacticName( ent->NPC->duelRole ), ent->client->ps.forcePower,
+				ent->NPC->guardMax > 0 ? ent->NPC->guard * 100 / ent->NPC->guardMax : -1, ent->NPC->stats.aggression, AI_JediBlockSkill( ent ) ), color, line++ );
+		}
+		if ( level_ >= 3 )
 		{
-			const gentity_t *member = &g_entities[group->member[i].number];
-			if ( !member->inuse || !member->NPC || member->health <= 0 )
+			CG_DrawAILabel( ent, va( "aware %s %.2f", AI_AwareStateName( ent->NPC->awareState ), ent->NPC->awareLevel ), color, line++ );
+			CG_DrawAILabel( ent, va( "ldr%+i num%+i sq%+i thr%+i wnd%+i", officer, numbers, contagion, threat, wounds ), color, line++ );
+			if ( ent->NPC->nerveLastEvent >= 0 )
 			{
-				continue;
+				CG_DrawAILabel( ent, va( "%s %.1fs ago", AI_NerveEventName( ent->NPC->nerveLastEvent ), ( level.time - ent->NPC->nerveLastEventTime ) * 0.001f ), color, line++ );
 			}
-
-			const char *state = squadStateNames[ member->NPC->squadState ];
-			const char *text;
-			if ( member == group->commander )
-			{
-				text = va( "G%i M:%i(%+i) %s | CMDR %s", g, group->morale, group->moraleAdjust, moraleTierNames[tier], state );
-			}
-			else
-			{
-				text = va( "%s", state );
-			}
-			CG_DrawMoraleLabel( member, text, color );
 		}
 	}
 }
@@ -4516,10 +4659,22 @@ static void CG_Draw2D( void )
 	{
 		CG_DrawHealthBars();
 	}
-
-	if ( d_moraleDebug && d_moraleDebug->integer )
+	else
 	{
-		CG_DrawMoraleDebug();
+		CG_DrawDuelTargetBars();
+	}
+
+	if ( d_aiDebug && d_aiDebug->integer )
+	{
+		CG_DrawAIDebug();
+	}
+	if ( cg_drawAwareness.integer )
+	{
+		CG_DrawAwareness();
+	}
+	if ( cg_drawLightMeter.integer )
+	{
+		CG_DrawLightMeter();
 	}
 
 

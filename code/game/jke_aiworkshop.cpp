@@ -84,6 +84,29 @@ static void WorkshopDrawEntityInformation(gentity_t* ent, int x, const char* tit
 		add += OL_H;
 	}
 
+	{
+		int officer, numbers, contagion, threat, wounds;
+		const int sit = AI_NerveSituational(ent, &officer, &numbers, &contagion, &threat, &wounds);
+		cgi_R_Font_DrawString(x, OL_Y + add, va("nerve: %i = base %i + shock %i + sit %i (ldr%+i num%+i sq%+i thr%+i wnd%+i) %s",
+			AI_NerveEffective(ent), ent->NPC->nerveBase, ent->NPC->nerveShock, sit, officer, numbers, contagion, threat, wounds,
+			AI_NerveTierName(AI_NerveTier(ent))), textcolor, cgs.media.qhFontSmall, -1, OL_S, cgs.widthRatioCoef);
+		add += OL_H;
+		if (ent->NPC->nerveLastEvent >= 0) {
+			cgi_R_Font_DrawString(x, OL_Y + add, va("last nerve event: %s, %i ms ago", AI_NerveEventName(ent->NPC->nerveLastEvent), level.time - ent->NPC->nerveLastEventTime), textcolor, cgs.media.qhFontSmall, -1, OL_S, cgs.widthRatioCoef);
+			add += OL_H;
+		}
+	}
+
+	if (ent->NPC->aiAction != AA_NONE) {
+		cgi_R_Font_DrawString(x, OL_Y + add, va("brain: %s, hold %i ms, profile %s", AI_Brain_ActionName(ent->NPC->aiAction), Q_max(0, ent->NPC->aiActionHoldUntil - level.time), AI_Brain_ProfileFor(ent)->name), textcolor, cgs.media.qhFontSmall, -1, OL_S, cgs.widthRatioCoef);
+		add += OL_H;
+	}
+
+	if (ent->NPC->neutralState != NS_NONE) {
+		cgi_R_Font_DrawString(x, OL_Y + add, va("neutral: %s (by %s) flags %i", G_NeutralStateName(ent->NPC->neutralState), G_NeutralHowName(ent->NPC->neutralHow), ent->NPC->neutralFlags), textcolor, cgs.media.qhFontSmall, -1, OL_S, cgs.widthRatioCoef);
+		add += OL_H;
+	}
+
 	cgi_R_Font_DrawString(x, OL_Y + add, va("playerTeam: %s", teamTable[ent->client->playerTeam].name), textcolor, cgs.media.qhFontSmall, -1, OL_S, cgs.widthRatioCoef);
 	add += OL_H;
 
@@ -112,11 +135,9 @@ static void WorkshopDrawEntityInformation(gentity_t* ent, int x, const char* tit
 	}
 
 	if (ent->NPC->group && ent->NPC->group->numGroup > 1) {
-		cgi_R_Font_DrawString(x, OL_Y + add, "-- squad data --", textcolor, cgs.media.qhFontSmall, -1, OL_S, cgs.widthRatioCoef);
+		cgi_R_Font_DrawString(x, OL_Y + add, va("-- squad %i --", ent->NPC->group->squadId), textcolor, cgs.media.qhFontSmall, -1, OL_S, cgs.widthRatioCoef);
 		add += OL_H;
-		cgi_R_Font_DrawString(x, OL_Y + add, va("morale: %i", ent->NPC->group->morale), textcolor, cgs.media.qhFontSmall, -1, OL_S, cgs.widthRatioCoef);
-		add += OL_H;
-		cgi_R_Font_DrawString(x, OL_Y + add, va("morale debounce: %i", ent->NPC->group->moraleDebounce), textcolor, cgs.media.qhFontSmall, -1, OL_S, cgs.widthRatioCoef);
+		cgi_R_Font_DrawString(x, OL_Y + add, va("avg nerve: %i, move slots free: %i, cover requested by: %i", ent->NPC->group->avgNerve, AI_SquadSlotsFree(ent->NPC->group), ent->NPC->group->coverRequestNum), textcolor, cgs.media.qhFontSmall, -1, OL_S, cgs.widthRatioCoef);
 		add += OL_H;
 		cgi_R_Font_DrawString(x, OL_Y + add, va("last seen enemy: %i milliseconds", level.time - ent->NPC->group->lastSeenEnemyTime), textcolor, cgs.media.qhFontSmall, -1, OL_S, cgs.widthRatioCoef);
 		add += OL_H;

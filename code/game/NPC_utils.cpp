@@ -1004,6 +1004,10 @@ qboolean G_ValidEnemy( gentity_t *self, gentity_t *enemy )
 	if ( enemy->health <= 0 )
 		return qfalse;
 
+	//Out of the fight already (knocked out, hands up, running away unarmed): not worth shooting at
+	if ( G_IsNeutralized( enemy ) )
+		return qfalse;
+
 	//In case they're in notarget mode
 	if ( enemy->flags & FL_NOTARGET )
 		return qfalse;

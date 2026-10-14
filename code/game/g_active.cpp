@@ -75,6 +75,8 @@ extern qboolean PM_HasAnimation( gentity_t *ent, int animation );
 extern qboolean PM_LeapingSaberAnim( int anim );
 extern qboolean PM_SpinningSaberAnim( int anim );
 extern qboolean PM_SaberInAttack( int move );
+extern qboolean PM_SaberInParry( int move );
+extern void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlock );
 extern qboolean PM_KickingAnim( int anim );
 extern int PM_AnimLength( int index, animNumber_t anim );
 extern qboolean PM_InKnockDown( playerState_t *ps );
@@ -1169,8 +1171,9 @@ void DoImpact( gentity_t *self, gentity_t *other, qboolean damageSelf, trace_t *
 						{//don't damage the other guy if he's gripping me
 						}
 						else
-						{
-							G_Damage( other, self, self, velocity, self->currentOrigin, floor(force), DAMAGE_NO_ARMOR, MOD_IMPACT );
+						{//a body thrown into them by a push/pull is a blunt hit
+							const int impactFlags = DAMAGE_NO_ARMOR | ( self->forcePushTime > level.time - 2000 ? DAMAGE_NONLETHAL : 0 );
+							G_Damage( other, self, self, velocity, self->currentOrigin, floor(force), impactFlags, MOD_IMPACT );
 						}
 					}
 					else
@@ -1299,7 +1302,18 @@ void DoImpact( gentity_t *self, gentity_t *other, qboolean damageSelf, trace_t *
 						magnitude = 0;
 					}
 
-					G_Damage( self, NULL, NULL, NULL, self->currentOrigin, magnitude/2, DAMAGE_NO_ARMOR, MOD_FALLING );//FIXME: MOD_IMPACT
+					// slammed into something right after a push/pull: blunt, and the pusher gets the credit
+					gentity_t	*pusher		= NULL;
+					int			selfFlags	= DAMAGE_NO_ARMOR;
+					if ( self->NPC && self->forcePushTime > level.time - 2000 )
+					{
+						selfFlags |= DAMAGE_NONLETHAL;
+						if ( self->forcePuller >= 0 && self->forcePuller < ENTITYNUM_WORLD )
+						{
+							pusher = &g_entities[self->forcePuller];
+						}
+					}
+					G_Damage( self, pusher, pusher, NULL, self->currentOrigin, magnitude/2, selfFlags, MOD_FALLING );//FIXME: MOD_IMPACT
 				}
 			}
 		}
@@ -2017,7 +2031,7 @@ gentity_t *G_KickTrace( gentity_t *ent, vec3_t kickDir, float kickDist, vec3_t k
 					//don't hit same ent more than once per kick
 					if ( hitEnt->takedamage )
 					{//hurt it
-						G_Damage( hitEnt, ent, ent, kickDir, trace.endpos, kickDamage, DAMAGE_NO_KNOCKBACK|DAMAGE_NO_KILL, MOD_MELEE );
+						G_Damage( hitEnt, ent, ent, kickDir, trace.endpos, kickDamage, DAMAGE_NO_KNOCKBACK|DAMAGE_NO_KILL|DAMAGE_NONLETHAL, MOD_MELEE );
 						G_DamageGuard( hitEnt, ent, 20 );	//kicks chunk saber guard
 					}
 					//do kick hit sound and impact effect
@@ -2039,6 +2053,15 @@ gentity_t *G_KickTrace( gentity_t *ent, vec3_t kickDir, float kickDist, vec3_t k
 						TIMER_Set( ent, "kickSoundDebounce", 2000 );
 					}
 					TIMER_Set( hitEnt, "kickedDebounce", 1000 );
+					if ( hitEnt->NPC && hitEnt->health > 0 && hitEnt->client->ps.weapon == WP_SABER && hitEnt->client->ps.SaberActive()
+						&& hitEnt->NPC->guardMax > 0 && hitEnt->NPC->guard * 2 > hitEnt->NPC->guardMax
+						&& hitEnt->NPC->guardBreakTime <= level.time
+						&& !PM_SaberInAttack( hitEnt->client->ps.saberMove ) && !PM_InKnockDown( &hitEnt->client->ps ) )
+					{//a saber fighter with their guard still up takes the kick on the blade: it costs them
+					 //guard (above), but doesn't put them down until the guard is half gone
+						WP_SaberBlockNonRandom( hitEnt, trace.endpos, qfalse );
+						return hitEnt;
+					}
 					if ( ent->client->ps.torsoAnim == BOTH_A7_HILT )
 					{//hit in head
 						if ( hitEnt->health > 0 )
@@ -2253,6 +2276,107 @@ void G_CamCircleForLegsAnim( gentity_t *ent )
 	}
 }
 
+/*
+-------------------------
+Stealth takedown
+
+  The player got behind someone who hadn't noticed them (AI_CanBeSnuckUpOn): one punch
+  (BOTH_MELEE5) and they drop out cold in an ordinary knockout pose (G_Neutralize
+  NH_STEALTH). Placeholder until dedicated takedown anims exist. Driven from
+  G_CheckClampUcmd while "spyGrab" exists on the player; the victim's AI is held off by
+  "spyVictim" until the punch lands, so they can't turn round mid-swing.
+-------------------------
+*/
+#define TAKEDOWN_HIT_FRAC	0.5f	//how far into the punch it connects
+
+static int s_spyVictim = ENTITYNUM_NONE;
+static int s_spyHit = 0;		//level.time the punch connects
+
+static gentity_t *G_SpyVictim( void )
+{
+	if ( s_spyVictim < 0 || s_spyVictim >= ENTITYNUM_WORLD )
+	{
+		return NULL;
+	}
+	gentity_t *v = &g_entities[s_spyVictim];
+	if ( !v->inuse || !v->client || !v->NPC || v->health <= 0 )
+	{
+		return NULL;
+	}
+	return v;
+}
+
+static void G_SpyTakedownEnd( gentity_t *ent, qboolean landed )
+{
+	gentity_t *victim = G_SpyVictim();
+	TIMER_Remove( ent, "spyGrab" );
+	s_spyHit = 0;
+	if ( victim )
+	{
+		TIMER_Remove( victim, "spyVictim" );
+		if ( landed && G_CanNeutralize( victim, NH_STEALTH ) )
+		{
+			G_Sound( victim, G_SoundIndex( va( "sound/weapons/melee/punch%d", Q_irand( 1, 4 ) ) ) );
+			G_Neutralize( victim, ent, NH_STEALTH );
+		}
+		else if ( !G_IsNeutralized( victim ) && !victim->enemy )
+		{//they turned in time: they know about you now
+			G_SetEnemy( victim, ent );
+		}
+	}
+	s_spyVictim = ENTITYNUM_NONE;
+}
+
+void G_StartSpyTakedown( gentity_t *ent, gentity_t *victim )
+{
+	if ( !ent->client || !victim || !victim->client || !victim->NPC || TIMER_Exists( ent, "spyGrab" ) )
+	{
+		return;
+	}
+	if ( !PM_HasAnimation( ent, BOTH_MELEE5 ) )
+	{
+		return;
+	}
+	if ( ent->client->ps.SaberLength() > 0 )
+	{
+		ent->client->ps.SaberDeactivate();
+	}
+	NPC_SetAnim( ent, SETANIM_BOTH, BOTH_MELEE5, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART );
+	const int swingMs = ent->client->ps.torsoAnimTimer;
+	ent->client->ps.weaponTime = swingMs;
+	ent->client->ps.saberMove = ent->client->ps.saberMoveNext = LS_READY;
+	VectorClear( ent->client->ps.velocity );
+	VectorClear( ent->client->ps.moveDir );
+
+	s_spyVictim = victim->s.number;
+	s_spyHit = level.time + (int)( swingMs * TAKEDOWN_HIT_FRAC );
+	TIMER_Set( ent, "spyGrab", swingMs + 500 );//safety only
+	TIMER_Set( victim, "spyVictim", swingMs + 500 );
+}
+
+qboolean G_SpyTakedownUpdate( gentity_t *ent, usercmd_t *ucmd )
+{
+	gentity_t *victim = G_SpyVictim();
+
+	ucmd->forwardmove = ucmd->rightmove = ucmd->upmove = 0;
+	ucmd->buttons &= ~(BUTTON_ATTACK|BUTTON_ALT_ATTACK|BUTTON_USE);
+	VectorClear( ent->client->ps.velocity );
+	VectorClear( ent->client->ps.moveDir );
+
+	if ( !victim || G_IsNeutralized( victim ) || victim->enemy || ent->health <= 0 || TIMER_Done( ent, "spyGrab" ) )
+	{//lost them (or something interrupted us)
+		G_SpyTakedownEnd( ent, qfalse );
+		return qfalse;
+	}
+	if ( level.time >= s_spyHit )
+	{//connects
+		G_SpyTakedownEnd( ent, qtrue );
+		return qfalse;
+	}
+	return qfalse;
+}
+
+
 qboolean G_GrabClient( gentity_t *ent, usercmd_t *ucmd )
 {
 	gentity_t	*bestEnt = NULL, *radiusEnts[ 128 ];
@@ -2329,6 +2453,11 @@ qboolean G_GrabClient( gentity_t *ent, usercmd_t *ucmd )
 
 	if ( bestEnt != NULL )
 	{
+		if ( ent->s.number == 0 && AI_CanBeSnuckUpOn( bestEnt, ent ) )
+		{//got them from behind before they knew: the quiet takedown instead of the brawl
+			G_StartSpyTakedown( ent, bestEnt );
+			return qtrue;
+		}
 		int lockType = LOCK_KYLE_GRAB1;
 		if ( ucmd->forwardmove > 0 )
 		{
@@ -2497,6 +2626,22 @@ qboolean G_CheckClampUcmd( gentity_t *ent, usercmd_t *ucmd )
 			//movedir is invalid now, but PM_WalkMove will rebuild it from the ucmds, with the appropriate speed
 			VectorClear( ent->client->ps.moveDir );
 		}
+	}
+
+	if ( TIMER_Exists( ent, "spyGrab" ) )
+	{//choking someone out from behind
+		return G_SpyTakedownUpdate( ent, ucmd );
+	}
+
+	if ( ent->s.number == 0 && (ucmd->buttons&BUTTON_ATTACK) && !TIMER_Done( ent, "riposteWindow" )
+		&& ent->client->ps.weapon == WP_SABER && PM_SaberInParry( ent->client->ps.saberMove ) )
+	{//riposte: attacking right off a block skips the rest of the parry, so the swing starts now
+		TIMER_Remove( ent, "riposteWindow" );
+		ent->client->ps.weaponTime = 0;
+		ent->client->ps.saberMove = ent->client->ps.saberMoveNext = LS_READY;
+		ent->client->ps.saberBlocked = BLOCKED_NONE;
+		ent->client->ps.saberBounceMove = LS_NONE;
+		ent->client->ps.torsoAnimTimer = 0;
 	}
 
 	if ( ent->client->ps.pullAttackEntNum < ENTITYNUM_WORLD

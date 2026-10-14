@@ -260,6 +260,8 @@ vmCvar_t	cg_drawFPS;
 vmCvar_t	cg_drawSnapshot;
 vmCvar_t	cg_drawAmmoWarning;
 vmCvar_t	cg_drawCrosshair;
+vmCvar_t	cg_drawAwareness;
+vmCvar_t	cg_drawLightMeter;
 vmCvar_t	cg_crosshairIdentifyTarget;
 vmCvar_t	cg_dynamicCrosshair;
 vmCvar_t	cg_crosshairForceHint;
@@ -420,6 +422,8 @@ static cvarTable_t cvarTable[] = {
 	{ &cg_drawSnapshot, "cg_drawSnapshot", "0", CVAR_ARCHIVE  },
 	{ &cg_drawAmmoWarning, "cg_drawAmmoWarning", "1", CVAR_ARCHIVE  },
 	{ &cg_drawCrosshair, "cg_drawCrosshair", "1", CVAR_ARCHIVE },
+	{ &cg_drawAwareness, "cg_drawAwareness", "1", CVAR_ARCHIVE },	// "?" / "!" over enemies who are onto you
+	{ &cg_drawLightMeter, "cg_drawLightMeter", "1", CVAR_ARCHIVE },	// how lit you are while crouched
 	{ &cg_dynamicCrosshair, "cg_dynamicCrosshair", "0", 0 },
 	// NOTE : I also create this in UI_Init()
 	{ &cg_crosshairIdentifyTarget, "cg_crosshairIdentifyTarget", "1", CVAR_ARCHIVE },

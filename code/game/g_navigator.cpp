@@ -2735,14 +2735,16 @@ NAV::TNodeHandle		NAV::ChooseFarthestNeighbor(NAV::TNodeHandle NodeHandle, const
 
 		NAV::TNodeHandle	Cur			= WAYPOINT_NONE;
 		float				CurDist		= 0.0f;
-		NAV::TNodeHandle	Best		= NodeHandle;
-		float				BestDist	= mGraph.get_node(Cur).mPoint.Dist2(pos);
+		NAV::TNodeHandle	Best		= WAYPOINT_NONE;
+		float				BestDist	= -1.0f;
 
+		// farthest neighbor from position (the old version seeded from WAYPOINT_NONE and
+		// compared the wrong way, so it actually returned the nearest neighbor)
 		for (int i=0; i<neighbors.size(); i++)
 		{
 			Cur		= neighbors[i].mNode;
 			CurDist = mGraph.get_node(Cur).mPoint.Dist2(pos);
-			if (Best==WAYPOINT_NONE || BestDist>CurDist)
+			if (CurDist>BestDist)
 			{
 				Best		= Cur;
 				BestDist	= CurDist;

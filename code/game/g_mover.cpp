@@ -250,7 +250,7 @@ qboolean	G_TryPushingEntity( gentity_t *check, gentity_t *pusher, vec3_t move, v
 		if ( (pusher->spawnflags&MOVER_CRUSHER)//a crusher
  			&& check->s.clientNum >= MAX_CLIENTS//not the player
 			&& check->client //NPC
-			&& check->health <= 0 //dead
+			&& G_IsDownedBody( check ) //dead or knocked out
 			&& G_OkayToRemoveCorpse( check ) )//okay to remove him
 		{//crusher stuck on a non->player corpse that does not have a key and is not running a script
 			G_FreeEntity( check );
@@ -1156,8 +1156,8 @@ void Blocked_Door( gentity_t *ent, gentity_t *other ) {
 	{
 		// should we be doing anything special if a key blocks it... move it somehow..?
 	}
-	// if your not a client, or your a dead client remove yourself...
-	else if ( other->s.number && (!other->client || (other->client && other->health <= 0 && other->contents == CONTENTS_CORPSE && !other->message)) )
+	// if your not a client, or your a dead (or knocked-out) client remove yourself...
+	else if ( other->s.number && (!other->client || (other->client && G_IsDownedBody( other ) && (other->contents&CONTENTS_CORPSE) && !other->message)) )
 	{
 		if ( !IIcarusInterface::GetIcarus()->IsRunning( other->m_iIcarusID ) /*!other->taskManager || !other->taskManager->IsRunning()*/ )
 		{
@@ -1172,7 +1172,7 @@ void Blocked_Door( gentity_t *ent, gentity_t *other ) {
 		if ( (ent->spawnflags&MOVER_CRUSHER)//a crusher
  			&& other->s.clientNum >= MAX_CLIENTS//not the player
 			&& other->client //NPC
-			&& other->health <= 0 //dead
+			&& G_IsDownedBody( other ) //dead or knocked out
 			&& G_OkayToRemoveCorpse( other ) )//okay to remove him
 		{//crusher stuck on a non->player corpse that does not have a key and is not running a script
 			G_FreeEntity( other );

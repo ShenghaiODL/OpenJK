@@ -71,8 +71,9 @@ cvar_t		*debugNPCName;
 cvar_t		*d_saberCombat;
 cvar_t		*d_JediAI;
 cvar_t		*d_noGroupAI;
-cvar_t		*d_asynchronousGroupAI;
-cvar_t		*d_moraleDebug;			// draw group morale/squad-state info over NPC heads
+cvar_t		*d_aiDebug;				// draw nerve / decision info over NPC heads
+cvar_t		*d_nerveLog;			// print nerve events (-1 all, else entity number)
+cvar_t		*d_aiLog;				// print brain decisions (-1 all, else entity number)
 cvar_t		*d_slowmodeath;
 
 extern qboolean	stop_icarus;
@@ -110,8 +111,9 @@ void CorpsePhysics( gentity_t *self )
 	if ( eventClearTime == level.time + ALERT_CLEAR_TIME )
 	{//events were just cleared out so add me again
 		if ( !(self->client->ps.eFlags&EF_NODRAW) )
-		{
-			AddSightEvent( self->enemy, self->currentOrigin, 384, AEL_DISCOVERED );
+		{//the body itself is the thing to notice -- the owner used to be the killer, which made
+		//anyone who saw a corpse instantly target the player
+			AddSightEvent( self, self->currentOrigin, 384, AEL_DISCOVERED );
 		}
 	}
 
@@ -215,6 +217,7 @@ void NPC_RemoveBody( gentity_t *self )
 
 	//run physics at 20fps
 	CorpsePhysics( self );
+	G_BodyDragThink( self );//being dragged somewhere out of sight?
 
 	if ( self->NPC->nextBStateThink <= level.time )
 	{//run logic at 10 fps
@@ -267,6 +270,35 @@ void NPC_RemoveBody( gentity_t *self )
 
 		if ( self->NPC && self->NPC->timeOfDeath <= level.time )
 		{
+			// a body someone might still walk past and find stays a while longer: if a living
+			// teammate is within 512 and nobody has raised the alarm over it yet, give it a minute
+			if ( !TIMER_Exists( self, "bodyLinger" ) )
+			{
+				gentity_t	*nearby[64];
+				vec3_t		mins, maxs;
+				for ( int k = 0; k < 3; k++ )
+				{
+					mins[k] = self->currentOrigin[k] - 512;
+					maxs[k] = self->currentOrigin[k] + 512;
+				}
+				const int n = gi.EntitiesInBox( mins, maxs, nearby, 64 );
+				int lingerMs = 0;
+				for ( int k = 0; k < n; k++ )
+				{
+					if ( nearby[k] != self && nearby[k]->NPC && nearby[k]->client && nearby[k]->health > 0
+						&& nearby[k]->client->playerTeam == self->client->playerTeam && nearby[k]->NPC->awareState < AW_SEARCHING )
+					{
+						lingerMs = 60000;
+						break;
+					}
+				}
+				TIMER_Set( self, "bodyLinger", lingerMs );
+			}
+			if ( !TIMER_Done( self, "bodyLinger" ) )
+			{
+				self->nextthink = level.time + FRAMETIME;
+				return;
+			}
 			self->NPC->timeOfDeath = level.time + 1000;
 			// Only do all of this nonsense for Scav boys ( and girls )
 		///	if ( self->client->playerTeam == TEAM_SCAVENGERS || self->client->playerTeam == TEAM_KLINGON
@@ -1483,75 +1515,10 @@ void NPC_BehaviorSet_Sentry( int bState )
 
 /*
 -------------------------
-NPC_BehaviorSet_Grenadier
--------------------------
-*/
-void NPC_BehaviorSet_Grenadier( int bState )
-{
-	switch( bState )
-	{
-	case BS_STAND_GUARD:
-	case BS_PATROL:
-	case BS_STAND_AND_SHOOT:
-	case BS_HUNT_AND_KILL:
-	case BS_DEFAULT:
-		NPC_BSGrenadier_Default();
-		break;
-
-	default:
-		NPC_BehaviorSet_Default( bState );
-		break;
-	}
-}
-
-/*
--------------------------
-NPC_BehaviorSet_Tusken
--------------------------
-*/
-void NPC_BehaviorSet_Tusken( int bState )
-{
-	switch( bState )
-	{
-	case BS_STAND_GUARD:
-	case BS_PATROL:
-	case BS_STAND_AND_SHOOT:
-	case BS_HUNT_AND_KILL:
-	case BS_DEFAULT:
-		NPC_BSTusken_Default();
-		break;
-
-	default:
-		NPC_BehaviorSet_Default( bState );
-		break;
-	}
-}
-
-/*
--------------------------
-NPC_BehaviorSet_Sniper
--------------------------
-*/
-void NPC_BehaviorSet_Sniper( int bState )
-{
-	switch( bState )
-	{
-	case BS_STAND_GUARD:
-	case BS_PATROL:
-	case BS_STAND_AND_SHOOT:
-	case BS_HUNT_AND_KILL:
-	case BS_DEFAULT:
-		NPC_BSSniper_Default();
-		break;
-
-	default:
-		NPC_BehaviorSet_Default( bState );
-		break;
-	}
-}
-/*
--------------------------
 NPC_BehaviorSet_Stormtrooper
+
+  Every gun- or staff-wielding humanoid: snipers, grenadiers and Tusken run this too now,
+  with their own brain profile and fire module.
 -------------------------
 */
 
@@ -1863,59 +1830,20 @@ extern void NPC_BSGM_Default( void );
 
 extern void NPC_Surrender( void );
 
-// A regular NPC whose hand was cut off by a saber (WP_SaberApplyDamage; counted as killed by
-// G_FlagNPCAsKilled): a moment of shock in a held pain anim, then -- decided once -- either hands
-// up right where it stands, or running away from its attacker. While running, the normal
-// (Track 9) flee behaviour drives it, which already drops into NPC_Surrender once it can't get
-// further away; when the flee wears off it puts its hands up too. Returns qtrue if it handled
-// this think.
-static qboolean NPC_MaimedThink( void )
-{
-	if ( !TIMER_Done( NPC, "maimedReact" ) )
-	{// shock: stand still in the held pain anim
-		ucmd.forwardmove = ucmd.rightmove = ucmd.upmove = 0;
-		ucmd.buttons &= ~(BUTTON_ATTACK|BUTTON_ALT_ATTACK);
-		if ( NPC->enemy )
-		{
-			NPC_FaceEnemy();
-		}
-		NPC_UpdateAngles( qtrue, qtrue );
-		return qtrue;
-	}
-
-	if ( !TIMER_Exists( NPC, "maimedChoice" ) )
-	{// decide once: run (then hands up when cornered/caught) or hands up right here
-		TIMER_Set( NPC, "maimedChoice", Q3_INFINITE );
-		if ( NPC->enemy && Q_irand( 0, 1 ) )
-		{
-			TIMER_Set( NPC, "maimedFlee", Q3_INFINITE );
-			G_StartFlee( NPC, NPC->enemy, NPC->enemy->currentOrigin, AEL_DANGER_GREAT, 4000, 8000 );
-			TIMER_Set( NPC, "meleeFallback", Q3_INFINITE );//no fighting back with fists after losing a hand
-		}
-	}
-
-	if ( TIMER_Exists( NPC, "maimedFlee" )
-		&& NPC->enemy
-		&& NPCInfo->tempBehavior == BS_FLEE
-		&& !TIMER_Done( NPC, "flee" ) )
-	{// still running away: let the normal flee behaviour drive it
-		return qfalse;
-	}
-
-	// hands up, and stay that way
-	ucmd.forwardmove = ucmd.rightmove = ucmd.upmove = 0;
-	ucmd.buttons &= ~(BUTTON_ATTACK|BUTTON_ALT_ATTACK);
-	if ( NPC->enemy )
-	{
-		NPC_FaceEnemy();
-	}
-	NPC_Surrender();
-	NPC_UpdateAngles( qtrue, qtrue );
-	return qtrue;
-}
-
 void NPC_RunBehavior( int team, int bState )
 {
+	if ( !TIMER_Done( NPC, "spyVictim" ) )
+	{//in the player's grip from behind (G_SpyTakedownUpdate): no thinking, no moving
+		ucmd.forwardmove = ucmd.rightmove = ucmd.upmove = 0;
+		ucmd.buttons = 0;
+		VectorClear( NPC->client->ps.velocity );
+		NPC_UpdateAngles( qtrue, qtrue );
+		return;
+	}
+
+	AI_NerveUpdate( NPC );
+	AI_AwarenessUpdate( NPC );//what they've noticed so far; sets the enemy once they're sure
+
 	//
 	if ( bState == BS_CINEMATIC )
 	{
@@ -1934,8 +1862,8 @@ void NPC_RunBehavior( int team, int bState )
 		NPC_UpdateAngles(qtrue, qtrue);
 		return;
 	}
-	else if ( TIMER_Exists( NPC, "maimed" ) && NPC_MaimedThink() )
-	{//lost a hand to a saber: shock, then surrendering and/or fleeing
+	else if ( NPCInfo->neutralState != NS_NONE && NPC_NeutralThink() )
+	{//taken out of the fight alive (maimed, knocked out, surrendered...): NPC_neutral.cpp owns them now
 		return;
 	}
 	else if ( NPC->client->ps.weapon == WP_EMPLACED_GUN )
@@ -2041,26 +1969,9 @@ void NPC_RunBehavior( int team, int bState )
 	{//being forced to march
 		NPC_BSDefault();
 	}
-	else if ( NPC->client->ps.weapon == WP_TUSKEN_RIFLE )
-	{
-		if ( (NPCInfo->scriptFlags & SCF_ALT_FIRE) )
-		{
-			NPC_BehaviorSet_Sniper( bState );
-			G_CheckCharmed( NPC );
-			G_CheckInsanity( NPC );
-			return;
-		}
-		else
-		{
-			NPC_BehaviorSet_Tusken( bState );
-			G_CheckCharmed( NPC );
-			G_CheckInsanity( NPC );
-			return;
-		}
-	}
-	else if ( NPC->client->ps.weapon == WP_TUSKEN_STAFF )
-	{
-		NPC_BehaviorSet_Tusken( bState );
+	else if ( NPC->client->ps.weapon == WP_TUSKEN_RIFLE || NPC->client->ps.weapon == WP_TUSKEN_STAFF )
+	{//Tusken: the trooper loop with the sniper or melee profile
+		NPC_BehaviorSet_Stormtrooper( bState );
 		G_CheckCharmed( NPC );
 		G_CheckInsanity( NPC );
 		return;
@@ -2146,32 +2057,23 @@ void NPC_RunBehavior( int team, int bState )
 			//this block stopped dispatching to NPC_BSFlee() almost as soon as fleeing actually started,
 			//falling through to the surrender checks below instead. NPC_StartFlee() already has its
 			//own internal check to avoid interrupting a genuinely script-required move.
-				if ( bState != BS_FLEE )
-				{
-					NPC_StartFlee( NPC->enemy, NPC->enemy->currentOrigin, AEL_DANGER_GREAT, 5000, 10000 );
-				}
-				else
+				if ( bState == BS_FLEE )
 				{
 					NPC_BSFlee();
+					return;
 				}
-				return;
+				if ( NPC_StartFlee( NPC->enemy, NPC->enemy->currentOrigin, AEL_DANGER_GREAT, 5000, 10000 ) )
+				{
+					return;
+				}
+				//couldn't flee (script forbids it) -- fall through to the surrender checks below
 			}
 			if ( NPC->client->ps.weapon == WP_SABER )
 			{//special melee exception
 				NPC_BehaviorSet_Default( bState );
 				return;
 			}
-			if ( NPC->client->ps.weapon == WP_DISRUPTOR && (NPCInfo->scriptFlags & SCF_ALT_FIRE) )
-			{//a sniper
-				NPC_BehaviorSet_Sniper( bState );
-				return;
-			}
-			if ( ( NPC->client->ps.weapon == WP_THERMAL && NPC->client->NPC_class != CLASS_STORMTROOPER )
-				|| NPC->client->ps.weapon == WP_MELEE )//FIXME: separate AI for melee fighters
-			{//a grenadier
-				NPC_BehaviorSet_Grenadier( bState );
-				return;
-			}
+			//(snipers, grenadiers and melee fighters go through the trooper set below with their own profile)
 			if ( NPC_CheckSurrender() )
 			{
 				return;
@@ -2646,8 +2548,9 @@ void NPC_InitAI ( void )
 	debugNPCFreeze = gi.cvar ( "d_npcfreeze", "0", CVAR_CHEAT);
 	d_JediAI = gi.cvar ( "d_JediAI", "0", CVAR_CHEAT );
 	d_noGroupAI = gi.cvar ( "d_noGroupAI", "0", CVAR_CHEAT );
-	d_asynchronousGroupAI = gi.cvar ( "d_asynchronousGroupAI", "1", CVAR_CHEAT );
-	d_moraleDebug = gi.cvar ( "d_moraleDebug", "0", CVAR_CHEAT );
+	d_aiDebug = gi.cvar ( "d_aiDebug", "0", CVAR_CHEAT );
+	d_nerveLog = gi.cvar ( "d_nerveLog", "0", CVAR_CHEAT );
+	d_aiLog = gi.cvar ( "d_aiLog", "0", CVAR_CHEAT );
 
 	//0 = never (BORING)
 	//1 = kyle only

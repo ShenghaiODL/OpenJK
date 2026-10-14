@@ -158,6 +158,8 @@ public:
 	sexType_t	sex;			//male, female, etc.
 	//Weapons (blaster pass)
 	int		weaponSkill;		// 1-5 from the .npc "weaponSkill" key; 0 = not set, use g_npcWeaponSkill
+	int		nerve;				// 0-100 from the .npc "nerve" key; 0 = not set, use the rank default
+	int		blockSkill;			// 1-5 from the .npc "blockSkill" key (saber users); 0 = not set, use the rank default
 
 
 	void sg_export(
@@ -182,6 +184,8 @@ public:
 		saved_game.write<int32_t>(acceleration);
 		saved_game.write<int32_t>(sex);
 		saved_game.write<int32_t>(weaponSkill);
+		saved_game.write<int32_t>(nerve);
+		saved_game.write<int32_t>(blockSkill);
 	}
 
 	void sg_import(
@@ -206,6 +210,8 @@ public:
 		saved_game.read<int32_t>(acceleration);
 		saved_game.read<int32_t>(sex);
 		saved_game.read<int32_t>(weaponSkill);
+		saved_game.read<int32_t>(nerve);
+		saved_game.read<int32_t>(blockSkill);
 	}
 }; // gNPCstats_t
 
@@ -398,6 +404,41 @@ public:
 	int			lastBlockDir;		//saberBlocked direction of last blocked attack (predictability scaling)
 	int			sameBlockDirCount;	//consecutive same-direction blocked attacks
 
+	// Non-lethal / neutral state (NPC_neutral.cpp)
+	int			neutralState;		//neutralState_t: out of the fight but alive
+	int			neutralHow;			//neutralHow_t: what took them out
+	int			neutralTime;		//when the current neutral state started
+	int			neutralFlags;		//NF_*
+	int			spawnWeapon;		//weapon in hand at spawn
+
+	// Nerve (AI_Nerve.cpp): per-NPC fear/confidence replacing group morale
+	int			nerveBase;			//0-100 from rank / the .npc "nerve" key
+	int			nerveShock;			//accumulated event delta, decays toward 0
+	int			nerveTier;			//hysteresis tier
+	int			nerveLastEvent;
+	int			nerveLastEventTime;
+
+	// Utility brain (AI_Brain.cpp)
+	int			aiAction;
+	int			aiActionStart;
+	int			aiActionHoldUntil;
+	int			aiFlankSide;
+	int			aiProfile;
+	float		leash;				//companions: how far from the leader they'll fight
+	int			squadNum;
+
+	// Awareness (AI_Awareness.cpp)
+	int			awareState;
+	float		awareLevel;			//0..1
+	int			awareLastRise;
+	vec3_t		lastKnownEnemyPos;
+	int			lastKnownEnemyTime;
+	int			searchPhase;
+
+	// Duel (AI_JediBrain.cpp)
+	int			duelRole;
+	int			blockDebounce;
+	int			perfectParryDebounce;
 
 
 	void sg_export(
@@ -529,6 +570,32 @@ public:
 		saved_game.write<int32_t>(guardBreakTime);
 		saved_game.write<int32_t>(lastBlockDir);
 		saved_game.write<int32_t>(sameBlockDirCount);
+		saved_game.write<int32_t>(neutralState);
+		saved_game.write<int32_t>(neutralHow);
+		saved_game.write<int32_t>(neutralTime);
+		saved_game.write<int32_t>(neutralFlags);
+		saved_game.write<int32_t>(spawnWeapon);
+		saved_game.write<int32_t>(nerveBase);
+		saved_game.write<int32_t>(nerveShock);
+		saved_game.write<int32_t>(nerveTier);
+		saved_game.write<int32_t>(nerveLastEvent);
+		saved_game.write<int32_t>(nerveLastEventTime);
+		saved_game.write<int32_t>(aiAction);
+		saved_game.write<int32_t>(aiActionStart);
+		saved_game.write<int32_t>(aiActionHoldUntil);
+		saved_game.write<int32_t>(aiFlankSide);
+		saved_game.write<int32_t>(aiProfile);
+		saved_game.write<float>(leash);
+		saved_game.write<int32_t>(squadNum);
+		saved_game.write<int32_t>(awareState);
+		saved_game.write<float>(awareLevel);
+		saved_game.write<int32_t>(awareLastRise);
+		saved_game.write<float>(lastKnownEnemyPos);
+		saved_game.write<int32_t>(lastKnownEnemyTime);
+		saved_game.write<int32_t>(searchPhase);
+		saved_game.write<int32_t>(duelRole);
+		saved_game.write<int32_t>(blockDebounce);
+		saved_game.write<int32_t>(perfectParryDebounce);
 	}
 
 	void sg_import(
@@ -660,6 +727,32 @@ public:
 		saved_game.read<int32_t>(guardBreakTime);
 		saved_game.read<int32_t>(lastBlockDir);
 		saved_game.read<int32_t>(sameBlockDirCount);
+		saved_game.read<int32_t>(neutralState);
+		saved_game.read<int32_t>(neutralHow);
+		saved_game.read<int32_t>(neutralTime);
+		saved_game.read<int32_t>(neutralFlags);
+		saved_game.read<int32_t>(spawnWeapon);
+		saved_game.read<int32_t>(nerveBase);
+		saved_game.read<int32_t>(nerveShock);
+		saved_game.read<int32_t>(nerveTier);
+		saved_game.read<int32_t>(nerveLastEvent);
+		saved_game.read<int32_t>(nerveLastEventTime);
+		saved_game.read<int32_t>(aiAction);
+		saved_game.read<int32_t>(aiActionStart);
+		saved_game.read<int32_t>(aiActionHoldUntil);
+		saved_game.read<int32_t>(aiFlankSide);
+		saved_game.read<int32_t>(aiProfile);
+		saved_game.read<float>(leash);
+		saved_game.read<int32_t>(squadNum);
+		saved_game.read<int32_t>(awareState);
+		saved_game.read<float>(awareLevel);
+		saved_game.read<int32_t>(awareLastRise);
+		saved_game.read<float>(lastKnownEnemyPos);
+		saved_game.read<int32_t>(lastKnownEnemyTime);
+		saved_game.read<int32_t>(searchPhase);
+		saved_game.read<int32_t>(duelRole);
+		saved_game.read<int32_t>(blockDebounce);
+		saved_game.read<int32_t>(perfectParryDebounce);
 	}
 }; // gNPC_t
 
