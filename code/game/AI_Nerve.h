@@ -51,6 +51,5 @@ int			AI_NerveEffective( gentity_t *npc, int *outSituational = NULL );
 int			AI_NerveSituational( gentity_t *npc, int *officer, int *numbers, int *contagion, int *threat, int *wounds );
 int			AI_NerveTier( gentity_t *npc );
 qboolean	AI_NerveImmune( gentity_t *npc );
-int			AI_GetNerveMoraleTier( gentity_t *npc );	// shim: 0 ROUTED .. 4 RUSH for the old readers
 const char	*AI_NerveTierName( int tier );
 const char	*AI_NerveEventName( int ev );

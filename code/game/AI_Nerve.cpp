@@ -254,23 +254,6 @@ int AI_NerveTier( gentity_t *npc )
 	return npc->NPC->nerveTier;
 }
 
-// the old 0 ROUTED .. 4 RUSH scale the trooper code still reads. A composed squad sits at
-// ADVANCE, like a healthy squad did under the old morale sum; it takes high nerve to flank or
-// rush, and anyone BREAKING or worse falls back to cover.
-int AI_GetNerveMoraleTier( gentity_t *npc )
-{
-	switch ( AI_NerveTier( npc ) )
-	{
-	case NT_STEADY:
-		{
-			const int e = AI_NerveEffective( npc );
-			return e >= 85 ? 4 : ( e >= 70 ? 3 : 2 );
-		}
-	case NT_SHAKEN:		return 1;
-	default:			return 0;
-	}
-}
-
 /*
 -------------------------
 AI_NerveUpdate

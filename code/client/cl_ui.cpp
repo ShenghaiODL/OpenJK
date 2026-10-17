@@ -234,6 +234,7 @@ void CL_InitUI( void ) {
 	uii.FS_Write				= FS_Write;
 	uii.FS_FCloseFile			= FS_FCloseFile;
 	uii.FS_GetFileList			= FS_GetFileList;
+	uii.FS_WhichPak				= FS_WhichPak;
 	uii.FS_ReadFile				= FS_ReadFile;
 	uii.FS_FreeFile				= FS_FreeFile;
 

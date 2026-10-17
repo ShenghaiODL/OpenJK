@@ -354,6 +354,7 @@ typedef struct modelDef_s {
 	vec3_t g2mins2, g2maxs2, g2minsEffect, g2maxsEffect;
 	float fov_x2, fov_y2, fov_Effectx, fov_Effecty;
 	int g2skin2;
+	qboolean saberUpright;	// JKEnhanced: isSaber/isSaber2 drawn blade-up, spinning about the blade
 } modelDef_t;
 
 #define ITF_G2VALID			0x0001					// indicates whether or not g2 instance is valid.
@@ -362,6 +363,17 @@ typedef struct modelDef_s {
 #define ITF_ISSABER2		0x0008					// second saber item, draws blade
 
 #define ITF_ISANYSABER		(ITF_ISSABER|ITF_ISSABER2)	//either saber
+
+// anchor: where an item in a virtualSize menu sticks when the screen is wider or narrower than the
+// authored aspect. LEFT/RIGHT keep their distance to that screen edge, CENTER to the middle, STRETCH
+// scales horizontally with the screen (backgrounds).
+enum {
+	ANCHOR_DEFAULT,
+	ANCHOR_LEFT,
+	ANCHOR_CENTER,
+	ANCHOR_RIGHT,
+	ANCHOR_STRETCH
+};
 
 typedef struct itemDef_s {
 	Window		window;						// common positional, border, style, layout info
@@ -412,6 +424,57 @@ typedef struct itemDef_s {
 	int			xoffset;
 	qboolean	disabled;					// Does this item ignore mouse and keyboard focus
 	qboolean	disabledHidden;				// hide the item when 'disabled' is true (for generic image items)
+	int			anchor;						// virtualSize menus: ANCHOR_* (0 = use the menu's)
+
+	// JKEnhanced compact-menu keywords
+	qhandle_t	hoverBackground;			// image drawn while the item is hovered / focused
+	rectDef_t	hoverRect;					// where, relative to the item (w/h 0 = the item's rect)
+	vec4_t		hoverBackColor;				// tint of hoverBackground (default white)
+	vec4_t		hoverColor;					// text colour while hovered / focused
+	qboolean	hasHoverColor;
+	qhandle_t	icon;						// image drawn under the text
+	rectDef_t	iconRect;					// relative to the item (w/h 0 = the item's rect)
+	vec4_t		iconColor;
+	const char	*tabGroup;					// tabs: buttons sharing a tabGroup show one tabPanel at a time
+	const char	*tabPanel;					// group/item name shown while this tab is selected
+	vec4_t		selectedColor;				// text colour of the selected tab
+	qboolean	hasSelectedColor;
+	qhandle_t	selectedBackground;			// image drawn behind the selected tab (hoverRect / hoverBackColor)
+	qboolean	sliderFill;					// sliders: the bar fills the item (value start -> right edge, item height)
+	qboolean	tabDefault;					// selected when the menu opens
+	qboolean	tabSelected;
+	// selected = a cvar holds a value (selectedCvar, or the first setcvar in the action of an item
+	// with selectedColor / selectedBackground), so the highlight follows the setting
+	const char	*selectedCvar;
+	const char	*selectedValue;
+	qboolean	selectedCvarChecked;		// the action has been looked at (or selectedCvar given / "none")
+	vec4_t		sliderColor;				// slider bar tint
+	qboolean	hasSliderColor;
+	vec4_t		sliderThumbColor;			// slider thumb tint (default: the bar's)
+	qboolean	hasSliderThumbColor;
+	vec4_t		scrollColor;				// scroll bar + arrows tint
+	qboolean	hasScrollColor;
+	vec4_t		scrollThumbColor;			// scroll thumb tint (default: scrollColor)
+	qboolean	hasScrollThumbColor;
+	vec4_t		headingColor;				// list boxes: heading rows (e.g. the hilt list's pk3 groups)
+	qboolean	hasHeadingColor;
+	// own art for sliders / scroll bars (else white copies of the stock art when a colour is set, so
+	// the colour is exact; else the stock art)
+	qhandle_t	sliderImage, sliderThumbImage;
+	qhandle_t	scrollImage, scrollThumbImage;
+	qhandle_t	scrollArrowImage[4];		// up, down, left, right
+	qboolean	inherited;					// built with 'inherit' (its type may change after typeData exists)
+	// slideshow: full-bleed images from a cvar's list, cropped to fill, slow zoom, crossfades
+	const char	*slideshowCvar;				// cvar holding "shader shader ..." (empty: slideshowDefault)
+	const char	*slideshowDefault;
+	float		slideshowHold;				// seconds each image shows
+	float		slideshowFade;				// seconds of crossfade
+	float		slideshowAspect;			// the images' width/height (levelshots are 4:3)
+	float		slideshowZoom;				// how much each image zooms in while it shows (0.06 = 6%)
+	// valueX: where a multi / yes-no / slider / bind / edit field's value starts, from the item's left
+	// (default: right after the label). Lines values up in a column.
+	float		valueX;
+	qboolean	hasValueX;
 } itemDef_t;
 
 typedef struct {
@@ -444,6 +507,12 @@ typedef struct {
 	int			descAlignment;				// Description of alignment
 	float		descScale;					// Description scale
 	int			descTextStyle;					// ( optional ) style, normal and shadowed are it for now
+
+	// virtualSize: the menu is authored at virtualW x virtualH and converted to 640x480 once after parsing
+	float		virtualW;
+	float		virtualH;
+	int			anchor;						// default ANCHOR_* for its items (0 = center)
+	rectDef_t	virtualRect;				// the menu rect as authored
 
 
 } menuDef_t;
@@ -504,6 +573,9 @@ qboolean	PC_ParseStringMem(const char **out);
 void		PC_ParseWarning(const char *message);
 qboolean	PC_String_Parse(int handle, const char **out);
 int			PC_StartParseSession(const char *fileName,char **buffer);
+// ui_menupp.cpp: #include / #define / #ifdef for menu files (JKEnhanced)
+char		*UI_PreprocessMenuFile( const char *fileName, const char *text, int len, int *outLen );
+qboolean	UI_FreePreprocessedMenu( char *buffer );
 char		*PC_ParseExt(void);
 qboolean	PC_ParseInt(int *number);
 qboolean	PC_ParseFloat(float *number);

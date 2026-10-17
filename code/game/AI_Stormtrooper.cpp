@@ -1670,29 +1670,30 @@ void ST_Commander( void )
 		enemyLost = qtrue;
 	}
 
-	// Nerve tier transition — commander announces shift in aggression
+	// The leader's nerve tier changed: they say so (steadier -> push them, shakier -> take cover).
+	// Last-announced tier per squad slot isn't saved; after a load the first change just re-announces.
 	if ( group->commander && group->commander->NPC )
 	{
-		const int newTier = AI_GetNerveMoraleTier( group->commander );
-		if ( newTier != group->moraleTier )
+		static int s_announcedTier[MAX_FRAME_GROUPS] = { 0 };
+		const int slot = (int)( group - level.groups );
+		const int newTier = AI_NerveTier( group->commander );//NT_STEADY 0 .. NT_BROKEN 3
+		if ( slot >= 0 && slot < MAX_FRAME_GROUPS && newTier != s_announcedTier[slot] )
 		{
 			if ( d_aiDebug->integer )
 			{
-				gi.Printf( "NERVE: group %i commander tier %i -> %i (nerve %i, members %i)\n",
-					(int)(group - level.groups), group->moraleTier, newTier,
+				gi.Printf( "NERVE: group %i commander tier %s -> %s (nerve %i, members %i)\n",
+					slot, AI_NerveTierName( s_announcedTier[slot] ), AI_NerveTierName( newTier ),
 					AI_NerveEffective( group->commander ), group->numGroup );
 			}
-			if ( newTier > group->moraleTier )
-			{
-				static const int riseSpeech[] = { SPEECH_CHASE, SPEECH_OUTFLANK, SPEECH_OUTFLANK, SPEECH_YELL };
-				ST_Speech( group->commander, riseSpeech[newTier - 1], 0.3f );
+			if ( newTier < s_announcedTier[slot] )
+			{//steadier
+				ST_Speech( group->commander, newTier == NT_STEADY ? SPEECH_OUTFLANK : SPEECH_CHASE, 0.3f );
 			}
 			else
-			{
-				static const int fallSpeech[] = { SPEECH_ESCAPING, SPEECH_COVER, SPEECH_COVER, SPEECH_COVER };
-				ST_Speech( group->commander, fallSpeech[newTier], 0.3f );
+			{//shakier
+				ST_Speech( group->commander, newTier == NT_BROKEN ? SPEECH_ESCAPING : SPEECH_COVER, 0.3f );
 			}
-			group->moraleTier = newTier;
+			s_announcedTier[slot] = newTier;
 		}
 	}
 
@@ -2119,7 +2120,7 @@ void NPC_BSST_Attack( void )
 		}
 		else if ( !TIMER_Done( NPC, "coverHold" ) )
 		{
-			if ( AI_GetNerveMoraleTier( NPC ) >= 3 )
+			if ( AI_NerveEffective( NPC ) >= 70 )
 			{//nerve surged — break cover and push (cleanup happens above next frame)
 				TIMER_Set( NPC, "coverHold", -1 );
 			}
@@ -2241,6 +2242,11 @@ void NPC_BSST_Attack( void )
 		NPC_UpdateAngles( qtrue, qtrue );
 		if ( doMove && !TIMER_Done( NPC, "flee" ) )
 		{//don't run away and shoot
+			shoot = qfalse;
+		}
+		else if ( shoot && NPC->enemy && !InFOV( NPC->enemy->currentOrigin, NPC, 60, 60 ) )
+		{//facing the way we're running (a retreat, a relocate): only fire if they're actually out in
+		 //front of us -- this used to let a trooper falling back shoot down the corridor ahead of him
 			shoot = qfalse;
 		}
 	}

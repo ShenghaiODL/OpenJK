@@ -65,6 +65,137 @@ extern qboolean PC_Script_Parse(const char **out);
 const char* saberSingleHiltInfo[MAX_SABER_HILTS];
 const char* saberStaffHiltInfo[MAX_SABER_HILTS];
 
+// JKEnhanced: hilt list rows grouped by pk3 (ui_saber.cpp)
+extern int			UI_HiltRowCount( int feederID );
+extern int			UI_HiltRowSaber( int feederID, int row );
+extern const char	*UI_HiltRowText( int feederID, int row );
+extern qboolean		UI_HiltRowToggle( int feederID, int row );
+extern int			UI_HiltRowForSaber( int feederID, const char *saberName );
+
+// is a list box row a heading (drawn in the item's headingColor)? Only the hilt lists have them.
+qboolean UI_FeederRowIsHeading( float feederID, int row )
+{
+	if ( feederID == FEEDER_SABER_SINGLE_INFO || feederID == FEEDER_SABER_STAFF_INFO )
+	{
+		return (qboolean)( row >= 0 && row < UI_HiltRowCount( (int)feederID ) && UI_HiltRowSaber( (int)feederID, row ) < 0 );
+	}
+	return qfalse;
+}
+
+/*
+===============
+UI_SetScreenSaberFromList (JKEnhanced)
+
+A hilt list box was clicked: its cursor is a ROW (pk3 headings + sabers). A heading opens / closes
+its group; a saber row sets the cvar (ui_saber / ui_saber2). Replaces the four copies of this in
+the setscreensaberhilt* scripts; the staff list now checks the staff names (the stock code checked
+the single-saber list).
+===============
+*/
+static void UI_SetScreenSaberFromList( const char *itemName, int feederID, const char *cvarName )
+{
+	menuDef_t *menu = Menu_GetFocused();
+	if ( !menu )
+	{
+		return;
+	}
+	itemDef_t *item = (itemDef_t *)Menu_FindItemByName( menu, itemName );
+	if ( !item )
+	{
+		return;
+	}
+	// a heading opens / closes on a click or Enter; arrow keys just pass over it
+	extern int Menu_LastKey;
+	if ( UI_HiltRowSaber( feederID, item->cursorPos ) < 0
+		&& Menu_LastKey != A_MOUSE1 && Menu_LastKey != A_ENTER && Menu_LastKey != A_KP_ENTER )
+	{
+		return;
+	}
+	if ( UI_HiltRowToggle( feederID, item->cursorPos ) )
+	{
+		// keep the scroll position inside the (now shorter or longer) list
+		listBoxDef_t *listPtr = (listBoxDef_t *)item->typeData;
+		const int count = UI_HiltRowCount( feederID );
+		if ( listPtr && listPtr->startPos > 0 && listPtr->startPos >= count )
+		{
+			listPtr->startPos = count > 0 ? count - 1 : 0;
+		}
+		return;
+	}
+	const int saber = UI_HiltRowSaber( feederID, item->cursorPos );
+	const char **names = feederID == FEEDER_SABER_STAFF_INFO ? saberStaffHiltInfo : saberSingleHiltInfo;
+	if ( saber >= 0 && names[saber] )
+	{
+		Cvar_Set( cvarName, names[saber] );
+	}
+}
+
+/*
+===============
+Blade colour: preset squares + inline RGB sliders (JKEnhanced)
+
+The presets stay named colours (in game they use their own blade textures). uiScript
+"saber_syncrgb 1|2" puts the current colour's RGB on that saber's sliders (run from onOpen and
+from each preset button). Sliders run no script when dragged, so UI_SaberRGBWatch (every UI
+frame) notices a slider value that changed and switches that saber to RGB mode; saving then
+writes the sliders as "xRRGGBB" (UI_UpdateSaberCvars).
+===============
+*/
+extern saber_colors_t TranslateSaberColor( const char *name );
+extern void UI_RGBForSaber( byte *rgba, int whichSaber );
+static int saberRGBSeen[2][3] = { { -1, -1, -1 }, { -1, -1, -1 } };	// slider values last seen / set
+
+static const char *UI_SaberRGBCvar( int whichSaber, int channel )
+{
+	static const char *names[2][3] = {
+		{ "ui_rgb_saber_red", "ui_rgb_saber_green", "ui_rgb_saber_blue" },
+		{ "ui_rgb_saber2_red", "ui_rgb_saber2_green", "ui_rgb_saber2_blue" },
+	};
+	return names[whichSaber][channel];
+}
+
+static void UI_SyncSaberRGB( int whichSaber )
+{
+	const char *colorCvar = whichSaber ? "ui_saber2_color" : "ui_saber_color";
+	if ( TranslateSaberColor( Cvar_VariableString( colorCvar ) ) < SABER_RGB )
+	{	// a named colour: show its RGB on the sliders (RGB colours already have their own values)
+		byte rgba[4] = { 0, 0, 0, 255 };
+		UI_RGBForSaber( rgba, whichSaber );
+		for ( int c = 0; c < 3; c++ )
+		{
+			Cvar_SetValue( UI_SaberRGBCvar( whichSaber, c ), rgba[c] );
+		}
+	}
+	// this change isn't the player moving a slider
+	for ( int c = 0; c < 3; c++ )
+	{
+		saberRGBSeen[whichSaber][c] = Cvar_VariableIntegerValue( UI_SaberRGBCvar( whichSaber, c ) );
+	}
+}
+
+static void UI_SaberRGBWatch( void )
+{
+	for ( int s = 0; s < 2; s++ )
+	{
+		int v[3];
+		qboolean moved = qfalse;
+		for ( int c = 0; c < 3; c++ )
+		{
+			v[c] = Cvar_VariableIntegerValue( UI_SaberRGBCvar( s, c ) );
+			if ( saberRGBSeen[s][c] >= 0 && v[c] != saberRGBSeen[s][c] )
+			{
+				moved = qtrue;
+			}
+			saberRGBSeen[s][c] = v[c];
+		}
+		const char *colorCvar = s ? "ui_saber2_color" : "ui_saber_color";
+		if ( moved && TranslateSaberColor( Cvar_VariableString( colorCvar ) ) < SABER_RGB )
+		{
+			Cvar_Set( colorCvar, va( "x%02x%02x%02x", v[0] & 0xff, v[1] & 0xff, v[2] & 0xff ) );
+		}
+	}
+}
+
 #define LISTBUFSIZE 10240
 
 static struct
@@ -632,6 +763,7 @@ void _UI_Refresh( int realtime )
 	}
 
 	UI_UpdateCvars();
+	UI_SaberRGBWatch();	// JKEnhanced: a moved blade-colour slider switches that saber to RGB
 
 	if (Menu_Count() > 0)
 	{
@@ -945,14 +1077,9 @@ const char *UI_FeederItemText(float feederID, int index, int column, qhandle_t *
 			return uiInfo.customSabers[uiInfo.customSabers2Index].Skin5.skins[index].name;
 		}
 	}
-	else if (feederID == FEEDER_SABER_SINGLE_INFO)
-	{
-		UI_SaberProperNameForSaber(saberSingleHiltInfo[index], info);
-		return info;
-	}
-	else if (feederID == FEEDER_SABER_STAFF_INFO)
-	{
-		UI_SaberProperNameForSaber(saberStaffHiltInfo[index], info);
+	else if (feederID == FEEDER_SABER_SINGLE_INFO || feederID == FEEDER_SABER_STAFF_INFO)
+	{	// JKEnhanced: a pk3 heading or an (indented) saber
+		Q_strncpyz( info, UI_HiltRowText( (int)feederID, index ), sizeof( info ) );
 		return info;
 	}
 	else if (feederID == FEEDER_MODS)
@@ -1175,6 +1302,121 @@ static qboolean UI_DeferMenuScript ( const char **args )
 
 /*
 ===============
+JKEnhanced main menu: Continue + progress slideshow
+
+uiScript updateContinue	(run from the main menu's onOpen) finds the newest save, manual or auto,
+	and sets:
+		ui_continueOK		1 if there is one
+		ui_continueSave		its file name (for continueGame)
+		ui_continueMap		its map
+		ui_continueDesc		its description (what the load menu shows)
+		ui_continueTime		when it was saved
+		ui_menuShots		levelshots for the background: the save's map first, then the maps
+							the player has reached (ui_progressMaps, kept by the game), newest first
+uiScript continueGame	loads it.
+===============
+*/
+static qboolean UI_LevelshotExists( const char *map )
+{
+	static const char *exts[] = { "jpg", "tga", "png" };
+	for ( int i = 0; i < 3; i++ )
+	{
+		if ( ui.FS_ReadFile( va( "levelshots/%s.%s", map, exts[i] ), NULL ) > 0 )
+		{
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+static void UI_AddMenuShot( char *list, int size, const char *map )
+{
+	if ( !map || !map[0] || !UI_LevelshotExists( map ) )
+	{
+		return;
+	}
+	const char *shot = va( "levelshots/%s", map );
+	// no duplicates (whole words)
+	const int len = strlen( shot );
+	for ( const char *p = list; ( p = Q_stristr( p, shot ) ) != NULL; p += len )
+	{
+		if ( ( p == list || p[-1] == ' ' ) && ( p[len] == '\0' || p[len] == ' ' ) )
+		{
+			return;
+		}
+	}
+	if ( list[0] )
+	{
+		Q_strcat( list, size, " " );
+	}
+	Q_strcat( list, size, shot );
+}
+
+static void UI_UpdateContinue( void )
+{
+	char	desc[iSG_COMMENT_SIZE] = { 0 };
+	char	map[MAX_TOKEN_CHARS] = { 0 };
+	char	bestName[MAX_QPATH] = { 0 };
+	char	bestDesc[iSG_COMMENT_SIZE] = { 0 };
+	char	bestMap[MAX_TOKEN_CHARS] = { 0 };
+	int		bestTime = 0;
+
+	// manual saves, newest first (also refreshes the load menu's list)
+	ReadSaveDirectory();
+	if ( s_savegame.saveFileCnt > 0 && s_savedata[0].currentSaveFileName )
+	{
+		bestTime = (int)s_savedata[0].currentSaveFileDateTime;
+		Q_strncpyz( bestName, s_savedata[0].currentSaveFileName, sizeof( bestName ) );
+		Q_strncpyz( bestDesc, s_savedata[0].currentSaveFileComments, sizeof( bestDesc ) );
+		Q_strncpyz( bestMap, s_savedata[0].currentSaveFileMap, sizeof( bestMap ) );
+	}
+	// the autosave, if it's newer
+	if ( Cvar_VariableIntegerValue( "ui_ResumeOK" ) )
+	{
+		const int t = ui.SG_GetSaveGameComment( "auto", desc, map );
+		if ( t > bestTime )
+		{
+			bestTime = t;
+			Q_strncpyz( bestName, "auto", sizeof( bestName ) );
+			Q_strncpyz( bestDesc, desc, sizeof( bestDesc ) );
+			Q_strncpyz( bestMap, map, sizeof( bestMap ) );
+		}
+	}
+
+	Cvar_Set( "ui_continueOK", bestName[0] ? "1" : "0" );
+	Cvar_Set( "ui_continueSave", bestName );
+	Cvar_Set( "ui_continueMap", bestMap );
+	Cvar_Set( "ui_continueDesc", bestDesc );
+	if ( bestTime > 0 )
+	{
+		time_t tt = (time_t)bestTime;
+		struct tm *lt = localtime( &tt );
+		char when[64] = { 0 };
+		if ( lt )
+		{
+			strftime( when, sizeof( when ), "%b %d, %H:%M", lt );
+		}
+		Cvar_Set( "ui_continueTime", when );
+	}
+	else
+	{
+		Cvar_Set( "ui_continueTime", "" );
+	}
+
+	// background: where the player is, then where they've been
+	char shots[1024] = { 0 };
+	char progress[MAX_STRING_CHARS] = { 0 };
+	UI_AddMenuShot( shots, sizeof( shots ), bestMap );
+	Cvar_VariableStringBuffer( "ui_progressMaps", progress, sizeof( progress ) );
+	for ( char *tok = strtok( progress, " " ); tok; tok = strtok( NULL, " " ) )
+	{
+		UI_AddMenuShot( shots, sizeof( shots ), tok );
+	}
+	Cvar_Set( "ui_menuShots", shots );
+}
+
+/*
+===============
 UI_RunMenuScript
 ===============
 */
@@ -1206,6 +1448,29 @@ static qboolean UI_RunMenuScript ( const char **args )
 		{
 			s_savegame.saveFileCnt = -1;	//force a refresh at drawtime
 //			ReadSaveDirectory();
+		}
+		else if (Q_stricmp(name, "updateContinue") == 0)
+		{
+			UI_UpdateContinue();
+		}
+		else if (Q_stricmp(name, "continueGame") == 0)
+		{
+			char save[MAX_QPATH];
+			char comment[iSG_COMMENT_SIZE];
+			char saveMap[MAX_TOKEN_CHARS];
+			Cvar_VariableStringBuffer( "ui_continueSave", save, sizeof( save ) );
+			// only close the menus for a save that opens (wrong version / deleted since the menu
+			// opened): otherwise stay on the main menu and refresh the button
+			if ( save[0] && ui.SG_GetSaveGameComment( save, comment, saveMap ) > 0 )
+			{
+				Menus_CloseAll();
+				ui.Cmd_ExecuteText( EXEC_APPEND, va( "load %s\n", save ) );
+			}
+			else
+			{
+				Com_Printf( S_COLOR_YELLOW "Continue: can't open save \"%s\"\n", save );
+				UI_UpdateContinue();
+			}
 		}
 		else if (Q_stricmp(name, "loadAuto") == 0)
 		{
@@ -2010,77 +2275,28 @@ static qboolean UI_RunMenuScript ( const char **args )
 		{
 			// TODO for MAC_PORT, will only be valid for non-JK2 mode
 		}
+		// the hilt lists (JKEnhanced: rows include pk3 headings, see UI_SetScreenSaberFromList)
 		else if (Q_stricmp(name, "setscreensaberhilt") == 0)
 		{
-			menuDef_t* menu;
-			itemDef_t* item;
-
-			menu = Menu_GetFocused();	// Get current menu
-			if (menu)
-			{
-				item = (itemDef_t*)Menu_FindItemByName((menuDef_t*)menu, "hiltbut");
-				if (item)
-				{
-					if (saberSingleHiltInfo[item->cursorPos])
-					{
-						Cvar_Set("ui_saber", saberSingleHiltInfo[item->cursorPos]);
-					}
-				}
-			}
+			UI_SetScreenSaberFromList( "hiltbut", FEEDER_SABER_SINGLE_INFO, "ui_saber" );
 		}
 		else if (Q_stricmp(name, "setscreensaberhilt1") == 0)
 		{
-			menuDef_t* menu;
-			itemDef_t* item;
-
-			menu = Menu_GetFocused();	// Get current menu
-			if (menu)
-			{
-				item = (itemDef_t*)Menu_FindItemByName((menuDef_t*)menu, "hiltbut1");
-				if (item)
-				{
-					if (saberSingleHiltInfo[item->cursorPos])
-					{
-						Cvar_Set("ui_saber", saberSingleHiltInfo[item->cursorPos]);
-					}
-				}
-			}
+			UI_SetScreenSaberFromList( "hiltbut1", FEEDER_SABER_SINGLE_INFO, "ui_saber" );
 		}
 		else if (Q_stricmp(name, "setscreensaberhilt2") == 0)
 		{
-			menuDef_t* menu;
-			itemDef_t* item;
-
-			menu = Menu_GetFocused();	// Get current menu
-			if (menu)
-			{
-				item = (itemDef_t*)Menu_FindItemByName((menuDef_t*)menu, "hiltbut2");
-				if (item)
-				{
-					if (saberSingleHiltInfo[item->cursorPos])
-					{
-						Cvar_Set("ui_saber2", saberSingleHiltInfo[item->cursorPos]);
-					}
-				}
-			}
+			UI_SetScreenSaberFromList( "hiltbut2", FEEDER_SABER_SINGLE_INFO, "ui_saber2" );
 		}
 		else if (Q_stricmp(name, "setscreensaberstaff") == 0)
 		{
-			menuDef_t* menu;
-			itemDef_t* item;
-
-			menu = Menu_GetFocused();	// Get current menu
-			if (menu)
-			{
-				item = (itemDef_t*)Menu_FindItemByName((menuDef_t*)menu, "hiltbut_staves");
-				if (item)
-				{
-					if (saberSingleHiltInfo[item->cursorPos])
-					{
-						Cvar_Set("ui_saber", saberStaffHiltInfo[item->cursorPos]);
-					}
-				}
-			}
+			UI_SetScreenSaberFromList( "hiltbut_staves", FEEDER_SABER_STAFF_INFO, "ui_saber" );
+		}
+		else if (Q_stricmp(name, "saber_syncrgb") == 0)
+		{	// JKEnhanced: saber_syncrgb 1|2 - the blade's current colour onto that saber's RGB sliders
+			const char *which = NULL;
+			const int s = ( String_Parse( args, &which ) && which && atoi( which ) == 2 ) ? 1 : 0;
+			UI_SyncSaberRGB( s );
 		}
 		else if (Q_stricmp(name, "setsaberfeeders") == 0)
 		{
@@ -2426,37 +2642,9 @@ static int UI_FeederCount(float feederID)
 	{
 		return uiInfo.customSabers[uiInfo.customSabers2Index].Skin5.count;
 	}
-	else if (feederID == FEEDER_SABER_SINGLE_INFO)
-	{
-		int count = 0, i;
-		for (i = 0; i < MAX_SABER_HILTS; i++)
-		{
-			if (saberSingleHiltInfo[i])
-			{
-				count++;
-			}
-			else
-			{//done
-				break;
-			}
-		}
-		return count;
-	}
-	else if (feederID == FEEDER_SABER_STAFF_INFO)
-	{
-		int count = 0, i;
-		for (i = 0; i < MAX_SABER_HILTS; i++)
-		{
-			if (saberStaffHiltInfo[i])
-			{
-				count++;
-			}
-			else
-			{//done
-				break;
-			}
-		}
-		return count;
+	else if (feederID == FEEDER_SABER_SINGLE_INFO || feederID == FEEDER_SABER_STAFF_INFO)
+	{	// JKEnhanced: rows = pk3 headings + the sabers of open groups
+		return UI_HiltRowCount( (int)feederID );
 	}
 
 	return 0;
@@ -4764,7 +4952,7 @@ static void UI_Update(const char *name)
 				Cvar_SetValue( "ui_r_colorbits", 32 );
 				Cvar_SetValue( "ui_r_depthbits", 24 );
 				Cvar_SetValue( "ui_r_picmip", 0 );
-				Cvar_SetValue( "ui_r_mode", 4 );
+				// JKEnhanced: presets no longer change the resolution
 				Cvar_SetValue( "ui_r_texturebits", 32 );
 				Cvar_SetValue( "ui_r_fastSky", 0 );
 				Cvar_SetValue( "ui_r_inGameVideo", 1 );
@@ -4779,7 +4967,7 @@ static void UI_Update(const char *name)
 				Cvar_SetValue( "ui_r_colorbits", 0 );
 				Cvar_SetValue( "ui_r_depthbits", 24 );
 				Cvar_SetValue( "ui_r_picmip", 1 );
-				Cvar_SetValue( "ui_r_mode", 3 );
+				// JKEnhanced: presets no longer change the resolution
 				Cvar_SetValue( "ui_r_texturebits", 0 );
 				Cvar_SetValue( "ui_r_fastSky", 0 );
 				Cvar_SetValue( "ui_r_inGameVideo", 1 );
@@ -4795,7 +4983,7 @@ static void UI_Update(const char *name)
 				Cvar_SetValue( "ui_r_colorbits", 0 );
 				Cvar_SetValue( "ui_r_depthbits", 0 );
 				Cvar_SetValue( "ui_r_picmip", 2 );
-				Cvar_SetValue( "ui_r_mode", 3 );
+				// JKEnhanced: presets no longer change the resolution
 				Cvar_SetValue( "ui_r_texturebits", 0 );
 				Cvar_SetValue( "ui_r_fastSky", 1 );
 				Cvar_SetValue( "ui_r_inGameVideo", 0 );
@@ -4810,7 +4998,7 @@ static void UI_Update(const char *name)
 				Cvar_SetValue( "ui_r_lodbias", 2 );
 				Cvar_SetValue( "ui_r_colorbits", 16 );
 				Cvar_SetValue( "ui_r_depthbits", 16 );
-				Cvar_SetValue( "ui_r_mode", 3 );
+				// JKEnhanced: presets no longer change the resolution
 				Cvar_SetValue( "ui_r_picmip", 3 );
 				Cvar_SetValue( "ui_r_texturebits", 16 );
 				Cvar_SetValue( "ui_r_fastSky", 1 );
@@ -4879,7 +5067,8 @@ _UI_DrawSides
 */
 void _UI_DrawSides(float x, float y, float w, float h, float size)
 {
-	size *= uiInfo.uiDC.xscale;
+	//(size is already in 640x480 menu units, like x/y/w/h; scaling it by the screen scale made
+	// borders thicker the higher the resolution)
 	trap_R_DrawStretchPic( x, y, size, h, 0, 0, 0, 0, uiInfo.uiDC.whiteShader );
 	trap_R_DrawStretchPic( x + w - size, y, size, h, 0, 0, 0, 0, uiInfo.uiDC.whiteShader );
 }
@@ -4891,7 +5080,6 @@ _UI_DrawTopBottom
 */
 void _UI_DrawTopBottom(float x, float y, float w, float h, float size)
 {
-	size *= uiInfo.uiDC.yscale;
 	trap_R_DrawStretchPic( x, y, w, size, 0, 0, 0, 0, uiInfo.uiDC.whiteShader );
 	trap_R_DrawStretchPic( x, y + h - size, w, size, 0, 0, 0, 0, uiInfo.uiDC.whiteShader );
 }
@@ -7997,44 +8185,43 @@ static void UI_SetSaberFeeders(void)
 	if (!menu)
 		return;
 
-	for (int i = 0; i < MAX_SABER_HILTS; i++) // Set first saber
+	// JKEnhanced: the cursors are rows (pk3 headings + sabers). Open the groups holding the current
+	// sabers first, then read the rows: the single-saber lists share rows, so opening saber 2's
+	// group can move saber 1's row.
+	UI_HiltRowForSaber( FEEDER_SABER_SINGLE_INFO, saber1 );
+	UI_HiltRowForSaber( FEEDER_SABER_SINGLE_INFO, saber2 );
+	UI_HiltRowForSaber( FEEDER_SABER_STAFF_INFO, saber1 );
+	const int row1 = UI_HiltRowForSaber( FEEDER_SABER_SINGLE_INFO, saber1 );
+	const int row2 = UI_HiltRowForSaber( FEEDER_SABER_SINGLE_INFO, saber2 );
+	const int rowStaff = UI_HiltRowForSaber( FEEDER_SABER_STAFF_INFO, saber1 );
+
+	if ( row1 >= 0 )
 	{
-		if (saberSingleHiltInfo[i] && !Q_stricmp(saberSingleHiltInfo[i], saber1))
+		item = (itemDef_t*)Menu_FindItemByName((menuDef_t*)menu, "hiltbut");
+		if (item)
 		{
-			item = (itemDef_t*)Menu_FindItemByName((menuDef_t*)menu, "hiltbut");
-			if (item)
-			{
-				item->cursorPos = i;
-			}
-			item = (itemDef_t*)Menu_FindItemByName((menuDef_t*)menu, "hiltbut1");
-			if (item)
-			{
-				item->cursorPos = i;
-			}
-			break;
+			item->cursorPos = row1;
 		}
-		
-		if (saberStaffHiltInfo[i] && !Q_stricmp(saberStaffHiltInfo[i], saber1))
+		item = (itemDef_t*)Menu_FindItemByName((menuDef_t*)menu, "hiltbut1");
+		if (item)
 		{
-			item = (itemDef_t*)Menu_FindItemByName((menuDef_t*)menu, "hiltbut_staves");
-			if (item)
-			{
-				item->cursorPos = i;
-			}
-			break;
+			item->cursorPos = row1;
 		}
 	}
-
-	for (int j = 0; j < MAX_SABER_HILTS; j++) //Set second saber
+	else if ( rowStaff >= 0 )
 	{
-		if (saberSingleHiltInfo[j] && !Q_stricmp(saberSingleHiltInfo[j], saber2))
+		item = (itemDef_t*)Menu_FindItemByName((menuDef_t*)menu, "hiltbut_staves");
+		if (item)
 		{
-			item = (itemDef_t*)Menu_FindItemByName((menuDef_t*)menu, "hiltbut2");
-			if (item)
-			{
-				item->cursorPos = j;
-			}
-			break;
+			item->cursorPos = rowStaff;
+		}
+	}
+	if ( row2 >= 0 )
+	{
+		item = (itemDef_t*)Menu_FindItemByName((menuDef_t*)menu, "hiltbut2");
+		if (item)
+		{
+			item->cursorPos = row2;
 		}
 	}
 }
@@ -8259,6 +8446,42 @@ extern int menuCount;
 extern menuDef_t Menus[MAX_MENUS];		// defined menus
 extern int Menu_ItemsMatchingGroup(menuDef_t *menu, const char *name);
 extern void Menu_ShowItemByName(menuDef_t *menu, const char *p, qboolean bShow);
+
+/*
+===============
+JKEnhanced: custom-hilt panels inside the saber menu
+
+A menu can hold both custom-hilt panels itself (group customsaber1 / customsaber2) instead of the
+saber_custom / saber_custom2 popups. Saber 2's items there end in "2" (skin1listbox2, skin1but2);
+the stock popups use the plain names, so lookups try "<name>2" first for saber 2.
+===============
+*/
+static itemDef_t *UI_CustomSaberItem( menuDef_t *menu, const char *name, qboolean secondSaber )
+{
+	itemDef_t *item = secondSaber ? Menu_FindItemByName( menu, va( "%s2", name ) ) : NULL;
+	return item ? item : Menu_FindItemByName( menu, name );
+}
+
+// show / hide a saber's inline custom panel (menus without one keep using the gear icon + popup)
+static void UI_ShowCustomSaberPanel( menuDef_t *menu, qboolean secondSaber, qboolean show )
+{
+	const char *panel = secondSaber ? "customsaber2" : "customsaber1";
+	if ( !menu || Menu_ItemsMatchingGroup( menu, panel ) <= 0 )
+	{
+		return;
+	}
+	Menu_ShowItemByName( menu, panel, show );
+	// the part lists: the second one shows, as saber_custom.menu's onOpen did ("show torso")
+	for ( int i = 1; i <= 5; i++ )
+	{
+		Menu_ShowItemByName( menu, va( "skin%ilistbox%s", i, secondSaber ? "2" : "" ), (qboolean)( show && i == 2 ) );
+	}
+	if ( show )
+	{
+		UI_UpdateCustomSaber( secondSaber );	// part names, descriptions and lists for this hilt
+	}
+}
+
 static void UI_UpdateSaberHilt( qboolean secondSaber, qboolean changedModel )
 {
 	menuDef_t *menu;
@@ -8328,6 +8551,7 @@ static void UI_UpdateSaberHilt( qboolean secondSaber, qboolean changedModel )
 					listBoxItem->window.flags &= ~WINDOW_VISIBLE;
 				}
 				uiInfo.customSabersIndex = 0;
+				UI_ShowCustomSaberPanel( menu, qfalse, qfalse );	// JKEnhanced: inline panel
 			}
 			else
 			{
@@ -8336,6 +8560,7 @@ static void UI_UpdateSaberHilt( qboolean secondSaber, qboolean changedModel )
 				{
 					listBoxItem->window.flags |= WINDOW_VISIBLE;
 				}
+				UI_ShowCustomSaberPanel( menu, qfalse, qtrue );	// JKEnhanced: inline panel
 				UI_FeederSelection(FEEDER_SABER_SKIN_1, 0, listBoxItem);
 				UI_FeederSelection(FEEDER_SABER_SKIN_2, 0, listBoxItem);
 				UI_FeederSelection(FEEDER_SABER_SKIN_3, 0, listBoxItem);
@@ -8363,6 +8588,7 @@ static void UI_UpdateSaberHilt( qboolean secondSaber, qboolean changedModel )
 					listBoxItem->window.flags &= ~WINDOW_VISIBLE;
 				}
 				uiInfo.customSabers2Index = 0;
+				UI_ShowCustomSaberPanel( menu, qtrue, qfalse );	// JKEnhanced: inline panel
 			}
 			else
 			{
@@ -8371,6 +8597,7 @@ static void UI_UpdateSaberHilt( qboolean secondSaber, qboolean changedModel )
 				{
 					listBoxItem->window.flags |= WINDOW_VISIBLE;
 				}
+				UI_ShowCustomSaberPanel( menu, qtrue, qtrue );	// JKEnhanced: inline panel
 				UI_FeederSelection(FEEDER_SABER2_SKIN_1, 0, listBoxItem);
 				UI_FeederSelection(FEEDER_SABER2_SKIN_2, 0, listBoxItem);
 				UI_FeederSelection(FEEDER_SABER2_SKIN_3, 0, listBoxItem);
@@ -8441,56 +8668,56 @@ static void	UI_UpdateCustomSaber( qboolean secondSaber )
 			return;
 		}
 		
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin1listbox");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin1listbox", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabers2Index].Skin1.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin2listbox");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin2listbox", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabers2Index].Skin2.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin3listbox");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin3listbox", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabers2Index].Skin3.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin4listbox");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin4listbox", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabers2Index].Skin4.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin5listbox");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin5listbox", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabers2Index].Skin5.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin1but");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin1but", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->text = uiInfo.customSabers[uiInfo.customSabers2Index].Skin1.name;
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabers2Index].Skin1.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin2but");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin2but", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->text = uiInfo.customSabers[uiInfo.customSabers2Index].Skin2.name;
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabers2Index].Skin2.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin3but");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin3but", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->text = uiInfo.customSabers[uiInfo.customSabers2Index].Skin3.name;
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabers2Index].Skin3.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin4but");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin4but", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->text = uiInfo.customSabers[uiInfo.customSabers2Index].Skin4.name;
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabers2Index].Skin4.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin5but");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin5but", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->text = uiInfo.customSabers[uiInfo.customSabers2Index].Skin5.name;
@@ -8525,56 +8752,56 @@ static void	UI_UpdateCustomSaber( qboolean secondSaber )
 			return;
 		}
 		
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin1listbox");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin1listbox", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabersIndex].Skin1.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin2listbox");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin2listbox", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabersIndex].Skin2.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin3listbox");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin3listbox", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabersIndex].Skin3.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin4listbox");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin4listbox", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabersIndex].Skin4.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin5listbox");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin5listbox", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabersIndex].Skin5.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin1but");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin1but", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->text = uiInfo.customSabers[uiInfo.customSabersIndex].Skin1.name;
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabersIndex].Skin1.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin2but");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin2but", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->text = uiInfo.customSabers[uiInfo.customSabersIndex].Skin2.name;
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabersIndex].Skin2.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin3but");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin3but", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->text = uiInfo.customSabers[uiInfo.customSabersIndex].Skin3.name;
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabersIndex].Skin3.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin4but");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin4but", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->text = uiInfo.customSabers[uiInfo.customSabersIndex].Skin4.name;
 			listBoxItem->descText = uiInfo.customSabers[uiInfo.customSabersIndex].Skin4.desc;
 		}
-		listBoxItem = (itemDef_s *) Menu_FindItemByName(menu, "skin5but");
+		listBoxItem = (itemDef_s *) UI_CustomSaberItem(menu, "skin5but", secondSaber);
 		if (listBoxItem)
 		{
 			listBoxItem->text = uiInfo.customSabers[uiInfo.customSabersIndex].Skin5.name;

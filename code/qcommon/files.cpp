@@ -2629,6 +2629,48 @@ void FS_TouchFile_f( void ) {
 
 /*
 ============
+FS_WhichPak (JKEnhanced)
+
+The pk3 a file is read from (the first one in search order, the same one FS_ReadFile uses), as its
+base name without ".pk3" ("assets1", "zz_SFX_Sabers"). Returns qfalse (out = "") for a loose file
+or a file that doesn't exist.
+============
+*/
+qboolean FS_WhichPak( const char *filename, char *out, int outSize ) {
+	searchpath_t	*search;
+
+	if ( outSize > 0 ) {
+		out[0] = '\0';
+	}
+	if ( !filename || !filename[0] || strstr( filename, ".." ) || strstr( filename, "::" ) ) {
+		return qfalse;
+	}
+	if ( filename[0] == '/' || filename[0] == '\\' ) {
+		filename++;
+	}
+	for ( search = fs_searchpaths; search; search = search->next ) {
+		if ( search->pack ) {
+			const long hash = FS_HashFileName( filename, search->pack->hashSize );
+			for ( fileInPack_t *pakFile = search->pack->hashTable[hash]; pakFile; pakFile = pakFile->next ) {
+				if ( !FS_FilenameCompare( pakFile->name, filename ) ) {
+					Q_strncpyz( out, search->pack->pakBasename, outSize );
+					return qtrue;
+				}
+			}
+		} else if ( search->dir ) {
+			// a loose copy earlier in the search order wins over any pk3 after it
+			FILE *f = fopen( FS_BuildOSPath( search->dir->path, search->dir->gamedir, filename ), "rb" );
+			if ( f ) {
+				fclose( f );
+				return qfalse;
+			}
+		}
+	}
+	return qfalse;
+}
+
+/*
+============
 FS_Which_f
 ============
 */

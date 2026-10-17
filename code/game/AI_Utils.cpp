@@ -55,83 +55,6 @@ void AI_SetClosestBuddy( AIGroupInfo_t *group )
 	}
 }
 
-void AI_SortGroupByPathCostToEnemy( AIGroupInfo_t *group )
-{
-	AIGroupMember_t bestMembers[MAX_GROUP_MEMBERS];
-	int				i, j, k;
-	qboolean		sort = qfalse;
-
-	if ( group->enemy != NULL )
-	{//FIXME: just use enemy->waypoint?
-		group->enemyWP = NAV::GetNearestNode(group->enemy);
-	}
-	else
-	{
-		group->enemyWP = WAYPOINT_NONE;
-	}
-
-	for ( i = 0; i < group->numGroup; i++ )
-	{
-		if ( group->enemyWP == WAYPOINT_NONE )
-		{//FIXME: just use member->waypoint?
-			group->member[i].waypoint = WAYPOINT_NONE;
-			group->member[i].pathCostToEnemy = Q3_INFINITE;
-		}
-		else
-		{//FIXME: just use member->waypoint?
-			group->member[i].waypoint = NAV::GetNearestNode(group->enemy);
-			if ( group->member[i].waypoint != WAYPOINT_NONE )
-			{
-				group->member[i].pathCostToEnemy = NAV::EstimateCostToGoal( group->member[i].waypoint, group->enemyWP );
-				//at least one of us has a path, so do sorting
-				sort = qtrue;
-			}
-			else
-			{
-				group->member[i].pathCostToEnemy = Q3_INFINITE;
-			}
-		}
-	}
-	//Now sort
-	if ( sort )
-	{
-		//initialize bestMembers data
-		for ( j = 0; j < group->numGroup; j++ )
-		{
-			bestMembers[j].number = ENTITYNUM_NONE;
-		}
-
-		for ( i = 0; i < group->numGroup; i++ )
-		{
-			for ( j = 0; j < group->numGroup; j++ )
-			{
-				if ( bestMembers[j].number != ENTITYNUM_NONE )
-				{//slot occupied
-					if ( group->member[i].pathCostToEnemy < bestMembers[j].pathCostToEnemy )
-					{//this guy has a shorter path than the one currenly in this spot, bump him and put myself in here
-						for ( k = group->numGroup; k > j; k++ )
-						{
-							memcpy( &bestMembers[k], &bestMembers[k-1], sizeof( bestMembers[k] ) );
-						}
-						memcpy( &bestMembers[j], &group->member[i], sizeof( bestMembers[j] ) );
-						break;
-					}
-				}
-				else
-				{//slot unoccupied, reached end of list, throw self in here
-					memcpy( &bestMembers[j], &group->member[i], sizeof( bestMembers[j] ) );
-					break;
-				}
-			}
-		}
-
-		//Okay, now bestMembers is a sorted list, just copy it into group->members
-		for ( i = 0; i < group->numGroup; i++ )
-		{
-			memcpy( &group->member[i], &bestMembers[i], sizeof( group->member[i] ) );
-		}
-	}
-}
 
 // the leader: highest rank, first one in on a tie, and it stays put while they live
 void AI_SetNewGroupCommander( AIGroupInfo_t *group )
@@ -209,14 +132,6 @@ void AI_DeleteGroupMember( AIGroupInfo_t *group, int memberNum )
 	for ( int i = memberNum; i < (group->numGroup-1); i++ )
 	{
 		memcpy( &group->member[i], &group->member[i+1], sizeof( group->member[i] ) );
-	}
-	if ( memberNum < group->activeMemberNum )
-	{
-		group->activeMemberNum--;
-		if ( group->activeMemberNum < 0 )
-		{
-			group->activeMemberNum = 0;
-		}
 	}
 	group->numGroup--;
 	if ( group->numGroup < 0 )

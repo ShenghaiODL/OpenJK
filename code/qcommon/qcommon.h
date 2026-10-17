@@ -123,7 +123,11 @@ NET
 
 #define	PORT_ANY			-1
 
-#define	MAX_RELIABLE_COMMANDS	64			// max string commands buffered for restransmit
+#define	MAX_RELIABLE_COMMANDS	256			// max string commands buffered for restransmit (JKEnhanced: 64 -> 256.
+											// While cgame loads, every asset it registers for the first time
+											// (G_SoundIndex etc.) queues a "cs" command the client can't ack yet;
+											// busy maps like vjun3 went past 64 -> "Server command overflow" ->
+											// endless loading screen. Must stay a power of two.)
 
 typedef enum {
 	NS_CLIENT,
@@ -490,6 +494,7 @@ long		FS_FOpenFileRead( const char *qpath, fileHandle_t *file, qboolean uniqueFI
 
 // returns 1 if a file is in the PAK file, otherwise -1
 int	FS_FileIsInPAK(const char *filename );
+qboolean FS_WhichPak( const char *filename, char *out, int outSize );	// JKEnhanced: the pk3 a file comes from
 static inline int FS_FileIsInPAK( const char *filename, int *checksum )
 {
 	return FS_FileIsInPAK( filename );

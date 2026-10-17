@@ -112,7 +112,6 @@ class AIGroupMember_t
 public:
 	int	number;
 	int waypoint;
-	int pathCostToEnemy;
 	int	closestBuddy;
 
 
@@ -121,7 +120,6 @@ public:
 	{
 		saved_game.write<int32_t>(number);
 		saved_game.write<int32_t>(waypoint);
-		saved_game.write<int32_t>(pathCostToEnemy);
 		saved_game.write<int32_t>(closestBuddy);
 	}
 
@@ -130,7 +128,6 @@ public:
 	{
 		saved_game.read<int32_t>(number);
 		saved_game.read<int32_t>(waypoint);
-		saved_game.read<int32_t>(pathCostToEnemy);
 		saved_game.read<int32_t>(closestBuddy);
 	}
 }; // AIGroupMember_t
@@ -146,14 +143,7 @@ public:
 	gentity_t	*enemy;
 	int			enemyWP;
 	int			speechDebounceTime;
-	int			lastClearShotTime;
 	int			lastSeenEnemyTime;
-	int			morale;
-	int			moraleAdjust;
-	int			moraleDebounce;
-	int			moraleTier;
-	int			memberValidateTime;
-	int			activeMemberNum;
 	gentity_t	*commander;
 	vec3_t		enemyLastSeenPos;
 	int			numState[ NUM_SQUAD_STATES ];
@@ -182,14 +172,7 @@ public:
 		saved_game.write<int32_t>(enemy);
 		saved_game.write<int32_t>(enemyWP);
 		saved_game.write<int32_t>(speechDebounceTime);
-		saved_game.write<int32_t>(lastClearShotTime);
 		saved_game.write<int32_t>(lastSeenEnemyTime);
-		saved_game.write<int32_t>(morale);
-		saved_game.write<int32_t>(moraleAdjust);
-		saved_game.write<int32_t>(moraleDebounce);
-		saved_game.write<int32_t>(moraleTier);
-		saved_game.write<int32_t>(memberValidateTime);
-		saved_game.write<int32_t>(activeMemberNum);
 		saved_game.write<int32_t>(commander);
 		saved_game.write<float>(enemyLastSeenPos);
 		saved_game.write<int32_t>(numState);
@@ -217,14 +200,7 @@ public:
 		saved_game.read<int32_t>(enemy);
 		saved_game.read<int32_t>(enemyWP);
 		saved_game.read<int32_t>(speechDebounceTime);
-		saved_game.read<int32_t>(lastClearShotTime);
 		saved_game.read<int32_t>(lastSeenEnemyTime);
-		saved_game.read<int32_t>(morale);
-		saved_game.read<int32_t>(moraleAdjust);
-		saved_game.read<int32_t>(moraleDebounce);
-		saved_game.read<int32_t>(moraleTier);
-		saved_game.read<int32_t>(memberValidateTime);
-		saved_game.read<int32_t>(activeMemberNum);
 		saved_game.read<int32_t>(commander);
 		saved_game.read<float>(enemyLastSeenPos);
 		saved_game.read<int32_t>(numState);
@@ -258,7 +234,6 @@ void		AI_InsertGroupMember( AIGroupInfo_t *group, gentity_t *member );
 void		AI_DeleteGroupMember( AIGroupInfo_t *group, int memberNum );
 void		AI_DeleteSelfFromGroup( gentity_t *self );
 void		AI_SetNewGroupCommander( AIGroupInfo_t *group );
-void		AI_SortGroupByPathCostToEnemy( AIGroupInfo_t *group );
 void		AI_SetClosestBuddy( AIGroupInfo_t *group );
 void		AI_GroupUpdateEnemyLastSeen( AIGroupInfo_t *group, vec3_t spot );
 void		AI_GroupUpdateSquadstates( AIGroupInfo_t *group, gentity_t *member, int newSquadState );

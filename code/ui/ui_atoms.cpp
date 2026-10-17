@@ -304,6 +304,7 @@ void UI_Init( int apiVersion, uiimport_t *uiimport, qboolean inGameLoad )
 	ui.Cvar_Create( "ui_forcepower_inc",	"0",		CVAR_ROM|CVAR_SAVEGAME|CVAR_NORESTART);
 	ui.Cvar_Create( "tier_storyinfo",		"0",		CVAR_ROM|CVAR_SAVEGAME|CVAR_NORESTART);
 	ui.Cvar_Create( "tiers_complete",		"",			CVAR_ROM|CVAR_SAVEGAME|CVAR_NORESTART);
+	ui.Cvar_Create( "ui_progressMaps",		"",			CVAR_ARCHIVE );	// JKEnhanced: maps reached, newest first (main menu background)
 	ui.Cvar_Create( "ui_prisonerobj_currtotal", "0",	CVAR_ROM|CVAR_SAVEGAME|CVAR_NORESTART);
 	ui.Cvar_Create( "ui_prisonerobj_mintotal",  "0",	CVAR_ROM|CVAR_SAVEGAME|CVAR_NORESTART);
 

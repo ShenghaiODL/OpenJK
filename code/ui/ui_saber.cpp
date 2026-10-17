@@ -33,11 +33,247 @@ USER INTERFACE SABER LOADING & DISPLAY CODE
 #include "../server/exe_headers.h"
 #include "ui_local.h"
 #include "ui_shared.h"
+#include "menudef.h"
+#include "../qcommon/stringed_ingame.h"
 #include "../ghoul2/G2.h"
 
 #define MAX_SABER_DATA_SIZE 0x80000
 char	SaberParms[MAX_SABER_DATA_SIZE];
 qboolean	ui_saber_parms_parsed = qfalse;
+
+/*
+===============
+JKEnhanced: hilt lists grouped by the pk3 the sabers come from
+
+UI_SaberLoadParms records which pk3 each .sab file came from (its byte range in SaberParms);
+UI_SaberGetHiltInfo gives every listed saber its group. The hilt list boxes (feeders
+FEEDER_SABER_SINGLE_INFO / FEEDER_SABER_STAFF_INFO) then show rows: a heading per group (click to
+open / close it) followed, when open, by that group's sabers. saberSingleHiltInfo / saberStaffHiltInfo
+stay plain saber lists; a list box's cursorPos is a ROW, mapped with UI_HiltRowSaber.
+===============
+*/
+#define MAX_SABER_FILES		256
+#define MAX_SABER_GROUPS	64
+static struct { int start, end, group; } saberFiles[MAX_SABER_FILES];
+static int	numSaberFiles;
+static char	saberGroupNames[MAX_SABER_GROUPS][MAX_QPATH];
+static int	numSaberGroups;
+static int	saberSingleHiltGroup[MAX_SABER_HILTS];
+static int	saberStaffHiltGroup[MAX_SABER_HILTS];
+
+typedef struct { short saber; short group; } hiltRow_t;	// saber -1 = a group heading
+static hiltRow_t	hiltRows[2][MAX_SABER_HILTS + MAX_SABER_GROUPS];
+static int			numHiltRows[2];
+static qboolean		hiltGroupOpen[2][MAX_SABER_GROUPS];
+static qboolean		hiltRowsValid[2];
+
+extern const char* saberSingleHiltInfo[MAX_SABER_HILTS];
+extern const char* saberStaffHiltInfo[MAX_SABER_HILTS];
+qboolean UI_SaberProperNameForSaber( const char *saberName, char *saberProperName );
+
+// stock assets*.pk3 -> "Jedi Academy"; other pk3s by name; loose files -> "Other"
+static int UI_SaberGroupForPak( const char *pak )
+{
+	const char *label = pak && pak[0] ? pak : "Other";
+	if ( pak && !Q_stricmpn( pak, "assets", 6 ) )
+	{
+		label = "Jedi Academy";
+	}
+	for ( int i = 0; i < numSaberGroups; i++ )
+	{
+		if ( !Q_stricmp( saberGroupNames[i], label ) )
+		{
+			return i;
+		}
+	}
+	if ( numSaberGroups >= MAX_SABER_GROUPS )
+	{
+		return numSaberGroups - 1;
+	}
+	Q_strncpyz( saberGroupNames[numSaberGroups], label, sizeof( saberGroupNames[0] ) );
+	return numSaberGroups++;
+}
+
+static int UI_SaberGroupAtOffset( int offset )
+{
+	for ( int i = 0; i < numSaberFiles; i++ )
+	{
+		if ( offset >= saberFiles[i].start && offset < saberFiles[i].end )
+		{
+			return saberFiles[i].group;
+		}
+	}
+	return numSaberFiles ? saberFiles[numSaberFiles - 1].group : 0;
+}
+
+// list 0 = single-saber hilts (also both dual lists), 1 = staffs
+static int UI_HiltList( int feederID )
+{
+	return feederID == FEEDER_SABER_STAFF_INFO ? 1 : 0;
+}
+
+static void UI_HiltRowsBuild( int list )
+{
+	const char	**names = list ? saberStaffHiltInfo : saberSingleHiltInfo;
+	const int	*groups = list ? saberStaffHiltGroup : saberSingleHiltGroup;
+	int			order[MAX_SABER_GROUPS];
+	int			numOrder = 0;
+
+	// Jedi Academy first, then the pk3s alphabetically
+	for ( int g = 0; g < numSaberGroups; g++ )
+	{
+		order[numOrder++] = g;
+	}
+	for ( int a = 1; a < numOrder; a++ )
+	{
+		for ( int b = a; b > 0; b-- )
+		{
+			const int x = order[b - 1], y = order[b];
+			const qboolean xBase = (qboolean)!Q_stricmp( saberGroupNames[x], "Jedi Academy" );
+			const qboolean yBase = (qboolean)!Q_stricmp( saberGroupNames[y], "Jedi Academy" );
+			if ( yBase && !xBase ) { order[b - 1] = y; order[b] = x; continue; }
+			if ( xBase && !yBase ) break;
+			if ( Q_stricmp( saberGroupNames[x], saberGroupNames[y] ) > 0 ) { order[b - 1] = y; order[b] = x; continue; }
+			break;
+		}
+	}
+
+	numHiltRows[list] = 0;
+	for ( int o = 0; o < numOrder; o++ )
+	{
+		const int g = order[o];
+		int count = 0;
+		for ( int i = 0; i < MAX_SABER_HILTS && names[i]; i++ )
+		{
+			if ( groups[i] == g ) count++;
+		}
+		if ( !count )
+		{
+			continue;
+		}
+		hiltRows[list][numHiltRows[list]].saber = -1;
+		hiltRows[list][numHiltRows[list]].group = (short)g;
+		numHiltRows[list]++;
+		if ( !hiltGroupOpen[list][g] )
+		{
+			continue;
+		}
+		for ( int i = 0; i < MAX_SABER_HILTS && names[i]; i++ )
+		{
+			if ( groups[i] == g )
+			{
+				hiltRows[list][numHiltRows[list]].saber = (short)i;
+				hiltRows[list][numHiltRows[list]].group = (short)g;
+				numHiltRows[list]++;
+			}
+		}
+	}
+	hiltRowsValid[list] = qtrue;
+}
+
+int UI_HiltRowCount( int feederID )
+{
+	const int list = UI_HiltList( feederID );
+	if ( !hiltRowsValid[list] )
+	{
+		UI_HiltRowsBuild( list );
+	}
+	return numHiltRows[list];
+}
+
+// the saber index (into saberSingleHiltInfo / saberStaffHiltInfo) on a row, or -1 for a heading
+int UI_HiltRowSaber( int feederID, int row )
+{
+	const int list = UI_HiltList( feederID );
+	if ( row < 0 || row >= UI_HiltRowCount( feederID ) )
+	{
+		return -1;
+	}
+	return hiltRows[list][row].saber;
+}
+
+const char *UI_HiltRowText( int feederID, int row )
+{
+	static char	text[MAX_TOKEN_CHARS + 8];
+	const int	list = UI_HiltList( feederID );
+	if ( row < 0 || row >= UI_HiltRowCount( feederID ) )
+	{
+		return "";
+	}
+	const hiltRow_t *r = &hiltRows[list][row];
+	if ( r->saber < 0 )
+	{
+		const char	**names = list ? saberStaffHiltInfo : saberSingleHiltInfo;
+		const int	*groups = list ? saberStaffHiltGroup : saberSingleHiltGroup;
+		int count = 0;
+		for ( int i = 0; i < MAX_SABER_HILTS && names[i]; i++ )
+		{
+			if ( groups[i] == r->group ) count++;
+		}
+		Com_sprintf( text, sizeof( text ), "%s %s (%d)", hiltGroupOpen[list][r->group] ? "-" : "+", saberGroupNames[r->group], count );
+		return text;
+	}
+	char name[MAX_TOKEN_CHARS] = { 0 };	// UI_SaberParseParm strcpy's a whole token
+	const char *saberId = list ? saberStaffHiltInfo[r->saber] : saberSingleHiltInfo[r->saber];
+	if ( !UI_SaberProperNameForSaber( saberId, name ) || !name[0] )
+	{
+		Q_strncpyz( name, saberId, sizeof( name ) );
+	}
+	// "@SABERNAMES_…": the list box only translates text that STARTS with @, and ours is indented
+	const char *shown = name;
+	if ( name[0] == '@' )
+	{
+		const char *s = SE_GetString( name + 1 );
+		if ( s && s[0] )
+		{
+			shown = s;
+		}
+	}
+	Com_sprintf( text, sizeof( text ), "   %s", shown );
+	return text;
+}
+
+// a heading row: open / close its group. Returns qtrue if the row was a heading.
+qboolean UI_HiltRowToggle( int feederID, int row )
+{
+	const int list = UI_HiltList( feederID );
+	if ( UI_HiltRowSaber( feederID, row ) >= 0 || row < 0 || row >= numHiltRows[list] )
+	{
+		return qfalse;
+	}
+	const int g = hiltRows[list][row].group;
+	hiltGroupOpen[list][g] = (qboolean)!hiltGroupOpen[list][g];
+	UI_HiltRowsBuild( list );
+	return qtrue;
+}
+
+// the row of a saber (by name), opening its group first; -1 if it isn't listed
+int UI_HiltRowForSaber( int feederID, const char *saberName )
+{
+	const int	list = UI_HiltList( feederID );
+	const char	**names = list ? saberStaffHiltInfo : saberSingleHiltInfo;
+	const int	*groups = list ? saberStaffHiltGroup : saberSingleHiltGroup;
+	for ( int i = 0; i < MAX_SABER_HILTS && names[i]; i++ )
+	{
+		if ( Q_stricmp( names[i], saberName ) )
+		{
+			continue;
+		}
+		if ( !hiltGroupOpen[list][groups[i]] || !hiltRowsValid[list] )
+		{
+			hiltGroupOpen[list][groups[i]] = qtrue;
+			UI_HiltRowsBuild( list );
+		}
+		for ( int r = 0; r < numHiltRows[list]; r++ )
+		{
+			if ( hiltRows[list][r].saber == i )
+			{
+				return r;
+			}
+		}
+	}
+	return -1;
+}
 
 extern vmCvar_t	ui_rgb_saber_red;
 extern vmCvar_t	ui_rgb_saber_green;
@@ -431,6 +667,8 @@ void UI_SaberLoadParms( void )
 	totallen = 0;
 	marker = SaberParms;
 	marker[0] = '\0';
+	numSaberFiles = 0;
+	numSaberGroups = 0;
 
 	//now load in the sabers
 	fileCnt = ui.FS_GetFileList("ext_data/sabers", ".sab", saberExtensionListBuf, sizeof(saberExtensionListBuf) );
@@ -461,6 +699,17 @@ void UI_SaberLoadParms( void )
 			}
 			strcat( marker, buffer );
 			ui.FS_FreeFile( buffer );
+
+			// JKEnhanced: remember which pk3 this file's sabers came from (hilt list headings)
+			if ( numSaberFiles < MAX_SABER_FILES )
+			{
+				char pak[MAX_QPATH];
+				ui.FS_WhichPak( va( "ext_data/sabers/%s", holdChar ), pak, sizeof( pak ) );
+				saberFiles[numSaberFiles].start = totallen;
+				saberFiles[numSaberFiles].end = totallen + len;
+				saberFiles[numSaberFiles].group = UI_SaberGroupForPak( pak );
+				numSaberFiles++;
+			}
 
 			totallen += len;
 			marker += len;
@@ -524,6 +773,9 @@ void UI_SaberGetHiltInfo(const char* singleHilts[MAX_SABER_HILTS], const char* s
 		{//invalid name
 			continue;
 		}
+		// JKEnhanced: which .sab (pk3) this saber is in. Measured just after its name: before it, p
+		// still sits after the previous file's closing brace, outside this file's range.
+		const int entryOffset = p ? (int)( p - SaberParms ) - 1 : (int)strlen( SaberParms ) - 1;
 		saberName = String_Alloc(token);
 		//see if there's a "{" on the next line
 		SkipRestOfLine(&p);
@@ -544,6 +796,7 @@ void UI_SaberGetHiltInfo(const char* singleHilts[MAX_SABER_HILTS], const char* s
 		{
 			if (numStaffHilts < MAX_SABER_HILTS - 1)//-1 because we have to NULL terminate the list
 			{
+				saberStaffHiltGroup[numStaffHilts] = UI_SaberGroupAtOffset( entryOffset );
 				staffHilts[numStaffHilts++] = saberName;
 			}
 			else
@@ -555,6 +808,7 @@ void UI_SaberGetHiltInfo(const char* singleHilts[MAX_SABER_HILTS], const char* s
 		{
 			if (numSingleHilts < MAX_SABER_HILTS - 1)//-1 because we have to NULL terminate the list
 			{
+				saberSingleHiltGroup[numSingleHilts] = UI_SaberGroupAtOffset( entryOffset );
 				singleHilts[numSingleHilts++] = saberName;
 			}
 			else
@@ -569,6 +823,13 @@ void UI_SaberGetHiltInfo(const char* singleHilts[MAX_SABER_HILTS], const char* s
 	singleHilts[numSingleHilts] = NULL;
 	staffHilts[numStaffHilts] = NULL;
 	COM_EndParseSession();
+
+	// JKEnhanced: the hilt list rows are rebuilt from the new lists; a single group starts open
+	hiltRowsValid[0] = hiltRowsValid[1] = qfalse;
+	if ( numSaberGroups == 1 )
+	{
+		hiltGroupOpen[0][0] = hiltGroupOpen[1][0] = qtrue;
+	}
 }
 
 void UI_DoSFXSaber( vec3_t blade_muz, vec3_t blade_dir, float lengthMax, float radius, saber_colors_t color, saber_crystals_t crystals, int whichSaber )
@@ -935,6 +1196,10 @@ void UI_SaberDrawBlade( itemDef_t *item, char *saberName, int saberModel, saberT
 	{	//it's bolted to a dude!
 		angles[YAW] = curYaw;
 	}
+	else if ( item->typeData && ((modelDef_t *)item->typeData)->saberUpright )
+	{	// JKEnhanced saberUpright: same angles as the hilt in Item_Model_Paint (blade up)
+		angles[YAW] = curYaw;
+	}
 	else
 	{
 		angles[PITCH] = curYaw;
@@ -1235,6 +1500,132 @@ void UI_GetSaberForMenu( char *saber, int saberNum )
 		break;
 	}
 
+}
+
+/*
+===============
+UI_SaberUprightExtent (JKEnhanced saberUpright)
+
+The height a blade-up saber spans in model space: from a little below the hilt's base to the tip
+of its highest blade (each blade's muzzle tag + direction x its length). Item_Model_Paint frames
+the camera on it so the whole saber, hilt and blade, fits the item's rect.
+===============
+*/
+// the lowest / highest vertex of a GLM's first LOD (model space; saber hilts are single-bone, so
+// that's how they're drawn). Cached per model path. qfalse if the file isn't a readable GLM.
+static qboolean UI_GlmHeightRange( const char *path, float *lo, float *hi )
+{
+	static char		cachedPath[MAX_QPATH];
+	static float	cachedLo, cachedHi;
+	static qboolean	cachedOk;
+	if ( cachedPath[0] && !Q_stricmp( cachedPath, path ) )
+	{
+		*lo = cachedLo; *hi = cachedHi;
+		return cachedOk;
+	}
+	Q_strncpyz( cachedPath, path, sizeof( cachedPath ) );
+	cachedOk = qfalse;
+
+	byte *buf = NULL;
+	const int len = ui.FS_ReadFile( path, (void **)&buf );
+	if ( len < (int)sizeof( mdxmHeader_t ) || !buf )
+	{
+		if ( buf ) ui.FS_FreeFile( buf );
+		return qfalse;
+	}
+	const mdxmHeader_t *h = (const mdxmHeader_t *)buf;
+	float l = 1e9f, u = -1e9f;
+	if ( LittleLong( h->ident ) == MDXM_IDENT && h->numLODs > 0 && h->ofsLODs > 0 && h->ofsLODs < len )
+	{
+		// LOD 0: mdxmLOD_t, the surface offset table, then the surfaces one after another
+		const int numSurf = LittleLong( h->numSurfaces );
+		int ofs = LittleLong( h->ofsLODs ) + (int)sizeof( mdxmLOD_t ) + numSurf * (int)sizeof( int );
+		for ( int s = 0; s < numSurf && ofs > 0 && ofs + (int)sizeof( mdxmSurface_t ) <= len; s++ )
+		{
+			const mdxmSurface_t *surf = (const mdxmSurface_t *)( buf + ofs );
+			const int nv = LittleLong( surf->numVerts ), ov = LittleLong( surf->ofsVerts );
+			if ( nv > 0 && ov > 0 && ofs + ov + nv * (int)sizeof( mdxmVertex_t ) <= len )
+			{
+				const mdxmVertex_t *v = (const mdxmVertex_t *)( buf + ofs + ov );
+				for ( int i = 0; i < nv; i++ )
+				{
+					const float z = LittleFloat( v[i].vertCoords[2] );
+					if ( z < l ) l = z;
+					if ( z > u ) u = z;
+				}
+			}
+			const int next = LittleLong( surf->ofsEnd );
+			if ( next <= 0 ) break;
+			ofs += next;
+		}
+	}
+	ui.FS_FreeFile( buf );
+	if ( u >= l )
+	{
+		cachedLo = l; cachedHi = u; cachedOk = qtrue;
+		*lo = l; *hi = u;
+	}
+	return cachedOk;
+}
+
+qboolean UI_SaberUprightExtent( itemDef_t *item, float *zMin, float *zMax )
+{
+	char saber[MAX_QPATH];
+	if ( !item->ghoul2.size() )
+	{
+		return qfalse;
+	}
+	DC->getCVarString( ( item->flags & ITF_ISSABER2 ) ? "ui_saber2" : "ui_saber", saber, sizeof( saber ) );
+	if ( !saber[0] )
+	{
+		return qfalse;
+	}
+	vec3_t angles = { 0, 0, 0 }, org0 = { 0, 0, 0 };	// blade-up: the spin (yaw) doesn't change heights
+	float lo = 0.0f, hi = 0.0f, muzzle = 0.0f;
+	qboolean any = qfalse;
+	const int numBlades = UI_SaberNumBladesForSaber( saber );
+	for ( int b = 0; b < numBlades; b++ )
+	{
+		int bolt = DC->g2_AddBolt( &item->ghoul2[0], va( "*blade%d", b + 1 ), qtrue );
+		if ( bolt == -1 )
+		{
+			bolt = DC->g2_AddBolt( &item->ghoul2[0], "*flash", qfalse );
+		}
+		if ( bolt == -1 )
+		{
+			continue;
+		}
+		mdxaBone_t m;
+		vec3_t org, dir;
+		DC->g2_GetBoltMatrix( item->ghoul2, 0, bolt, &m, angles, org0, uiInfo.uiDC.realTime, NULL, vec3_origin );
+		DC->g2_GiveMeVectorFromMatrix( m, ORIGIN, org );
+		DC->g2_GiveMeVectorFromMatrix( m, NEGATIVE_X, dir );	// the blade's direction, as UI_SaberDrawBlade
+		const float tip = org[2] + dir[2] * UI_SaberBladeLengthForSaber( saber, b );
+		lo = Q_min( lo, Q_min( org[2], tip ) );
+		hi = Q_max( hi, Q_max( org[2], tip ) );
+		muzzle = Q_max( muzzle, (float)fabs( org[2] ) );
+		any = qtrue;
+	}
+	if ( !any || hi - lo < 1.0f )
+	{
+		return qfalse;
+	}
+	// the hilt itself: its real height from the model file; if that can't be read, leave room for
+	// a hilt as long below the origin as the muzzle is above it
+	char modelPath[MAX_TOKEN_CHARS] = { 0 };	// (UI_SaberParseParm strcpy's a whole token)
+	float gLo, gHi;
+	if ( UI_SaberModelForSaber( saber, modelPath ) && UI_GlmHeightRange( modelPath, &gLo, &gHi ) )
+	{
+		lo = Q_min( lo, gLo );
+		hi = Q_max( hi, gHi );
+	}
+	else
+	{
+		lo = Q_min( lo, -muzzle );
+	}
+	*zMin = lo;
+	*zMax = hi;
+	return qtrue;
 }
 
 void UI_SaberDrawBlades( itemDef_t *item, vec3_t origin, float curYaw )

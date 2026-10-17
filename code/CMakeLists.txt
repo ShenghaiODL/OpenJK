@@ -308,6 +308,7 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 		"${SPDir}/ui/ui_atoms.cpp"
 		"${SPDir}/ui/ui_connect.cpp"
 		"${SPDir}/ui/ui_main.cpp"
+		"${SPDir}/ui/ui_menupp.cpp"
 		"${SPDir}/ui/ui_saber.cpp"
 		"${SPDir}/ui/ui_shared.cpp"
 		"${SPDir}/ui/ui_syscalls.cpp"

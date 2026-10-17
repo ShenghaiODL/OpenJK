@@ -188,7 +188,12 @@ rather than rush into melee
 NPCs seek cover when below 50% health
 When an NPC discovers a dead teammate, it alerts nearby allies
 New AI Class_Mando; same as a stormtrooper, but has a flamethrower. //Might add more to this later, this was just to see if I could.
-Squad morale & leadership: any rank can now lead a squad (previously locked to Imperial officers, so an all-trooper squad with no officer had no commander at all); morale rises/falls with combat outcomes and casualties and drives a 5-tier aggression scale, from routed/hiding at the bottom to charging/flanking at the top, with the commander calling out lines as the squad's mood shifts
+Nerve replaces squad morale: every NPC has its own nerve (steady / shaken / breaking / broken) that drops when they see allies killed, maimed or taken out, get hit, near-missed, caught in explosions or hit with the Force, and rises when they land hits, get reinforced or their side gets a kill. Officers, numbers and wounds all count. Broken NPCs drop their gun and run or put their hands up (g_npcSurrender)
+Squads are explicit now: NPCs placed together (or sharing a squadname key) and anyone nearby when a fight starts form a squad of up to 8 -- no more every-enemy-on-the-map-is-one-group. The highest rank leads and calls out lines as the leader's nerve shifts
+Gunners pick what to do from a scored list (hold cover, relocate, advance, flank, suppress, grenade, stand and fire, retreat, flee, track you down) instead of a pile of flags -- at most half a squad moves at once while the rest covers them, and two flank from different sides
+Snipers, grenadiers and Tusken now run on the same AI as stormtroopers with their own profiles (snipers hold and relocate, grenadiers lob from range, staff Tusken close in and lunge); .npc files can pick a profile with aiProfile
+Companions fight on a leash and come back to you when you run off, instead of standing their ground no matter what
+Enemies spread their fire across you and your allies instead of only ever shooting at the player
 Stormtroopers fall back on geometry-based cover searches when no pre-placed cover point is nearby, holding a duck/pop-out firing pattern instead of standing in the open; squads coordinate so at least half the group keeps firing while the rest repositions, rather than everyone exposing at once
 NPC think rate now scales with their Reactions stat, so elite troops react noticeably faster than grunts instead of everything sharing one tick rate
 Stormtroopers reposition more often, fire while moving/retreating more, and hold a line-of-sight "grace window" before breaking off a shot; Reborn/Sith without chase-enemies flags now slowly advance instead of standing idle, and their rocket/saber missile-reflect chances are now probabilistic instead of guaranteed
@@ -198,6 +203,38 @@ Toned down how much NPCs strafe and jump around during saber duels -- was gettin
 Fixed stormtroopers refusing to shoot at you while you backpedal or stand side-on to them (with a gun or a saber) -- they were treating the third-person camera's position as where your body was, so every shot looked blocked
 Disarmed NPCs now react instead of standing there: they run for cover and look for a weapon on the way, surrender (cower, hands up) if their squad's morale is broken or you corner them with a lit saber, and otherwise go down swinging in a desperate melee
 NPCs can re-arm from weapon racks placed in the level, as well as picking up dropped weapons like before
+
+
+NON-LETHAL
+--------------------------------------
+Enemies can be taken alive. Blunt finishing blows knock them out instead of killing them: kicks, fists, the stun baton, a full-charge DEMP2 alt shot, or slamming them into a wall with push/pull. Lethal weapons are still lethal
+Taken-out enemies (knocked out, surrendered, fled, hand severed) count as dealt with for the mission -- doors, triggers and scripts fire like a kill would -- they drop their weapon and keys, and show up as "Enemies Subdued" on the mission stats
+Disarming a rattled enemy makes them give up; mind trick 3 knocks someone out for 75 Force
+A teammate who finds someone knocked out will kneel down, wake them up, and the whole squad comes looking for you
+Bosses, Force users, droids and scripted characters can't be taken alive; g_nonLethal 0 turns it all off
+
+
+STEALTH
+--------------------------------------
+Enemies notice you in stages instead of instantly: unaware, suspicious ("?" over their head -- they look your way), searching ("!" -- they come and check), then alert. Searches end after a while if they don't find you
+Light, distance, movement and crouching all matter; the light check counts ambient and dynamic light (your own lit saber included), and a meter shows how lit you are while crouched (cg_drawLightMeter)
+Noise is consistent: crouch-walking is nearly silent, walking is quiet, sprinting and landings carry. A lit saber is a visible glow, not an instant giveaway
+Saber and melee kills are silent -- only enemies who see it know
+Bodies get found: a first body makes them suspicious, a second one gets the squad searching. Hit use on a body (dead or knocked out) to drag it out of sight
+Sneak up behind someone who hasn't noticed you and hit use to knock them out in one punch (placeholder animation for now). Force users can't be snuck up on
+Mind trick 1-2 makes them forget what they saw; the level 2 distraction draws them to the spot
+g_stealth 0 restores the old instant spotting if anything goes wrong
+
+
+SABER DUELS (AI)
+--------------------------------------
+Saber enemies fight with a plan now: they press, defend and wait for you to over-commit, circle at the edge of reach, back off to recover Force, open with a push or pull, throw their saber, or taunt -- instead of flailing constantly
+They read your actual swing: fast attacks get blocked, heavy ones get side-stepped by the better fighters, and grunts sometimes misread a swing completely. How good they are comes from the .npc blockSkill (or their rank)
+NPC blocks cost Force just like yours do (g_npcBlockCost); run them dry and their blocks fail. Skilled ones can land perfect parries on you too
+In group fights one presses at a time while the others circle and swap in
+Your saber target's health, guard and Force bars show without Force Sight
+Riposte: attack right after a block and the swing comes out immediately
+A kick against a saber user whose guard is still up gets blocked -- break their guard first
 
 
 SABOTEUR CLOAK REWORK

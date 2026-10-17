@@ -525,6 +525,63 @@ void Cmd_Notarget_f( gentity_t *ent ) {
 
 /*
 ==================
+Cmd_CompleteLevel_f (JKEnhanced)
+
+argv(0) completelevel [n]
+Cheat: ends the level the way finishing the mission does, by firing its target_level_change
+(story cvars, the tier list, mission stats, then the next map or menu). A map with several exits
+lists them; n picks one (default: the first).
+==================
+*/
+#define MAX_LEVEL_EXITS	16
+void Cmd_CompleteLevel_f( gentity_t *ent )
+{
+	gentity_t	*exits[MAX_LEVEL_EXITS];
+	int			count = 0;
+
+	if ( !CheatsOk( ent ) )
+	{
+		return;
+	}
+	for ( int i = 0; i < globals.num_entities && count < MAX_LEVEL_EXITS; i++ )
+	{
+		gentity_t *e = &g_entities[i];
+		if ( e->inuse && e->classname && !Q_stricmp( e->classname, "target_level_change" ) )
+		{
+			exits[count++] = e;
+		}
+	}
+	if ( !count )
+	{
+		gi.SendServerCommand( ent-g_entities, "print \"completelevel: this map has no level exit (target_level_change).\n\"" );
+		return;
+	}
+
+	int pick = 0;
+	if ( gi.argc() > 1 )
+	{
+		pick = atoi( gi.argv( 1 ) );
+		if ( pick < 0 || pick >= count )
+		{
+			gi.SendServerCommand( ent-g_entities, va( "print \"completelevel: pick an exit from 0 to %d.\n\"", count - 1 ) );
+			return;
+		}
+	}
+	if ( count > 1 )
+	{
+		for ( int i = 0; i < count; i++ )
+		{
+			gi.SendServerCommand( ent-g_entities, va( "print \"%s%d: to %s (tier_storyinfo %d)\n\"",
+				i == pick ? "> " : "  ", i, exits[i]->message ? exits[i]->message : "?", exits[i]->count ) );
+		}
+	}
+	gi.SendServerCommand( ent-g_entities, va( "print \"Completing %s -> %s\n\"", level.mapname, exits[pick]->message ? exits[pick]->message : "?" ) );
+	GEntity_UseFunc( exits[pick], ent, ent );
+}
+
+
+/*
+==================
 Cmd_Noclip_f
 
 argv(0) noclip
@@ -1487,6 +1544,8 @@ void ClientCommand( int clientNum ) {
 		Cmd_God_f (ent);
 	else if (Q_stricmp (cmd, "undying") == 0)
 		Cmd_Undying_f (ent);
+	else if (Q_stricmp (cmd, "completelevel") == 0)
+		Cmd_CompleteLevel_f (ent);
 	else if (Q_stricmp (cmd, "notarget") == 0)
 		Cmd_Notarget_f (ent);
 	else if (Q_stricmp (cmd, "noclip") == 0)

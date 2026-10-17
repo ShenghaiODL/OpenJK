@@ -81,7 +81,9 @@ bool SavedGame::open(
 			INT_ID('_', 'V', 'E', 'R'),
 			sg_version))
 		{
-			if (sg_version >= iSAVEGAME_VERSION_MAX || sg_version < iSAVEGAME_VERSION_ENHANCED_FIRST)
+			// only the current layout: the structures don't carry per-field versioning, so an
+			// older save would read garbage into the new NPC/squad fields instead of failing
+			if (sg_version >= iSAVEGAME_VERSION_MAX || sg_version < iSAVEGAME_VERSION)
 			{
 				is_succeed = false;
 

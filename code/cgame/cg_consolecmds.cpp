@@ -297,6 +297,7 @@ static const char *gcmds[] = {
 	"force_speed",
 	"force_stasis",
 	"force_throw",
+	"completelevel",	// JKEnhanced cheat: fire the level's target_level_change
 	"give",
 	"gloat",
 	"god",

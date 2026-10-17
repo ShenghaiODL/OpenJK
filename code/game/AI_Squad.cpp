@@ -220,7 +220,6 @@ void AI_SquadJoin( gentity_t *self )
 		best->enemy = self->enemy;
 		best->lastSeenEnemyTime = level.time;
 	}
-	AI_SortGroupByPathCostToEnemy( best );
 	AI_SetClosestBuddy( best );
 }
 

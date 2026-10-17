@@ -63,6 +63,7 @@ typedef struct {
 	int			(*FS_GetFileList)(  const char *path, const char *extension, char *listbuf, int bufsize );
 	long		(*FS_ReadFile)( const char *name, void **buf );
 	void		(*FS_FreeFile)( void *buf );
+	qboolean	(*FS_WhichPak)( const char *name, char *out, int outSize );	// JKEnhanced: the pk3 a file comes from
 
 	// =========== renderer function calls ================
 
@@ -74,7 +75,7 @@ typedef struct {
 
 	int			(*R_Font_StrLenPixels)(const char *text, const int setIndex, const float scale, const float aspectCorrection );
 	int			(*R_Font_HeightPixels)(const int setIndex, const float scale );
-	void		(*R_Font_DrawString)(int ox, int oy, const char *text, const float *rgba, const int setIndex, int iMaxPixelWidth, const float scale, const float aspectCorrection );
+	void		(*R_Font_DrawString)(float ox, float oy, const char *text, const float *rgba, const int setIndex, int iMaxPixelWidth, const float scale, const float aspectCorrection );
 	int			(*R_Font_StrLenChars)(const char *text);
 	qboolean	(*Language_IsAsian) (void);
 	qboolean	(*Language_UsesSpaces) (void);

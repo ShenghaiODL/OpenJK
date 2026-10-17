@@ -37,7 +37,7 @@ we need it...
 #include "g_nav.h"
 
 extern cvar_t	*g_AIsurrender;
-extern cvar_t	*g_moraleSurrender;
+extern cvar_t	*g_npcSurrender;
 extern	qboolean	showBBoxes;
 static vec3_t NPCDEBUG_BLUE = {0.0, 0.0, 1.0};
 extern void CG_Cube( vec3_t mins, vec3_t maxs, vec3_t color, float alpha );
@@ -1576,16 +1576,16 @@ void NPC_Surrender( void )
 
 qboolean NPC_CheckSurrender( void )
 {
-	// A routed squad (morale tier 0) can surrender even without g_AIsurrender being on globally --
-	// gated by its own cvar so this is opt-out-able independent of the dev/cheat toggle above.
+	// An NPC whose nerve has broken (AI_Nerve.cpp) can surrender even without g_AIsurrender being on
+	// globally -- gated by g_npcSurrender so this is opt-out-able independent of the dev/cheat toggle.
 	// Only for still-armed NPCs: a disarmed (WP_NONE) NPC has its own dedicated give-up decision
-	// in NPC_BSFlee (which also checks morale) that's meant to run *after* a fair chance to flee/
+	// in NPC_BSFlee (which also checks nerve) that's meant to run *after* a fair chance to flee/
 	// recover a weapon first -- letting this generic heuristic fire for WP_NONE too let surrender
 	// preempt that entirely, since this function can get reached well before the flee timers do.
-	qboolean moraleRouted = (qboolean)( g_moraleSurrender->integer
+	qboolean nerveBroken = (qboolean)( g_npcSurrender->integer
 		&& NPC->s.weapon != WP_NONE
 		&& NPCInfo && AI_NerveTier( NPC ) == NT_BROKEN );
-	if ( moraleRouted
+	if ( nerveBroken
 		&& NPC->client->playerTeam != TEAM_PLAYER
 		&& TIMER_Exists( NPC, "nerveBrokenHold" ) && TIMER_Done( NPC, "nerveBrokenHold" )//broken for a while, not just a bad second
 		&& TIMER_Done( NPC, "nerveBreakCheck" ) )
@@ -1602,7 +1602,7 @@ qboolean NPC_CheckSurrender( void )
 	if ( !g_AIsurrender->integer
 		&& NPC->client->NPC_class != CLASS_UGNAUGHT
 		&& NPC->client->NPC_class != CLASS_JAWA
-		&& !moraleRouted )
+		&& !nerveBroken )
 	{//not enabled
 		return qfalse;
 	}
@@ -1890,8 +1890,8 @@ qboolean NPC_BSFlee( void )
 		&& TIMER_Done( NPC, "meleeFallback" ) )
 	{
 		qboolean facingActiveSaber = (qboolean)( NPC->enemy && NPC->enemy->client && NPC->enemy->client->ps.weapon == WP_SABER && NPC->enemy->client->ps.SaberActive() );
-		qboolean moraleRouted = (qboolean)( g_moraleSurrender->integer && AI_NerveTier( NPC ) == NT_BROKEN );
-		if ( NPC_CanSurrender() && ( g_AIsurrender->integer || moraleRouted || facingActiveSaber ) )
+		qboolean nerveBroken = (qboolean)( g_npcSurrender->integer && AI_NerveTier( NPC ) == NT_BROKEN );
+		if ( NPC_CanSurrender() && ( g_AIsurrender->integer || nerveBroken || facingActiveSaber ) )
 		{//give up instead of a hopeless fight
 			NPC_Surrender();
 		}

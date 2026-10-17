@@ -80,6 +80,47 @@ void		Item_RunScript(itemDef_t *item, const char *s);
 void		Item_SetupKeywordHash(void);
 void		Item_Text_AutoWrapped_Paint(itemDef_t *item);
 void		Item_UpdatePosition(itemDef_t *item);
+// virtualSize conversion (Menu_ApplyVirtualSize), used by the rect-moving script commands
+static void Virtual_AbsRect( const menuDef_t *menu, int anchor, rectDef_t *r );
+static void Virtual_ItemRect( const menuDef_t *menu, int anchor, rectDef_t *r );
+static void Virtual_ItemPoint( const menuDef_t *menu, int anchor, float *x, float *y );
+static size_t Item_TypeDataSize( int type );	// typeData bytes per item type (inherit)
+static qboolean Item_IsHovered( const itemDef_t *item );
+static qboolean Item_IsSelected( itemDef_t *item );
+extern qboolean UI_FeederRowIsHeading( float feederID, int row );	// ui_main.cpp
+// where a value goes: valueX from the item's left, else right after the label (JKEnhanced)
+static inline float Item_ValueX( const itemDef_t *item ) { return item->hasValueX ? item->window.rect.x + item->valueX : item->textRect.x + item->textRect.w + 8; }
+// slider bar size: fixed 128x16, or (JKEnhanced sliderFill) from where the bar starts (x) to the
+// item's right edge, at the item's height
+static inline float Item_SliderWidthAt( const itemDef_t *item, float x ) { return item->sliderFill ? Q_max( 16.0f, item->window.rect.x + item->window.rect.w - x ) : (float)SLIDER_WIDTH; }
+static inline float Item_SliderHeight( const itemDef_t *item ) { return item->sliderFill ? Q_max( 4.0f, item->window.rect.h - 4.0f ) : (float)SLIDER_HEIGHT; }
+static inline float Item_SliderThumbW( const itemDef_t *item ) { return SLIDER_THUMB_WIDTH * Item_SliderHeight( item ) / SLIDER_HEIGHT; }
+// value 0..1 -> thumb centre's offset from the bar start. Stock: 0..128 (the thumb's half overhangs
+// both ends); sliderFill: the thumb stays inside the bar, so a full slider is no longer than the rest
+static inline float Item_SliderFraction( const itemDef_t *item, float x, float value )
+{
+	if ( !item->sliderFill )
+	{
+		return value * SLIDER_WIDTH;
+	}
+	const float tw = Item_SliderThumbW( item );
+	return tw * 0.5f + value * Q_max( 0.0f, Item_SliderWidthAt( item, x ) - tw );
+}
+// the inverse: a cursor x over the bar -> value 0..1
+static inline float Item_SliderValueAt( const itemDef_t *item, float x, float cursorx )
+{
+	float v;
+	if ( !item->sliderFill )
+	{
+		v = ( cursorx - x ) / SLIDER_WIDTH;
+	}
+	else
+	{
+		const float tw = Item_SliderThumbW( item );
+		v = ( cursorx - x - tw * 0.5f ) / Q_max( 1.0f, Item_SliderWidthAt( item, x ) - tw );
+	}
+	return v < 0.0f ? 0.0f : ( v > 1.0f ? 1.0f : v );
+}
 void		Item_ValidateTypeData(itemDef_t *item);
 void		LerpColor(vec4_t a, vec4_t b, vec4_t c, float t);
 itemDef_t	*Menu_FindItemByName(menuDef_t *menu, const char *p);
@@ -437,6 +478,67 @@ qboolean MenuParse_rect( itemDef_t *item)
 		return qfalse;
 	}
 	return qtrue;
+}
+
+/*
+=================
+Anchor_Parse - "left" / "center" / "right" / "stretch" (or 1..4)
+=================
+*/
+static qboolean Anchor_Parse( int *anchor )
+{
+	const char *tok;
+
+	if ( PC_ParseString( &tok ) )
+	{
+		return qfalse;
+	}
+	if ( !Q_stricmp( tok, "left" ) )			*anchor = ANCHOR_LEFT;
+	else if ( !Q_stricmp( tok, "center" ) )		*anchor = ANCHOR_CENTER;
+	else if ( !Q_stricmp( tok, "right" ) )		*anchor = ANCHOR_RIGHT;
+	else if ( !Q_stricmp( tok, "stretch" ) )	*anchor = ANCHOR_STRETCH;
+	else
+	{
+		const int n = atoi( tok );
+		if ( n < ANCHOR_DEFAULT || n > ANCHOR_STRETCH )
+		{
+			Com_Printf( S_COLOR_YELLOW "WARNING: unknown anchor '%s'\n", tok );
+			return qfalse;
+		}
+		*anchor = n;
+	}
+	return qtrue;
+}
+
+/*
+=================
+MenuParse_virtualSize - virtualSize <w> <h>: the menu's numbers are in a w x h screen
+=================
+*/
+qboolean MenuParse_virtualSize( itemDef_t *item )
+{
+	menuDef_t *menu = (menuDef_t*)item;
+
+	if ( PC_ParseFloat( &menu->virtualW ) || PC_ParseFloat( &menu->virtualH ) )
+	{
+		return qfalse;
+	}
+	if ( menu->virtualW < 1.0f || menu->virtualH < 1.0f )
+	{
+		menu->virtualW = menu->virtualH = 0.0f;
+	}
+	return qtrue;
+}
+
+/*
+=================
+MenuParse_anchor - default anchor for the menu's items (and the menu rect itself)
+=================
+*/
+qboolean MenuParse_anchor( itemDef_t *item )
+{
+	menuDef_t *menu = (menuDef_t*)item;
+	return Anchor_Parse( &menu->anchor );
 }
 
 /*
@@ -1168,6 +1270,7 @@ qboolean MenuParse_itemDef( itemDef_t *item )
 	{
 		itemDef_t *newItem = menu->items[menu->itemCount] = (struct itemDef_s *) UI_Alloc(sizeof(itemDef_t));
 		Item_Init(newItem);
+		newItem->parent = menu;	// known while parsing (inherit looks up earlier items)
 		if (!Item_Parse(newItem))
 		{
 			return qfalse;
@@ -1228,6 +1331,8 @@ keywordHash_t menuParseKeywords[] = {
 	{"ownerdrawFlag",		MenuParse_ownerdrawFlag,},
 	{"popup",				MenuParse_popup,		},
 	{"rect",				MenuParse_rect,			},
+	{"virtualSize",			MenuParse_virtualSize,	},
+	{"anchor",				MenuParse_anchor,		},
 	{"soundLoop",			MenuParse_soundLoop,	},
 	{"style",				MenuParse_style,		},
 	{"visible",				MenuParse_visible,		},
@@ -1870,23 +1975,36 @@ void Menu_TransitionItemByName(menuDef_t *menu, const char *p, const rectDef_t *
 	itemDef_t *item;
 	int i;
 	int count = Menu_ItemsMatchingGroup(menu, p);
+	const qboolean fromScript = (qboolean)( rectFrom != NULL );
+	const qboolean isVirtual = (qboolean)( menu && menu->virtualW > 0.0f );
 	for (i = 0; i < count; i++)
 	{
 		item = Menu_GetMatchingItemByNumber(menu, i, p);
 		if (item != NULL)
 		{
+			rectDef_t from, to;
 			if (!rectFrom)
 			{
 				rectFrom = &item->window.rect;	//if there are more than one of these with the same name, they'll all use the FIRST one's FROM.
 			}
+			from = *rectFrom;
+			to = *rectTo;
+			if ( isVirtual )
+			{	// script rects are in the authored size; the current rect (transition2) is already converted
+				if ( fromScript )
+				{
+					Virtual_ItemRect( menu, item->anchor, &from );
+				}
+				Virtual_ItemRect( menu, item->anchor, &to );
+			}
 			item->window.flags |= (WINDOW_INTRANSITION | WINDOW_VISIBLE);
 			item->window.offsetTime = time;
-			memcpy(&item->window.rectClient, rectFrom, sizeof(rectDef_t));
-			memcpy(&item->window.rectEffects, rectTo, sizeof(rectDef_t));
-			item->window.rectEffects2.x = abs(rectTo->x - rectFrom->x) / amt;
-			item->window.rectEffects2.y = abs(rectTo->y - rectFrom->y) / amt;
-			item->window.rectEffects2.w = abs(rectTo->w - rectFrom->w) / amt;
-			item->window.rectEffects2.h = abs(rectTo->h - rectFrom->h) / amt;
+			memcpy(&item->window.rectClient, &from, sizeof(rectDef_t));
+			memcpy(&item->window.rectEffects, &to, sizeof(rectDef_t));
+			item->window.rectEffects2.x = abs(to.x - from.x) / amt;
+			item->window.rectEffects2.y = abs(to.y - from.y) / amt;
+			item->window.rectEffects2.w = abs(to.w - from.w) / amt;
+			item->window.rectEffects2.h = abs(to.h - from.h) / amt;
 			Item_UpdatePosition(item);
 		}
 	}
@@ -1970,12 +2088,18 @@ void Menu_OrbitItemByName(menuDef_t *menu, const char *p, float x, float y, floa
 		item = Menu_GetMatchingItemByNumber(menu, i, p);
 		if (item != NULL)
 		{
+			float ix = x, iy = y, icx = cx, icy = cy;
+			if ( menu->virtualW > 0.0f )
+			{
+				Virtual_ItemPoint( menu, item->anchor, &ix, &iy );
+				Virtual_ItemPoint( menu, item->anchor, &icx, &icy );
+			}
 			item->window.flags |= (WINDOW_ORBITING | WINDOW_VISIBLE);
 			item->window.offsetTime = time;
-			item->window.rectEffects.x = cx;
-			item->window.rectEffects.y = cy;
-			item->window.rectClient.x = x;
-			item->window.rectClient.y = y;
+			item->window.rectEffects.x = icx;
+			item->window.rectEffects.y = icy;
+			item->window.rectClient.x = ix;
+			item->window.rectClient.y = iy;
 			Item_UpdatePosition(item);
 		}
 	}
@@ -2072,10 +2196,16 @@ qboolean Script_SetItemRect(itemDef_t *item, const char **args)
 
 				if (out)
 				{
-					item2->window.rect.x = rect.x;
-					item2->window.rect.y = rect.y;
-					item2->window.rect.w = rect.w;
-					item2->window.rect.h = rect.h;
+					rectDef_t r = rect;
+					const menuDef_t *menu = (menuDef_t *) item->parent;
+					if ( menu && menu->virtualW > 0.0f )
+					{	// screen coords in the authored size (setitemrect has always been absolute)
+						Virtual_AbsRect( menu, item2->anchor, &r );
+					}
+					item2->window.rect.x = r.x;
+					item2->window.rect.y = r.y;
+					item2->window.rect.w = r.w;
+					item2->window.rect.h = r.h;
 				}
 			}
 		}
@@ -2996,6 +3126,113 @@ qboolean Script_ToggleDecoration(itemDef_t *item, const char **args)
 }
 
 
+/*
+===============
+Menu_SelectTab (JKEnhanced tabs)
+
+Selects a tab button: every other tab in its tabGroup hides its tabPanel, then this one shows its
+own. Runs when a tab is clicked, for the tabDefault tab when the menu opens, and from the
+`selecttab <item>` script command.
+===============
+*/
+void Menu_SelectTab( menuDef_t *menu, itemDef_t *tab )
+{
+	int i;
+
+	if ( !menu || !tab || !tab->tabGroup )
+	{
+		return;
+	}
+	for ( i = 0; i < menu->itemCount; i++ )
+	{
+		itemDef_t *it = menu->items[i];
+		if ( !it || !it->tabGroup || Q_stricmp( it->tabGroup, tab->tabGroup ) )
+		{
+			continue;
+		}
+		it->tabSelected = (qboolean)( it == tab );
+		if ( it != tab && it->tabPanel && ( !tab->tabPanel || Q_stricmp( it->tabPanel, tab->tabPanel ) ) )
+		{
+			Menu_ShowItemByName( menu, it->tabPanel, qfalse );
+		}
+	}
+	if ( tab->tabPanel )
+	{
+		Menu_ShowItemByName( menu, tab->tabPanel, qtrue );
+	}
+}
+
+// on open: each tabGroup selects its tabDefault tab (or keeps the one already selected)
+static void Menu_SelectDefaultTabs( menuDef_t *menu )
+{
+	int i, j;
+
+	// a tab whose cvar holds its value (selectedCvar / its setcvar) wins over tabDefault
+	for ( i = 0; i < menu->itemCount; i++ )
+	{
+		itemDef_t *it = menu->items[i];
+		if ( it && it->tabGroup && Item_IsSelected( it ) && it->selectedCvar )
+		{
+			Menu_SelectTab( menu, it );
+		}
+	}
+
+	for ( i = 0; i < menu->itemCount; i++ )
+	{
+		itemDef_t *it = menu->items[i];
+		if ( !it || !it->tabGroup || !it->tabDefault )
+		{
+			continue;
+		}
+		qboolean other = qfalse;
+		for ( j = 0; j < menu->itemCount; j++ )
+		{
+			itemDef_t *o = menu->items[j];
+			if ( o && o != it && o->tabSelected && o->tabGroup && !Q_stricmp( o->tabGroup, it->tabGroup ) )
+			{
+				other = qtrue;
+			}
+		}
+		Menu_SelectTab( menu, other ? NULL : it );
+		if ( other )
+		{	// re-apply the remembered one so its panel is the one showing
+			for ( j = 0; j < menu->itemCount; j++ )
+			{
+				itemDef_t *o = menu->items[j];
+				if ( o && o->tabSelected && o->tabGroup && !Q_stricmp( o->tabGroup, it->tabGroup ) )
+				{
+					Menu_SelectTab( menu, o );
+					break;
+				}
+			}
+		}
+	}
+}
+
+/*
+=================
+Script_SelectTab - selecttab <item>
+=================
+*/
+qboolean Script_SelectTab( itemDef_t *item, const char **args )
+{
+	const char *name;
+	if ( String_Parse( args, &name ) )
+	{
+		menuDef_t *menu = (menuDef_t *)item->parent;
+		itemDef_t *tab = menu ? Menu_FindItemByName( menu, name ) : NULL;
+		if ( tab )
+		{
+			Menu_SelectTab( menu, tab );
+		}
+		else
+		{
+			Com_Printf( S_COLOR_YELLOW "WARNING: selecttab: no item named '%s'\n", name );
+		}
+	}
+	return qtrue;
+}
+
 commandDef_t commandList[] =
 {
   {"activate",		&Script_Activate},				// menu
@@ -3031,6 +3268,7 @@ commandDef_t commandList[] =
   {"transition3",   &Script_Transition3},			// model exclusive transition
   {"incrementfeeder", &Script_IncrementFeeder},
   {"decrementfeeder", &Script_DecrementFeeder},
+	{"selecttab",		&Script_SelectTab},				// JKEnhanced tabs: name
 	{"toggledecoration", &Script_ToggleDecoration}
 };
 
@@ -3046,6 +3284,8 @@ void Item_Init(itemDef_t *item)
 {
 	memset(item, 0, sizeof(itemDef_t));
 	item->textscale = 0.55f;
+	item->hoverBackColor[0] = item->hoverBackColor[1] = item->hoverBackColor[2] = item->hoverBackColor[3] = 1.0f;
+	item->iconColor[0] = item->iconColor[1] = item->iconColor[2] = item->iconColor[3] = 1.0f;
 	Window_Init(&item->window);
 }
 
@@ -3148,13 +3388,28 @@ int UI_MenuFontToReal( int menuFontIndex )
 
 qboolean ItemParse_font( itemDef_t *item )
 {
-	if (PC_ParseInt(&item->font))
+	const char *tok;
+
+	// font N (the Nth font from assetGlobalDef), or JKEnhanced: font "name" (fonts/<name>.fontdat,
+	// registered on first use; falls back to ergoec when missing)
+	if (PC_ParseString(&tok))
 	{
 		return qfalse;
 	}
 
-	// Translate to real font
-	item->font = UI_MenuFontToReal( item->font );
+	if ( ( tok[0] >= '0' && tok[0] <= '9' ) || tok[0] == '-' )
+	{
+		// Translate to real font
+		item->font = UI_MenuFontToReal( atoi( tok ) );
+	}
+	else
+	{
+		item->font = UI_RegisterFont( tok );
+		if ( !item->font )
+		{
+			item->font = DC->Assets.qhMediumFont;
+		}
+	}
 
 	return qtrue;
 }
@@ -3391,17 +3646,14 @@ qboolean ItemParse_model_origin( itemDef_t *item)
 	Item_ValidateTypeData(item);
 	modelPtr = (modelDef_t*)item->typeData;
 
-	if (PC_ParseFloat(&modelPtr->origin[0]))
+	// JKEnhanced: PC_ParseFloat returns qtrue on FAILURE, so the stock nesting rejected every valid
+	// model_origin (and nothing drew with it). Now: an offset from where the model is placed:
+	// forward (negative = closer), left, up.
+	if (PC_ParseFloat(&modelPtr->origin[0]) || PC_ParseFloat(&modelPtr->origin[1]) || PC_ParseFloat(&modelPtr->origin[2]))
 	{
-		if (PC_ParseFloat(&modelPtr->origin[1]))
-		{
-			if (PC_ParseFloat(&modelPtr->origin[2]))
-			{
-				return qtrue;
-			}
-		}
+		return qfalse;
 	}
-	return qfalse;
+	return qtrue;
 }
 
 /*
@@ -3448,6 +3700,26 @@ ItemParse_model_rotation
 	model_rotation <integer>
 ===============
 */
+/*
+===============
+ItemParse_saberUpright (JKEnhanced)
+saberUpright <0|1>: an isSaber / isSaber2 model stands blade-up and spins about its blade, instead
+of the stock lying-on-its-side view
+===============
+*/
+qboolean ItemParse_saberUpright( itemDef_t *item )
+{
+	int i;
+	Item_ValidateTypeData( item );
+	modelDef_t *modelPtr = (modelDef_t*)item->typeData;
+	if ( !modelPtr || PC_ParseInt( &i ) )
+	{
+		return qfalse;
+	}
+	modelPtr->saberUpright = (qboolean)( i != 0 );
+	return qtrue;
+}
+
 qboolean ItemParse_model_rotation( itemDef_t *item)
 {
 	modelDef_t *modelPtr;
@@ -3811,6 +4083,7 @@ qboolean ItemParse_type( itemDef_t *item )
 {
 	int		i;
 	const char	*tempStr;
+	const int	oldType = item->type;
 
 	if (PC_ParseString(&tempStr))
 	{
@@ -3834,6 +4107,10 @@ qboolean ItemParse_type( itemDef_t *item )
 	}
 	else
 	{
+		if ( item->inherited && item->typeData && Item_TypeDataSize( oldType ) != Item_TypeDataSize( item->type ) )
+		{	// inherited from an item of another kind: start this type's data fresh
+			item->typeData = NULL;
+		}
 		Item_ValidateTypeData(item);
 	}
 	return qtrue;
@@ -4206,6 +4483,513 @@ qboolean ItemParse_xoffset( itemDef_t *item)
 	if (PC_ParseInt(&item->xoffset))
 	{
 		return qfalse;
+	}
+	return qtrue;
+}
+
+/*
+===============
+ItemParse_anchor (virtualSize menus: left / center / right / stretch)
+===============
+*/
+qboolean ItemParse_anchor( itemDef_t *item )
+{
+	return Anchor_Parse( &item->anchor );
+}
+
+/*
+===============
+JKEnhanced compact-menu keywords
+
+hoverBackground <shader>	image shown while the item is hovered or has focus
+hoverRect <x y w h>			where it goes, relative to the item (default: the item's rect)
+hoverBackColor <r g b a>	its tint
+hoverColor <r g b a>		text colour while hovered (instead of the menu's pulsing focusColor)
+hoverSound <sound>			same as focusSound
+icon <shader> [x y w h]		image under the text, relative to the item (default: the item's rect)
+iconColor <r g b a>
+tabGroup <name>				tab buttons with the same tabGroup...
+tabPanel <group/item>		...each show their panel and hide the others' when clicked
+selectedColor <r g b a>		text colour of the selected tab
+selectedBackground <shader>	image behind the selected tab (uses hoverRect / hoverBackColor); with no
+							tabPanel, a tab group is just "pick one" buttons (difficulty, etc.)
+tabDefault					the tab selected when the menu opens
+selectedCvar <cvar> <value>	selected while the cvar holds the value (no tabGroup needed). Items with
+							selectedColor / selectedBackground use their action's first setcvar by
+							default; "selectedCvar none" turns that off. A tab whose cvar matches is
+							the one selected when the menu opens.
+							(list boxes: selectedColor = the selected row's text colour)
+sliderColor / sliderThumbColor <r g b a>	slider bar / thumb tint
+scrollColor / scrollThumbColor <r g b a>	list / text scroll bar + arrows / thumb tint
+headingColor <r g b a>		list boxes: heading rows (hilt list pk3 groups; default yellow)
+sliderImage / sliderThumbImage <shader>		own slider art
+scrollImage / scrollThumbImage <shader>		own scroll bar / thumb art
+scrollArrowImages <up> <down> <left> <right>	own scroll arrows
+							(a colour key without an image uses white copies of the stock art,
+							gfx/menus/jke/*_w, so the colour comes out exact)
+inherit <itemName>			start as a copy of an item defined earlier in this menu
+===============
+*/
+static qboolean Color_Parse4( vec4_t c )
+{
+	for ( int i = 0; i < 4; i++ )
+	{
+		if ( PC_ParseFloat( &c[i] ) )
+		{
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
+
+qboolean ItemParse_hoverBackground( itemDef_t *item )
+{
+	const char *temp;
+	if ( PC_ParseString( &temp ) )
+	{
+		return qfalse;
+	}
+	item->hoverBackground = ui.R_RegisterShaderNoMip( temp );
+	return qtrue;
+}
+
+// sliderFill <0|1>: the slider bar fills the item's rect instead of the fixed 128x16 (resizable)
+qboolean ItemParse_sliderFill( itemDef_t *item )
+{
+	int i;
+	if ( PC_ParseInt( &i ) )
+	{
+		return qfalse;
+	}
+	item->sliderFill = (qboolean)( i != 0 );
+	return qtrue;
+}
+
+qboolean ItemParse_selectedBackground( itemDef_t *item )
+{
+	const char *temp;
+	if ( PC_ParseString( &temp ) )
+	{
+		return qfalse;
+	}
+	item->selectedBackground = ui.R_RegisterShaderNoMip( temp );
+	return qtrue;
+}
+
+qboolean ItemParse_hoverRect( itemDef_t *item )
+{
+	return PC_ParseRect( &item->hoverRect );
+}
+
+qboolean ItemParse_hoverBackColor( itemDef_t *item )
+{
+	return Color_Parse4( item->hoverBackColor );
+}
+
+qboolean ItemParse_hoverColor( itemDef_t *item )
+{
+	if ( !Color_Parse4( item->hoverColor ) )
+	{
+		return qfalse;
+	}
+	item->hasHoverColor = qtrue;
+	return qtrue;
+}
+
+qboolean ItemParse_icon( itemDef_t *item )
+{
+	const char *temp;
+	if ( PC_ParseString( &temp ) )
+	{
+		return qfalse;
+	}
+	item->icon = ui.R_RegisterShaderNoMip( temp );
+
+	// optional sub-rect: only if the next token is a number
+	const char *p = parseData[parseDataCount].bufferCurrent;
+	while ( p && *p && ( *p == ' ' || *p == '\t' ) )
+	{
+		p++;
+	}
+	if ( p && ( ( *p >= '0' && *p <= '9' ) || *p == '-' || *p == '.' ) )
+	{
+		return PC_ParseRect( &item->iconRect );
+	}
+	return qtrue;
+}
+
+qboolean ItemParse_iconColor( itemDef_t *item )
+{
+	return Color_Parse4( item->iconColor );
+}
+
+qboolean ItemParse_tabGroup( itemDef_t *item )
+{
+	return PC_ParseStringMem( &item->tabGroup );
+}
+
+qboolean ItemParse_tabPanel( itemDef_t *item )
+{
+	return PC_ParseStringMem( &item->tabPanel );
+}
+
+qboolean ItemParse_selectedColor( itemDef_t *item )
+{
+	if ( !Color_Parse4( item->selectedColor ) )
+	{
+		return qfalse;
+	}
+	item->hasSelectedColor = qtrue;
+	return qtrue;
+}
+
+qboolean ItemParse_tabDefault( itemDef_t *item )
+{
+	item->tabDefault = qtrue;
+	return qtrue;
+}
+
+// selectedCvar <cvar> <value> | none: the item shows as selected while the cvar holds the value.
+// Without it, an item with selectedColor / selectedBackground uses the first "setcvar X Y" in its
+// action; "none" turns that off (plain tabGroup behaviour).
+qboolean ItemParse_selectedCvar( itemDef_t *item )
+{
+	if ( !PC_ParseStringMem( &item->selectedCvar ) )
+	{
+		return qfalse;
+	}
+	item->selectedCvarChecked = qtrue;
+	if ( !Q_stricmp( item->selectedCvar, "none" ) )
+	{
+		item->selectedCvar = NULL;
+		return qtrue;
+	}
+	return PC_ParseStringMem( &item->selectedValue );
+}
+
+
+qboolean ItemParse_sliderColor( itemDef_t *item )		{ return ( item->hasSliderColor = Color_Parse4( item->sliderColor ) ); }
+qboolean ItemParse_sliderThumbColor( itemDef_t *item )	{ return ( item->hasSliderThumbColor = Color_Parse4( item->sliderThumbColor ) ); }
+qboolean ItemParse_scrollColor( itemDef_t *item )		{ return ( item->hasScrollColor = Color_Parse4( item->scrollColor ) ); }
+qboolean ItemParse_scrollThumbColor( itemDef_t *item )	{ return ( item->hasScrollThumbColor = Color_Parse4( item->scrollThumbColor ) ); }
+qboolean ItemParse_headingColor( itemDef_t *item )		{ return ( item->hasHeadingColor = Color_Parse4( item->headingColor ) ); }
+
+static qboolean Item_ParseImage( qhandle_t *out )
+{
+	const char *temp;
+	if ( PC_ParseString( &temp ) )
+	{
+		return qfalse;
+	}
+	*out = ui.R_RegisterShaderNoMip( temp );
+	return qtrue;
+}
+qboolean ItemParse_sliderImage( itemDef_t *item )		{ return Item_ParseImage( &item->sliderImage ); }
+qboolean ItemParse_sliderThumbImage( itemDef_t *item )	{ return Item_ParseImage( &item->sliderThumbImage ); }
+qboolean ItemParse_scrollImage( itemDef_t *item )		{ return Item_ParseImage( &item->scrollImage ); }
+qboolean ItemParse_scrollThumbImage( itemDef_t *item )	{ return Item_ParseImage( &item->scrollThumbImage ); }
+// scrollArrowImages <up> <down> <left> <right>
+qboolean ItemParse_scrollArrowImages( itemDef_t *item )
+{
+	for ( int i = 0; i < 4; i++ )
+	{
+		if ( !Item_ParseImage( &item->scrollArrowImage[i] ) )
+		{
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
+
+// white copies of the stock slider / scroll art (gfx/menus/jke/*_w): a colour on them is exact
+enum { WA_SLIDER, WA_SLIDERTHUMB, WA_SCROLL, WA_SCROLLTHUMB, WA_UP, WA_DOWN, WA_LEFT, WA_RIGHT, WA_COUNT };
+static qhandle_t UI_WhiteArt( int which )
+{
+	static const char *names[WA_COUNT] = {
+		"gfx/menus/jke/slider_w", "gfx/menus/jke/sliderthumb_w", "gfx/menus/jke/scrollbar_w", "gfx/menus/jke/scrollbar_thumb_w",
+		"gfx/menus/jke/scrollbar_arrow_up_w", "gfx/menus/jke/scrollbar_arrow_dwn_w", "gfx/menus/jke/scrollbar_arrow_left_w", "gfx/menus/jke/scrollbar_arrow_right_w" };
+	static qhandle_t handles[WA_COUNT];
+	static qboolean registered[WA_COUNT];
+	if ( !registered[which] )
+	{
+		handles[which] = ui.R_RegisterShaderNoMip( names[which] );
+		registered[which] = qtrue;
+	}
+	return handles[which];
+}
+
+// the image for a slider piece: its own, else white art when it's coloured, else the stock art
+static qhandle_t Item_SliderArt( const itemDef_t *item, qboolean thumb )
+{
+	if ( thumb )
+	{
+		if ( item->sliderThumbImage ) return item->sliderThumbImage;
+		if ( item->hasSliderThumbColor || item->hasSliderColor ) { const qhandle_t h = UI_WhiteArt( WA_SLIDERTHUMB ); if ( h ) return h; }
+		return DC->Assets.sliderThumb;
+	}
+	if ( item->sliderImage ) return item->sliderImage;
+	if ( item->hasSliderColor ) { const qhandle_t h = UI_WhiteArt( WA_SLIDER ); if ( h ) return h; }
+	return DC->Assets.sliderBar;
+}
+
+// a scroll bar piece: 0 bar, 1 thumb, 2 up, 3 down, 4 left, 5 right
+static qhandle_t Item_ScrollArt( const itemDef_t *item, int piece )
+{
+	const qhandle_t stock[6] = { DC->Assets.scrollBar, DC->Assets.scrollBarThumb, DC->Assets.scrollBarArrowUp,
+		DC->Assets.scrollBarArrowDown, DC->Assets.scrollBarArrowLeft, DC->Assets.scrollBarArrowRight };
+	const qhandle_t own = piece == 0 ? item->scrollImage : piece == 1 ? item->scrollThumbImage : item->scrollArrowImage[piece - 2];
+	if ( own )
+	{
+		return own;
+	}
+	if ( piece == 1 ? ( item->hasScrollThumbColor || item->hasScrollColor ) : item->hasScrollColor )
+	{
+		static const int white[6] = { WA_SCROLL, WA_SCROLLTHUMB, WA_UP, WA_DOWN, WA_LEFT, WA_RIGHT };
+		const qhandle_t h = UI_WhiteArt( white[piece] );
+		if ( h )
+		{
+			return h;
+		}
+	}
+	return stock[piece];
+}
+
+// one script token (word, "quoted string" or ';') into out; returns where it stopped. Self-contained:
+// COM_ParseExt needs a parse session, and there's none while menus paint (it errors out).
+static const char *Item_ScriptToken( const char *p, char *out, int outSize )
+{
+	int n = 0;
+	out[0] = '\0';
+	while ( *p && (unsigned char)*p <= ' ' )
+	{
+		p++;
+	}
+	if ( !*p )
+	{
+		return p;
+	}
+	if ( *p == '"' )
+	{
+		p++;
+		while ( *p && *p != '"' )
+		{
+			if ( n < outSize - 1 ) out[n++] = *p;
+			p++;
+		}
+		if ( *p == '"' ) p++;
+	}
+	else if ( *p == ';' )
+	{
+		out[n++] = *p++;
+	}
+	else
+	{
+		while ( *p && (unsigned char)*p > ' ' && *p != ';' && *p != '"' )
+		{
+			if ( n < outSize - 1 ) out[n++] = *p;
+			p++;
+		}
+	}
+	out[n] = '\0';
+	return p;
+}
+
+// the first "setcvar <name> <value>" in the item's action
+static void Item_SelectedCvarFromAction( itemDef_t *item )
+{
+	const char *p = item->action;
+	char token[MAX_QPATH], name[MAX_QPATH], value[MAX_QPATH];
+
+	while ( p && *p )
+	{
+		p = Item_ScriptToken( p, token, sizeof( token ) );
+		if ( !token[0] )
+		{
+			break;
+		}
+		if ( Q_stricmp( token, "setcvar" ) )
+		{
+			continue;
+		}
+		p = Item_ScriptToken( p, name, sizeof( name ) );
+		p = Item_ScriptToken( p, value, sizeof( value ) );
+		if ( name[0] && value[0] && Q_stricmp( value, ";" ) )
+		{
+			item->selectedValue = String_Alloc( value );
+			item->selectedCvar = String_Alloc( name );
+		}
+		break;
+	}
+}
+
+// is this item the selected one: its cvar holds its value, or (no cvar) it's the selected tab
+static qboolean Item_IsSelected( itemDef_t *item )
+{
+	if ( !item->selectedCvarChecked )
+	{
+		item->selectedCvarChecked = qtrue;
+		if ( item->action && item->type != ITEM_TYPE_LISTBOX && ( item->hasSelectedColor || item->selectedBackground ) )
+		{
+			Item_SelectedCvarFromAction( item );
+		}
+	}
+	if ( item->selectedCvar && item->selectedValue )
+	{
+		char buf[256];
+		DC->getCVarString( item->selectedCvar, buf, sizeof( buf ) );
+		if ( !Q_stricmp( buf, item->selectedValue ) )
+		{
+			return qtrue;
+		}
+		// numbers: "1" matches "1.000000"
+		char *end1, *end2;
+		const double a = strtod( buf, &end1 ), b = strtod( item->selectedValue, &end2 );
+		return (qboolean)( buf[0] && !*end1 && !*end2 && end1 != buf && a == b );
+	}
+	return item->tabSelected;
+}
+
+/*
+===============
+slideshow <cvar> <hold seconds> <fade seconds> ["default images"]
+slideshowAspect <w/h of the images>		(default 1.333: levelshots)
+slideshowZoom <fraction>				(default 0.06)
+
+Fills the item with images listed in a cvar (space separated shader names), cropped to fill like
+a photo, each zooming in slowly and crossfading into the next. When the cvar is empty the
+default list is used. The main menu's `uiScript updateContinue` fills ui_menuShots with the
+levelshots of the player's progress.
+===============
+*/
+qboolean ItemParse_slideshow( itemDef_t *item )
+{
+	if ( !PC_ParseStringMem( &item->slideshowCvar ) || PC_ParseFloat( &item->slideshowHold ) || PC_ParseFloat( &item->slideshowFade ) )
+	{
+		return qfalse;
+	}
+	// optional default list: only if a quoted string follows on the same line
+	const char *p = parseData[parseDataCount].bufferCurrent;
+	while ( p && *p && ( *p == ' ' || *p == '\t' ) )
+	{
+		p++;
+	}
+	if ( p && *p == '"' )
+	{
+		if ( !PC_ParseStringMem( &item->slideshowDefault ) )
+		{
+			return qfalse;
+		}
+	}
+	if ( item->slideshowHold < 0.5f ) item->slideshowHold = 0.5f;
+	if ( item->slideshowFade < 0.0f ) item->slideshowFade = 0.0f;
+	if ( item->slideshowAspect <= 0.0f ) item->slideshowAspect = 4.0f / 3.0f;
+	if ( item->slideshowZoom == 0.0f ) item->slideshowZoom = 0.06f;
+	return qtrue;
+}
+
+qboolean ItemParse_slideshowAspect( itemDef_t *item )
+{
+	return (qboolean)!PC_ParseFloat( &item->slideshowAspect );
+}
+
+qboolean ItemParse_slideshowZoom( itemDef_t *item )
+{
+	if ( PC_ParseFloat( &item->slideshowZoom ) )
+	{
+		return qfalse;
+	}
+	if ( item->slideshowZoom == 0.0f ) item->slideshowZoom = 0.0001f;	// 0 means "default" at parse time
+	return qtrue;
+}
+
+// valueX <x>: the value (multi / yes-no / slider / bind / edit field) starts x from the item's left
+qboolean ItemParse_valueX( itemDef_t *item )
+{
+	if ( PC_ParseFloat( &item->valueX ) )
+	{
+		return qfalse;
+	}
+	item->hasValueX = qtrue;
+	return qtrue;
+}
+
+// bytes of typeData each item type uses (mirrors Item_ValidateTypeData)
+static size_t Item_TypeDataSize( int type )
+{
+	switch ( type )
+	{
+	case ITEM_TYPE_LISTBOX:
+		return sizeof( listBoxDef_t );
+	case ITEM_TYPE_EDITFIELD:
+	case ITEM_TYPE_NUMERICFIELD:
+	case ITEM_TYPE_YESNO:
+	case ITEM_TYPE_BIND:
+	case ITEM_TYPE_SLIDER:
+	case ITEM_TYPE_SLIDER_INTEGER:
+	case ITEM_TYPE_TEXT:
+	case ITEM_TYPE_SLIDER_ROTATE:
+		return sizeof( editFieldDef_t );
+	case ITEM_TYPE_MULTI:
+		return sizeof( multiDef_t );
+	case ITEM_TYPE_MODEL:
+		return sizeof( modelDef_t );
+	case ITEM_TYPE_TEXTSCROLL:
+		return sizeof( textScrollDef_t );
+	default:
+		return 0;
+	}
+}
+
+qboolean ItemParse_inherit( itemDef_t *item )
+{
+	const char *name;
+	menuDef_t *menu = (menuDef_t *)item->parent;
+	itemDef_t *src = NULL;
+
+	if ( PC_ParseString( &name ) )
+	{
+		return qfalse;
+	}
+	if ( menu )
+	{
+		for ( int i = 0; i < menu->itemCount; i++ )
+		{
+			if ( menu->items[i] && menu->items[i] != item && menu->items[i]->window.name && !Q_stricmp( menu->items[i]->window.name, name ) )
+			{
+				src = menu->items[i];
+			}
+		}
+	}
+	if ( !src )
+	{
+		PC_ParseWarning( va( "inherit: no item named '%s' before this one in the menu", name ) );
+		return qtrue;
+	}
+
+	// keep what this item already set that identifies it; everything else comes from src
+	char *keepName = item->window.name;
+	char *keepGroup = item->window.group;
+	void *parent = item->parent;
+
+	*item = *src;
+
+	CGhoul2Info_v noModel;			// 3D models aren't shared; set asset_model again if needed
+	item->ghoul2 = noModel;
+	item->parent = parent;
+	if ( keepName )		item->window.name = keepName;
+	if ( keepGroup )	item->window.group = keepGroup;
+	item->tabSelected = qfalse;
+	item->inherited = qtrue;
+
+	const size_t size = Item_TypeDataSize( src->type );
+	if ( src->typeData && size )
+	{
+		item->typeData = UI_Alloc( (int)size );
+		memcpy( item->typeData, src->typeData, size );
+	}
+	else
+	{
+		item->typeData = NULL;
 	}
 	return qtrue;
 }
@@ -5132,6 +5916,7 @@ keywordHash_t itemParseKeywords[] = {
 	{"model_fovy",		ItemParse_model_fovy,		},
 	{"model_origin",	ItemParse_model_origin,		},
 	{"model_rotation",	ItemParse_model_rotation,	},
+	{"saberUpright",	ItemParse_saberUpright,		},	// JKEnhanced
 	//rww - g2 begin
 	{"model_g2mins",	ItemParse_model_g2mins,		},
 	{"model_g2maxs",	ItemParse_model_g2maxs,		},
@@ -5169,6 +5954,36 @@ keywordHash_t itemParseKeywords[] = {
 	{"wrapped",			ItemParse_wrapped,			},
 	{"invertyesno",		ItemParse_invertyesno		},
 	{"xoffset",			ItemParse_xoffset			},//for yes/no and multi
+	{"anchor",			ItemParse_anchor			},
+	{"hoverBackground",	ItemParse_hoverBackground	},
+	{"hoverRect",		ItemParse_hoverRect			},
+	{"hoverBackColor",	ItemParse_hoverBackColor	},
+	{"hoverColor",		ItemParse_hoverColor		},
+	{"hoverSound",		ItemParse_focusSound		},
+	{"icon",			ItemParse_icon				},
+	{"iconColor",		ItemParse_iconColor			},
+	{"tabGroup",		ItemParse_tabGroup			},
+	{"tabPanel",		ItemParse_tabPanel			},
+	{"selectedColor",	ItemParse_selectedColor		},
+	{"selectedBackground", ItemParse_selectedBackground },
+	{"sliderFill",	ItemParse_sliderFill		},	// JKEnhanced
+	{"tabDefault",		ItemParse_tabDefault		},
+	{"selectedCvar",	ItemParse_selectedCvar		},
+	{"sliderColor",		ItemParse_sliderColor		},
+	{"sliderThumbColor", ItemParse_sliderThumbColor	},
+	{"scrollColor",		ItemParse_scrollColor		},
+	{"scrollThumbColor", ItemParse_scrollThumbColor	},
+	{"headingColor",	ItemParse_headingColor		},
+	{"sliderImage",		ItemParse_sliderImage		},
+	{"sliderThumbImage", ItemParse_sliderThumbImage	},
+	{"scrollImage",		ItemParse_scrollImage		},
+	{"scrollThumbImage", ItemParse_scrollThumbImage	},
+	{"scrollArrowImages", ItemParse_scrollArrowImages },
+	{"inherit",			ItemParse_inherit			},
+	{"slideshow",		ItemParse_slideshow			},
+	{"slideshowAspect",	ItemParse_slideshowAspect	},
+	{"slideshowZoom",	ItemParse_slideshowZoom		},
+	{"valueX",			ItemParse_valueX			},
 
 
 
@@ -5649,6 +6464,8 @@ void  Menus_Activate(menuDef_t *menu)
 		}
 	}
 
+	Menu_SelectDefaultTabs( menu );	// JKEnhanced tabs (after onOpen, which may hide panels)
+
 //	menu->appearanceTime = DC->realTime + 1000;
 	menu->appearanceTime = 0;
 	menu->appearanceCnt = 0;
@@ -5916,6 +6733,161 @@ void Menu_UpdatePosition(menuDef_t *menu)
 
 /*
 ===============
+Menu_ApplyVirtualSize
+
+A menu with `virtualSize W H` is written in W x H screen pixels (e.g. 2560 1440). Its numbers are
+converted once, here, into the 640x480 space everything else uses:
+- vertical: y * 480/H
+- horizontal keeps the authored proportions on the real screen (the same widthRatioCoef idea
+  cgame's HUD uses), placed by the item's anchor: left / right keep the distance to that screen
+  edge, center to the middle, stretch maps 0..W onto the whole width.
+At the authored aspect every anchor gives the same result.
+textscale is not converted: it stays relative to the screen height, as in every other menu.
+===============
+*/
+static float Virtual_AspectCoef( void )
+{
+	if ( !DC || DC->glconfig.vidWidth <= 0 || DC->glconfig.vidHeight <= 0 )
+	{
+		return 1.0f;
+	}
+	return ( 640.0f * DC->glconfig.vidHeight ) / ( 480.0f * DC->glconfig.vidWidth );
+}
+
+static int Virtual_Anchor( const menuDef_t *menu, int anchor )
+{
+	if ( anchor == ANCHOR_DEFAULT )
+	{
+		anchor = menu->anchor;
+	}
+	return anchor == ANCHOR_DEFAULT ? ANCHOR_CENTER : anchor;
+}
+
+static float Virtual_ScaleY( const menuDef_t *menu )
+{
+	return 480.0f / menu->virtualH;
+}
+
+// horizontal scale for widths and offsets under this anchor
+static float Virtual_ScaleX( const menuDef_t *menu, int anchor )
+{
+	if ( Virtual_Anchor( menu, anchor ) == ANCHOR_STRETCH )
+	{
+		return 640.0f / menu->virtualW;
+	}
+	return Virtual_ScaleY( menu ) * Virtual_AspectCoef();
+}
+
+// absolute authored x -> 640 space
+static float Virtual_X( const menuDef_t *menu, int anchor, float x )
+{
+	const float sx = Virtual_ScaleX( menu, anchor );
+
+	switch ( Virtual_Anchor( menu, anchor ) )
+	{
+	case ANCHOR_LEFT:
+	case ANCHOR_STRETCH:
+		return x * sx;
+	case ANCHOR_RIGHT:
+		return 640.0f - ( menu->virtualW - x ) * sx;
+	default:
+		return 320.0f + ( x - menu->virtualW * 0.5f ) * sx;
+	}
+}
+
+// absolute authored rect -> absolute 640 rect
+static void Virtual_AbsRect( const menuDef_t *menu, int anchor, rectDef_t *r )
+{
+	const float sx = Virtual_ScaleX( menu, anchor );
+	const float sy = Virtual_ScaleY( menu );
+
+	r->x = Virtual_X( menu, anchor, r->x );
+	r->y *= sy;
+	r->w *= sx;
+	r->h *= sy;
+}
+
+// item rect relative to the menu (rectClient / script args), authored -> 640
+static void Virtual_ItemRect( const menuDef_t *menu, int anchor, rectDef_t *r )
+{
+	r->x += menu->virtualRect.x;
+	r->y += menu->virtualRect.y;
+	Virtual_AbsRect( menu, anchor, r );
+	r->x -= menu->window.rect.x;
+	r->y -= menu->window.rect.y;
+}
+
+static void Virtual_ItemPoint( const menuDef_t *menu, int anchor, float *x, float *y )
+{
+	*x = Virtual_X( menu, anchor, *x + menu->virtualRect.x ) - menu->window.rect.x;
+	*y = ( *y + menu->virtualRect.y ) * Virtual_ScaleY( menu ) - menu->window.rect.y;
+}
+
+static void Menu_ApplyVirtualSize( menuDef_t *menu )
+{
+	const float sy = Virtual_ScaleY( menu );
+	int i, c;
+
+	// the menu rect itself (fullscreen menus are forced to 0 0 640 480 afterwards)
+	if ( menu->fullScreen )
+	{
+		menu->virtualRect.x = menu->virtualRect.y = 0.0f;
+		menu->virtualRect.w = menu->virtualW;
+		menu->virtualRect.h = menu->virtualH;
+		menu->window.rect.x = menu->window.rect.y = 0.0f;
+	}
+	else
+	{
+		menu->virtualRect = menu->window.rect;
+		Virtual_AbsRect( menu, ANCHOR_DEFAULT, &menu->window.rect );
+	}
+	menu->window.borderSize *= sy;
+	menu->descX = (int)( Virtual_X( menu, ANCHOR_DEFAULT, (float)menu->descX ) + 0.5f );
+	menu->descY = (int)( menu->descY * sy + 0.5f );
+
+	for ( i = 0; i < menu->itemCount; i++ )
+	{
+		itemDef_t *item = menu->items[i];
+		const float sx = Virtual_ScaleX( menu, item->anchor );
+
+		Virtual_ItemRect( menu, item->anchor, &item->window.rectClient );
+		item->textalignx *= sx;
+		item->textaligny *= sy;
+		item->text2alignx *= sx;
+		item->text2aligny *= sy;
+		item->xoffset = (int)( item->xoffset * sx + ( item->xoffset >= 0 ? 0.5f : -0.5f ) );
+		item->window.borderSize *= sy;
+		item->hoverRect.x *= sx;
+		item->hoverRect.y *= sy;
+		item->hoverRect.w *= sx;
+		item->hoverRect.h *= sy;
+		item->iconRect.x *= sx;
+		item->iconRect.y *= sy;
+		item->iconRect.w *= sx;
+		item->iconRect.h *= sy;
+		item->valueX *= sx;
+
+		if ( item->type == ITEM_TYPE_LISTBOX && item->typeData )
+		{
+			listBoxDef_t *listPtr = (listBoxDef_t*)item->typeData;
+			listPtr->elementWidth *= sx;
+			listPtr->elementHeight *= sy;
+			for ( c = 0; c < listPtr->numColumns && c < MAX_LB_COLUMNS; c++ )
+			{
+				listPtr->columnInfo[c].pos = (int)( listPtr->columnInfo[c].pos * sx + 0.5f );
+				listPtr->columnInfo[c].width = (int)( listPtr->columnInfo[c].width * sx + 0.5f );
+			}
+		}
+		else if ( item->type == ITEM_TYPE_TEXTSCROLL && item->typeData )
+		{
+			textScrollDef_t *scrollPtr = (textScrollDef_t*)item->typeData;
+			scrollPtr->lineHeight *= sy;
+		}
+	}
+}
+
+/*
+===============
 Menu_PostParse
 ===============
 */
@@ -5924,6 +6896,11 @@ void Menu_PostParse(menuDef_t *menu)
 	if (menu == NULL)
 	{
 		return;
+	}
+
+	if ( menu->virtualW > 0.0f )
+	{
+		Menu_ApplyVirtualSize( menu );
 	}
 
 	if (menu->fullScreen)
@@ -6077,6 +7054,16 @@ int PC_StartParseSession(const char *fileName,char **buffer)
 	// Not there?
 	if ( len>0 )
 	{
+		// #include / #define (JKEnhanced): files with directives are expanded into a new buffer
+		int ppLen = 0;
+		char *pp = UI_PreprocessMenuFile( fileName, *buffer, len, &ppLen );
+		if ( pp )
+		{
+			ui.FS_FreeFile( *buffer );
+			*buffer = pp;
+			len = ppLen > 0 ? ppLen : 1;	// callers treat <= 0 as "not found"
+		}
+
 		COM_BeginParseSession();
 
 		Q_strncpyz(parseData[parseDataCount].fileName, fileName, sizeof (parseData[0].fileName));
@@ -6095,7 +7082,10 @@ PC_EndParseSession
 void PC_EndParseSession(char *buffer)
 {
 	COM_EndParseSession();
-	ui.FS_FreeFile( buffer );	//let go of the buffer
+	if ( !UI_FreePreprocessedMenu( buffer ) )	// a #include/#define expansion, or the file itself
+	{
+		ui.FS_FreeFile( buffer );	//let go of the buffer
+	}
 }
 
 /*
@@ -6496,6 +7486,20 @@ void Item_TextColor(itemDef_t *item, vec4_t *newColor)
 		memcpy(newColor, &item->window.foreColor, sizeof(vec4_t));
 	}
 
+	// JKEnhanced: hoverColor replaces the pulsing focus colour; the selected item uses selectedColor
+	// unless the mouse is on it (focus stays on a clicked item after the mouse leaves, so focus
+	// alone doesn't hide the selection)
+	const qboolean selected = (qboolean)( item->hasSelectedColor && item->type != ITEM_TYPE_LISTBOX && Item_IsSelected( item ) );
+	const qboolean mouseOn = (qboolean)( ( item->window.flags & WINDOW_MOUSEOVER ) != 0 );
+	if ( item->hasHoverColor && Item_IsHovered( item ) && ( mouseOn || !selected ) )
+	{
+		memcpy( newColor, &item->hoverColor, sizeof( vec4_t ) );
+	}
+	else if ( selected )
+	{
+		memcpy( newColor, &item->selectedColor, sizeof( vec4_t ) );
+	}
+
 	if (item->disabled)
 	{
 		memcpy(newColor, &parent->disableColor, sizeof(vec4_t));
@@ -6725,11 +7729,32 @@ void Item_TextField_Paint(itemDef_t *item)
 	if (item->window.flags & WINDOW_HASFOCUS && g_editingField)
 	{
 		char cursor = DC->getOverstrikeMode() ? '_' : '|';
-		DC->drawTextWithCursor(item->textRect.x + item->textRect.w + offset, item->textRect.y, item->textscale, newColor, buff + editPtr->paintOffset, item->cursorPos - editPtr->paintOffset , cursor, /*editPtr->maxPaintChars*/ item->window.rect.w, item->textStyle, item->font);
+		DC->drawTextWithCursor(( item->hasValueX ? Item_ValueX( item ) : item->textRect.x + item->textRect.w + offset ), item->textRect.y, item->textscale, newColor, buff + editPtr->paintOffset, item->cursorPos - editPtr->paintOffset , cursor, /*editPtr->maxPaintChars*/ item->window.rect.w, item->textStyle, item->font);
 	}
 	else
 	{
-		DC->drawText(item->textRect.x + item->textRect.w + offset, item->textRect.y, item->textscale, newColor, buff + editPtr->paintOffset, /*editPtr->maxPaintChars*/ item->window.rect.w, item->textStyle, item->font);
+		DC->drawText(( item->hasValueX ? Item_ValueX( item ) : item->textRect.x + item->textRect.w + offset ), item->textRect.y, item->textscale, newColor, buff + editPtr->paintOffset, /*editPtr->maxPaintChars*/ item->window.rect.w, item->textStyle, item->font);
+	}
+}
+
+// JKEnhanced scrollColor / scrollThumbColor: 0 = the bar and arrows, 1 = the thumb, 2 = done
+static void Item_ScrollColor( const itemDef_t *item, int part )
+{
+	if ( !item->hasScrollColor && !item->hasScrollThumbColor )
+	{
+		return;	// stock: whatever colour is set
+	}
+	if ( part == 1 && item->hasScrollThumbColor )
+	{
+		DC->setColor( item->scrollThumbColor );
+	}
+	else if ( part != 2 && item->hasScrollColor )
+	{
+		DC->setColor( item->scrollColor );
+	}
+	else
+	{
+		DC->setColor( NULL );
 	}
 }
 
@@ -6759,14 +7784,15 @@ void Item_TextScroll_Paint(itemDef_t *item)
 		// draw scrollbar to right side of the window
 		x = item->window.rect.x + item->window.rect.w - SCROLLBAR_SIZE - 1;
 		y = item->window.rect.y + 1;
-		DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarArrowUp);
+		Item_ScrollColor( item, 0 );
+		DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, Item_ScrollArt( item, 2 ));
 		y += SCROLLBAR_SIZE - 1;
 
 		scrollPtr->endPos = scrollPtr->startPos;
 		size = item->window.rect.h - (SCROLLBAR_SIZE * 2);
-		DC->drawHandlePic(x, y, SCROLLBAR_SIZE, size+1, DC->Assets.scrollBar);
+		DC->drawHandlePic(x, y, SCROLLBAR_SIZE, size+1, Item_ScrollArt( item, 0 ));
 		y += size - 1;
-		DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarArrowDown);
+		DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, Item_ScrollArt( item, 3 ));
 
 		// thumb
 		thumb = Item_TextScroll_ThumbDrawPosition(item);
@@ -6774,7 +7800,9 @@ void Item_TextScroll_Paint(itemDef_t *item)
 		{
 			thumb = y - SCROLLBAR_SIZE - 1;
 		}
-		DC->drawHandlePic(x, thumb, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarThumb);
+		Item_ScrollColor( item, 1 );
+		DC->drawHandlePic(x, thumb, SCROLLBAR_SIZE, SCROLLBAR_SIZE, Item_ScrollArt( item, 1 ));
+		Item_ScrollColor( item, 2 );
 	}
 
 	// adjust size for item painting
@@ -6848,19 +7876,22 @@ void Item_ListBox_Paint(itemDef_t *item)
 			{
 				x = item->window.rect.x + 1;
 				y = item->window.rect.y + item->window.rect.h - SCROLLBAR_SIZE - 1;
-				DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarArrowLeft);
+				Item_ScrollColor( item, 0 );
+				DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, Item_ScrollArt( item, 4 ));
 				x += SCROLLBAR_SIZE - 1;
 				size = item->window.rect.w - (SCROLLBAR_SIZE * 2);
-				DC->drawHandlePic(x, y, size+1, SCROLLBAR_SIZE, DC->Assets.scrollBar);
+				DC->drawHandlePic(x, y, size+1, SCROLLBAR_SIZE, Item_ScrollArt( item, 0 ));
 				x += size - 1;
-				DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarArrowRight);
+				DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, Item_ScrollArt( item, 5 ));
 				// thumb
 				thumb = Item_ListBox_ThumbDrawPosition(item);//Item_ListBox_ThumbPosition(item);
 				if (thumb > x - SCROLLBAR_SIZE - 1)
 				{
 					thumb = x - SCROLLBAR_SIZE - 1;
 				}
-				DC->drawHandlePic(thumb, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarThumb);
+				Item_ScrollColor( item, 1 );
+				DC->drawHandlePic(thumb, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, Item_ScrollArt( item, 1 ));
+				Item_ScrollColor( item, 2 );
 			}
 			else if (listPtr->startPos > 0)
 			{
@@ -6926,21 +7957,24 @@ void Item_ListBox_Paint(itemDef_t *item)
 			// draw scrollbar to right side of the window
 			x = item->window.rect.x + item->window.rect.w - SCROLLBAR_SIZE - 1;
 			y = item->window.rect.y + 1;
-			DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarArrowUp);
+			Item_ScrollColor( item, 0 );
+			DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, Item_ScrollArt( item, 2 ));
 			y += SCROLLBAR_SIZE - 1;
 
 			listPtr->endPos = listPtr->startPos;
 			size = item->window.rect.h - (SCROLLBAR_SIZE * 2);
-			DC->drawHandlePic(x, y, SCROLLBAR_SIZE, size+1, DC->Assets.scrollBar);
+			DC->drawHandlePic(x, y, SCROLLBAR_SIZE, size+1, Item_ScrollArt( item, 0 ));
 			y += size - 1;
-			DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarArrowDown);
+			DC->drawHandlePic(x, y, SCROLLBAR_SIZE, SCROLLBAR_SIZE, Item_ScrollArt( item, 3 ));
 			// thumb
 			thumb = Item_ListBox_ThumbDrawPosition(item);//Item_ListBox_ThumbPosition(item);
 			if (thumb > y - SCROLLBAR_SIZE - 1)
 			{
 				thumb = y - SCROLLBAR_SIZE - 1;
 			}
-			DC->drawHandlePic(x, thumb, SCROLLBAR_SIZE, SCROLLBAR_SIZE, DC->Assets.scrollBarThumb);
+			Item_ScrollColor( item, 1 );
+			DC->drawHandlePic(x, thumb, SCROLLBAR_SIZE, SCROLLBAR_SIZE, Item_ScrollArt( item, 1 ));
+			Item_ScrollColor( item, 2 );
 		}
 //JLF end
 		// adjust size for item painting
@@ -7009,10 +8043,10 @@ void Item_ListBox_Paint(itemDef_t *item)
 							vec4_t	*color;
 							menuDef_t *parent = (menuDef_t*)item->parent;
 
-							// Use focus color is it has focus.
+							// Use focus color is it has focus. (JKEnhanced: selectedColor if given)
 							if (i == item->cursorPos)
 							{
-								color = &parent->focusColor;
+								color = item->hasSelectedColor ? &item->selectedColor : &parent->focusColor;
 							}
 							else
 							{
@@ -7029,6 +8063,11 @@ void Item_ListBox_Paint(itemDef_t *item)
 				}
 				else
 				{
+					// JKEnhanced: the selection bar goes under the text (it used to be drawn over it)
+					if (i == item->cursorPos)
+					{
+						DC->fillRect(x + 2, y + listPtr->elementHeight + 2, item->window.rect.w - SCROLLBAR_SIZE - 4, listPtr->elementHeight+2, item->window.outlineColor);
+					}
 
 					text = DC->feederItemText(item->special, i, 0, &optionalImage);
 					if (text && text[0]=='@')
@@ -7043,13 +8082,25 @@ void Item_ListBox_Paint(itemDef_t *item)
 					}
 					else if (text)
 					{
-						DC->drawText(x + 4, y + listPtr->elementHeight, item->textscale, item->window.foreColor, text, 0, item->textStyle, item->font);
+						// JKEnhanced: heading rows (headingColor, default yellow) and the selected
+						// row (selectedColor) can have their own colours
+						static vec4_t defaultHeading = { 1, 1, 0, 1 };
+						float *color = item->window.foreColor;
+						if ( UI_FeederRowIsHeading( item->special, i ) )
+						{
+							color = item->hasHeadingColor ? item->headingColor : defaultHeading;
+						}
+						else if ( i == item->cursorPos && item->hasSelectedColor )
+						{
+							color = item->selectedColor;
+						}
+						DC->drawText(x + 4, y + listPtr->elementHeight, item->textscale, color, text, 0, item->textStyle, item->font);
 					}
 
 				}
 
-				// The chosen text
-				if (i == item->cursorPos)
+				// The chosen text (multi-column; single-column draws it under the text above)
+				if (i == item->cursorPos && listPtr->numColumns > 0)
 				{
 					DC->fillRect(x + 2, y + listPtr->elementHeight + 2, item->window.rect.w - SCROLLBAR_SIZE - 4, listPtr->elementHeight+2, item->window.outlineColor);
 				}
@@ -7183,7 +8234,7 @@ void Item_Bind_Paint(itemDef_t *item)
 		textScale = item->textscale;
 		textWidth = DC->textWidth(g_nameBind,(float) textScale, uiInfo.uiDC.Assets.qhMediumFont);
 
-		startingXPos = (item->textRect.x + item->textRect.w + 8);
+		startingXPos = (Item_ValueX( item ));
 
 		while ((startingXPos + textWidth) >= SCREEN_WIDTH)
 		{
@@ -7369,10 +8420,10 @@ void UI_RGBForSaber( byte *rgba, int whichSaber )
             rgba[2] = 51;
             rgba[3] = 255;
             break;
-        case SABER_BLUE:
+        case SABER_BLUE:	// JKEnhanced: stock never set green and put 102 in blue; cgame draws blue as 0.2 0.4 1
             rgba[0] = 51;
-            rgba[2] = 102;
-            rgba[3] = 255;
+            rgba[1] = 102;
+            rgba[2] = 255;
             rgba[3] = 255;
             break;
         case SABER_PURPLE:
@@ -7607,6 +8658,39 @@ void Item_Model_Paint(itemDef_t *item)
 	float len = 0.5 * ( maxs[2] - mins[2] );
 	origin[0] = len / 0.268;
 
+	// JKEnhanced: a saber (not one in a character's hand) is framed to fit the item's rect, upright
+	// or on its side: its two ends (hilt base and blade tip, along the model's Z axis) are placed
+	// with the saber's rest orientation, and the camera backs off until both fit, centred. fov_x
+	// follows the rect's shape so nothing is stretched. (The spin turns a saber about its own blade
+	// in both modes, so the rest orientation is right for every frame.)
+	extern qboolean UI_SaberUprightExtent( itemDef_t *item, float *zMin, float *zMax );
+	float zMin, zMax;
+	if ( ( item->flags & ITF_ISANYSABER ) && !( item->flags & ITF_ISCHARACTER ) && UI_SaberUprightExtent( item, &zMin, &zMax ) )
+	{
+		vec3_t restAngles, restAxis[3], a, b;
+		VectorSet( restAngles, 0, 0, modelPtr->saberUpright ? 0 : 90 );	// as the angles below, without the spin
+		AnglesToAxis( restAngles, restAxis );
+		VectorScale( restAxis[2], zMin, a );	// camera space: x forward, y left, z up
+		VectorScale( restAxis[2], zMax, b );
+		// a long lens: ~23 degrees across the rect's longer side. (A fixed 45 degree fov_y on a wide
+		// rect made fov_x ~150 degrees, a fisheye: the camera sat a few units away and the near side
+		// of the hilt bulged out past the rect's edge.)
+		const float aspect = refdef.width / Q_max( 1.0f, (float)refdef.height );
+		const float tLong = 0.2f;
+		const float tx = aspect >= 1.0f ? tLong : tLong * aspect;
+		const float ty = aspect >= 1.0f ? tLong / aspect : tLong;
+		refdef.fov_x = RAD2DEG( 2.0f * atan( tx ) );
+		refdef.fov_y = RAD2DEG( 2.0f * atan( ty ) );
+		// half sizes with a little margin; +1 for the hilt / blade thickness across the saber
+		const float hw = 0.5f * fabs( a[1] - b[1] ) * 1.06f + 1.0f;
+		const float hh = 0.5f * fabs( a[2] - b[2] ) * 1.06f + 1.0f;
+		origin[0] = Q_max( hw / tx, hh / ty ) - 0.5f * ( a[0] + b[0] );
+		origin[1] = -0.5f * ( a[1] + b[1] );
+		origin[2] = -0.5f * ( a[2] + b[2] );
+	}
+	// JKEnhanced: model_origin moves it from there (forward: negative = closer; left; up)
+	VectorAdd( origin, modelPtr->origin, origin );
+
 	DC->clearScene();
 
 	refdef.time = DC->realTime;
@@ -7625,7 +8709,11 @@ void Item_Model_Paint(itemDef_t *item)
 	{
 		curYaw += (float)refdef.time/modelPtr->rotationSpeed;
 	}
-	if ( item->flags&ITF_ISANYSABER && !(item->flags&ITF_ISCHARACTER) )
+	if ( item->flags&ITF_ISANYSABER && !(item->flags&ITF_ISCHARACTER) && modelPtr->saberUpright )
+	{// JKEnhanced saberUpright: blade up, spinning about the blade (UI_SaberDrawBlade matches)
+		VectorSet( angles, 0, curYaw, 0 );
+	}
+	else if ( item->flags&ITF_ISANYSABER && !(item->flags&ITF_ISCHARACTER) )
 	{//hack to put saber on it's side
 		VectorSet( angles, curYaw, 0, 90 );
 	}
@@ -7777,7 +8865,7 @@ void Item_OwnerDraw_Paint(itemDef_t *item)
 			Item_Text_Paint(item);
 
 			// +8 is an offset kludge to properly align owner draw items that have text combined with them
-			DC->ownerDrawItem(item->textRect.x + item->textRect.w + 8, item->window.rect.y, item->window.rect.w, item->window.rect.h, 0, item->textaligny, item->window.ownerDraw, item->window.ownerDrawFlags, item->alignment, item->special, item->textscale, color, item->window.background, item->textStyle, item->font );
+			DC->ownerDrawItem(Item_ValueX( item ), item->window.rect.y, item->window.rect.w, item->window.rect.h, 0, item->textaligny, item->window.ownerDraw, item->window.ownerDrawFlags, item->alignment, item->special, item->textscale, color, item->window.background, item->textStyle, item->font );
 		}
 		else
 		{
@@ -7811,7 +8899,7 @@ void Item_YesNo_Paint(itemDef_t *item)
 	if (item->text)
 	{
 		Item_Text_Paint(item);
-		DC->drawText(item->textRect.x + item->textRect.w + 8, item->textRect.y, item->textscale, color, yesnovalue, 0, item->textStyle, item->font);
+		DC->drawText(Item_ValueX( item ), item->textRect.y, item->textscale, color, yesnovalue, 0, item->textStyle, item->font);
 	}
 	else
 	{
@@ -7840,7 +8928,7 @@ void Item_Multi_Paint(itemDef_t *item)
 	if (item->text)
 	{
 		Item_Text_Paint(item);
-		DC->drawText(item->textRect.x + item->textRect.w + 8, item->textRect.y, item->textscale, color, text, 0, item->textStyle, item->font);
+		DC->drawText(Item_ValueX( item ), item->textRect.y, item->textscale, color, text, 0, item->textStyle, item->font);
 	}
 	else
 	{
@@ -8020,7 +9108,7 @@ float Item_Slider_ThumbPosition(itemDef_t *item)
 
 	if (item->text)
 	{
-		x = item->textRect.x + item->textRect.w + 8;
+		x = Item_ValueX( item );
 	}
 	else
 	{
@@ -8047,7 +9135,7 @@ float Item_Slider_ThumbPosition(itemDef_t *item)
 	value -= editDef->minVal;
 	value /= range;
 	//value /= (editDef->maxVal - editDef->minVal);
-	value *= SLIDER_WIDTH;
+	value = Item_SliderFraction( item, x, value );	// JKEnhanced: sliderFill keeps the thumb inside the bar
 	x += value;
 	// vm fuckage
 	//x = x + (((float)value / editDef->maxVal) * SLIDER_WIDTH);
@@ -8082,20 +9170,158 @@ void Item_Slider_Paint(itemDef_t *item)
 	if (item->text)
 	{
 		Item_Text_Paint(item);
-		x = item->textRect.x + item->textRect.w + 8;
+		x = Item_ValueX( item );
 	}
 	else
 	{
 		x = item->window.rect.x;
 	}
-	DC->setColor(newColor);
-	DC->drawHandlePic( x, y+2, SLIDER_WIDTH, SLIDER_HEIGHT, DC->Assets.sliderBar );
+	// JKEnhanced sliderColor / sliderThumbColor tint the bar / thumb (else the text colour, as stock)
+	const float *barColor = item->hasSliderColor ? item->sliderColor : newColor;
+	DC->setColor( barColor );
+	const float barH = Item_SliderHeight( item );
+	DC->drawHandlePic( x, y+2, Item_SliderWidthAt( item, x ), barH, Item_SliderArt( item, qfalse ) );
 
 	x = Item_Slider_ThumbPosition(item);
-//	DC->drawHandlePic( x - (SLIDER_THUMB_WIDTH / 2), y - 2, SLIDER_THUMB_WIDTH, SLIDER_THUMB_HEIGHT, DC->Assets.sliderThumb );
-	DC->drawHandlePic( x - (SLIDER_THUMB_WIDTH / 2), y+2, SLIDER_THUMB_WIDTH, SLIDER_THUMB_HEIGHT, DC->Assets.sliderThumb );
+//	DC->drawHandlePic( x - (SLIDER_THUMB_WIDTH / 2), y - 2, SLIDER_THUMB_WIDTH, SLIDER_THUMB_HEIGHT, Item_SliderArt( item, qtrue ) );
+	// (sliderFill: the thumb keeps its shape at the bar's height)
+	const float thumbW = SLIDER_THUMB_WIDTH * barH / SLIDER_HEIGHT;
+	DC->setColor( item->hasSliderThumbColor ? item->sliderThumbColor : barColor );
+	DC->drawHandlePic( x - (thumbW / 2), y+2, thumbW, barH * SLIDER_THUMB_HEIGHT / SLIDER_HEIGHT, Item_SliderArt( item, qtrue ) );
+	DC->setColor( NULL );
 
 }
+/*
+=================
+Item_IsHovered / Item_PaintExtras (JKEnhanced hoverBackground + icon)
+=================
+*/
+static qboolean Item_IsHovered( const itemDef_t *item )
+{
+	return (qboolean)( !item->disabled && ( item->window.flags & ( WINDOW_HASFOCUS | WINDOW_MOUSEOVER ) ) );
+}
+
+// a sub-rect given relative to the item; w/h 0 = the whole item
+static void Item_SubRect( const itemDef_t *item, const rectDef_t *sub, rectDef_t *out )
+{
+	if ( sub->w == 0.0f && sub->h == 0.0f )
+	{
+		*out = item->window.rect;
+		out->x += sub->x;
+		out->y += sub->y;
+		return;
+	}
+	out->x = item->window.rect.x + sub->x;
+	out->y = item->window.rect.y + sub->y;
+	out->w = sub->w;
+	out->h = sub->h;
+}
+
+// one slideshow image: cropped to fill the rect (the screen's real shape), zoomed about its centre
+static void Slideshow_Draw( itemDef_t *item, qhandle_t shader, float zoom, float alpha )
+{
+	const rectDef_t *r = &item->window.rect;
+	const float vw = DC->glconfig.vidWidth > 0 ? (float)DC->glconfig.vidWidth : 640.0f;
+	const float vh = DC->glconfig.vidHeight > 0 ? (float)DC->glconfig.vidHeight : 480.0f;
+	const float rectAspect = ( r->w * vw / 640.0f ) / Q_max( 1.0f, r->h * vh / 480.0f );
+	float sw = 1.0f, th = 1.0f;		// visible fraction of the image
+
+	if ( rectAspect > item->slideshowAspect )
+	{
+		th = item->slideshowAspect / rectAspect;	// wider screen: crop top and bottom
+	}
+	else
+	{
+		sw = rectAspect / item->slideshowAspect;	// narrower: crop the sides
+	}
+	sw /= zoom;
+	th /= zoom;
+
+	vec4_t c = { 1.0f, 1.0f, 1.0f, alpha };
+	DC->setColor( c );
+	ui.R_DrawStretchPic( r->x, r->y, r->w, r->h, 0.5f - sw * 0.5f, 0.5f - th * 0.5f, 0.5f + sw * 0.5f, 0.5f + th * 0.5f, shader );
+	DC->setColor( NULL );
+}
+
+static void Item_PaintSlideshow( itemDef_t *item )
+{
+	char list[1024];
+	const char *names[16];
+	int count = 0;
+
+	if ( !item->slideshowCvar )
+	{
+		return;
+	}
+	DC->getCVarString( item->slideshowCvar, list, sizeof( list ) );
+	if ( !list[0] && item->slideshowDefault )
+	{
+		Q_strncpyz( list, item->slideshowDefault, sizeof( list ) );
+	}
+	// split on spaces, commas and semicolons
+	for ( char *p = list; *p && count < 16; )
+	{
+		while ( *p == ' ' || *p == ',' || *p == ';' || *p == '\t' ) *p++ = '\0';
+		if ( !*p ) break;
+		names[count++] = p;
+		while ( *p && *p != ' ' && *p != ',' && *p != ';' && *p != '\t' ) p++;
+	}
+	if ( !count )
+	{
+		return;
+	}
+
+	const float hold = item->slideshowHold;
+	const float fade = item->slideshowFade;
+	const float period = hold + fade;
+	const float t = DC->realTime * 0.001f;
+
+	if ( count == 1 )
+	{
+		Slideshow_Draw( item, ui.R_RegisterShaderNoMip( names[0] ), 1.0f + item->slideshowZoom * 0.5f, 1.0f );
+		return;
+	}
+
+	const int cycle = (int)( t / period );
+	const float phase = t - cycle * period;
+	const int cur = cycle % count;
+	const int next = ( cur + 1 ) % count;
+	const float life = period + fade;	// each image is on screen for its fade-in, hold and fade-out
+
+	// current image: zooming in; next image fades in on top for the last `fade` seconds
+	Slideshow_Draw( item, ui.R_RegisterShaderNoMip( names[cur] ), 1.0f + item->slideshowZoom * ( phase + fade ) / life, 1.0f );
+	if ( phase > hold && fade > 0.0f )
+	{
+		const float a = ( phase - hold ) / fade;
+		Slideshow_Draw( item, ui.R_RegisterShaderNoMip( names[next] ), 1.0f + item->slideshowZoom * ( phase - hold ) / life, a );
+	}
+}
+
+static void Item_PaintExtras( itemDef_t *item )
+{
+	rectDef_t r;
+
+	// the hover image while hovered (by the mouse, if it's also the selected one), else the selected image
+	const qboolean selected = (qboolean)( item->selectedBackground && Item_IsSelected( item ) );
+	const qboolean mouseOn = (qboolean)( ( item->window.flags & WINDOW_MOUSEOVER ) != 0 );
+	const qhandle_t back = ( item->hoverBackground && Item_IsHovered( item ) && ( mouseOn || !selected ) ) ? item->hoverBackground
+		: ( selected ? item->selectedBackground : 0 );
+	if ( back )
+	{
+		Item_SubRect( item, &item->hoverRect, &r );
+		DC->setColor( item->hoverBackColor );
+		DC->drawHandlePic( r.x, r.y, r.w, r.h, back );
+		DC->setColor( NULL );
+	}
+	if ( item->icon )
+	{
+		Item_SubRect( item, &item->iconRect, &r );
+		DC->setColor( item->iconColor );
+		DC->drawHandlePic( r.x, r.y, r.w, r.h, item->icon );
+		DC->setColor( NULL );
+	}
+}
+
 
 /*
 =================
@@ -8639,8 +9865,10 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 		}
 	}
 
+	Item_PaintSlideshow( item );	// JKEnhanced: under everything else of the item
 	// paint the rect first..
 	Window_Paint(&item->window, parent->fadeAmount , parent->fadeClamp, parent->fadeCycle);
+	Item_PaintExtras( item );
 
 	// Print a box showing the extents of the rectangle, when in debug mode
 	if (uis.debugMode)
@@ -10955,7 +12183,7 @@ static void Scroll_Slider_Integer_ThumbFunc(void *p)
 	
 	if (si->item->text)
 	{
-		x = si->item->textRect.x + si->item->textRect.w + 8;
+		x = Item_ValueX( si->item );
 	}
 	else
 	{
@@ -10963,17 +12191,18 @@ static void Scroll_Slider_Integer_ThumbFunc(void *p)
 	}
 	
 	cursorx = DC->cursorx;
-	
+	const float barW = Item_SliderWidthAt( si->item, x );	// JKEnhanced: sliderFill
+
 	if (cursorx < x)
 	{
 		cursorx = x;
 	}
-	else if (cursorx > x + SLIDER_WIDTH)
+	else if (cursorx > x + barW)
 	{
-		cursorx = x + SLIDER_WIDTH;
+		cursorx = x + barW;
 	}
 	value = cursorx - x;
-	value /= SLIDER_WIDTH;
+	value = Item_SliderValueAt( si->item, x, cursorx );	// 0..1 along the bar (JKEnhanced: sliderFill)
 	value *= (editDef->maxVal - editDef->minVal);
 	value += editDef->minVal;
 	intValue = (int) value;
@@ -10993,7 +12222,7 @@ static void Scroll_Slider_ThumbFunc(void *p)
 
 	if (si->item->text)
 	{
-		x = si->item->textRect.x + si->item->textRect.w + 8;
+		x = Item_ValueX( si->item );
 	}
 	else
 	{
@@ -11001,17 +12230,18 @@ static void Scroll_Slider_ThumbFunc(void *p)
 	}
 
 	cursorx = DC->cursorx;
+	const float barW = Item_SliderWidthAt( si->item, x );	// JKEnhanced: sliderFill
 
 	if (cursorx < x)
 	{
 		cursorx = x;
 	}
-	else if (cursorx > x + SLIDER_WIDTH)
+	else if (cursorx > x + barW)
 	{
-		cursorx = x + SLIDER_WIDTH;
+		cursorx = x + barW;
 	}
 	value = cursorx - x;
-	value /= SLIDER_WIDTH;
+	value = Item_SliderValueAt( si->item, x, cursorx );	// 0..1 along the bar (JKEnhanced: sliderFill)
 	value *= (editDef->maxVal - editDef->minVal);
 	value += editDef->minVal;
 	DC->setCVar(si->item->cvar, va("%f", value));
@@ -11427,7 +12657,7 @@ qboolean Item_Slider_HandleKey(itemDef_t *item, int key, qboolean down)
 				width = SLIDER_WIDTH;
 				if (item->text)
 				{
-					x = item->textRect.x + item->textRect.w + 8;
+					x = Item_ValueX( item );
 				}
 				else
 				{
@@ -11439,12 +12669,13 @@ qboolean Item_Slider_HandleKey(itemDef_t *item, int key, qboolean down)
 				value = (float)SLIDER_THUMB_WIDTH / 2;
 				testRect.x -= value;
 				//DC->Print("slider x: %f\n", testRect.x);
-				testRect.w = (SLIDER_WIDTH + (float)SLIDER_THUMB_WIDTH / 2);
+				width = Item_SliderWidthAt( item, x );	// JKEnhanced: sliderFill
+				testRect.w = (width + (float)SLIDER_THUMB_WIDTH / 2);
 				//DC->Print("slider w: %f\n", testRect.w);
 				if (Rect_ContainsPoint(&testRect, DC->cursorx, DC->cursory))
 				{
 					work = DC->cursorx - x;
-					value = work / width;
+					value = Item_SliderValueAt( item, x, DC->cursorx );	// JKEnhanced: sliderFill
 					value *= (editDef->maxVal - editDef->minVal);
 					// vm fuckage
 					// value = (((float)(DC->cursorx - x)/ SLIDER_WIDTH) * (editDef->maxVal - editDef->minVal));
@@ -11484,7 +12715,7 @@ qboolean Item_Slider_Integer_HandleKey(itemDef_t *item, int key, qboolean down)
 				width = SLIDER_WIDTH;
 				if (item->text)
 				{
-					x = item->textRect.x + item->textRect.w + 8;
+					x = Item_ValueX( item );
 				}
 				else
 				{
@@ -11496,12 +12727,13 @@ qboolean Item_Slider_Integer_HandleKey(itemDef_t *item, int key, qboolean down)
 				value = (float)SLIDER_THUMB_WIDTH / 2;
 				testRect.x -= value;
 				//DC->Print("slider x: %f\n", testRect.x);
-				testRect.w = (SLIDER_WIDTH + (float)SLIDER_THUMB_WIDTH / 2);
+				width = Item_SliderWidthAt( item, x );	// JKEnhanced: sliderFill
+				testRect.w = (width + (float)SLIDER_THUMB_WIDTH / 2);
 				//DC->Print("slider w: %f\n", testRect.w);
 				if (Rect_ContainsPoint(&testRect, DC->cursorx, DC->cursory))
 				{
 					work = DC->cursorx - x;
-					value = work / width;
+					value = Item_SliderValueAt( item, x, DC->cursorx );	// JKEnhanced: sliderFill
 					value *= (editDef->maxVal - editDef->minVal);
 					// vm fuckage
 					// value = (((float)(DC->cursorx - x)/ SLIDER_WIDTH) * (editDef->maxVal - editDef->minVal));
@@ -11695,6 +12927,10 @@ void Item_Action(itemDef_t *item)
 {
 	if (item)
 	{
+		if ( item->tabGroup )
+		{	// JKEnhanced tabs: show this tab's panel before its own action script runs
+			Menu_SelectTab( (menuDef_t *)item->parent, item );
+		}
 		Item_RunScript(item, item->action);
 	}
 }
@@ -11704,11 +12940,15 @@ void Item_Action(itemDef_t *item)
 Menu_HandleKey
 =================
 */
+int Menu_LastKey = 0;	// JKEnhanced: the key being handled (list box actions run on clicks AND arrow keys)
+
 void Menu_HandleKey(menuDef_t *menu, int key, qboolean down)
 {
 	int i;
 	itemDef_t *item = NULL;
 	qboolean inHandler = qfalse;
+
+	Menu_LastKey = key;
 
 	if (inHandler)
 	{

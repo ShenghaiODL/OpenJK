@@ -206,6 +206,11 @@ static void SV_UpdateServerCommandsToClient( client_t *client, msg_t *msg ) {
 
 	// write any unacknowledged serverCommands
 	for ( i = client->reliableAcknowledge + 1 ; i <= client->reliableSequence ; i++ ) {
+		// JKEnhanced: a big backlog (a map load can queue hundreds) goes over several packets, in
+		// order, so the commands plus the snapshot never overflow the message (which would drop it all)
+		if ( msg->cursize > MAX_MSGLEN / 2 ) {
+			break;
+		}
 		MSG_WriteByte( msg, svc_serverCommand );
 		MSG_WriteLong( msg, i );
 		MSG_WriteString( msg, client->reliableCommands[ i & (MAX_RELIABLE_COMMANDS-1) ] );

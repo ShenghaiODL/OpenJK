@@ -183,7 +183,7 @@ cvar_t	*com_buildScript;
 
 cvar_t	*g_skippingcin;
 cvar_t	*g_AIsurrender;
-cvar_t	*g_moraleSurrender;
+cvar_t	*g_npcSurrender;
 cvar_t	*g_numEntities;
 //cvar_t	*g_iscensored;
 
@@ -741,7 +741,7 @@ void G_InitCvars( void ) {
 	g_saberPickuppableDroppedSabers = gi.cvar( "g_saberPickuppableDroppedSabers", "0", CVAR_CHEAT );//lets you pick up sabers that are dropped
 
 	g_AIsurrender = gi.cvar( "g_AIsurrender", "0", CVAR_CHEAT );
-	g_moraleSurrender = gi.cvar( "g_moraleSurrender", "1", CVAR_ARCHIVE );//lets any surrender-eligible NPC give up once their squad's morale is routed, not just Ugnaught/Jawa
+	g_npcSurrender = gi.cvar( "g_npcSurrender", "1", CVAR_ARCHIVE );//0 = no NPC ever gives up on its own (broken nerve -> surrender/flee); the master switch for that
 	g_numEntities = gi.cvar( "g_numEntities", "0", 0 );
 
 	gi.cvar( "newTotalSecrets", "0", CVAR_ROM );
@@ -819,6 +819,39 @@ int giMapChecksum;
 SavedGameJustLoaded_e g_eSavedGameJustLoaded;
 qboolean g_qbLoadTransition = qfalse;
 void G_LoadExtraEntitiesFile( void );
+/*
+================
+G_RecordProgressMap (JKEnhanced)
+
+Keeps ui_progressMaps (archived, so the main menu can read it with no game loaded): the maps the
+player has reached, newest first, at most 16. The main menu shows their levelshots.
+================
+*/
+static void G_RecordProgressMap( const char *mapname )
+{
+	char	old[MAX_STRING_CHARS];
+	char	out[MAX_STRING_CHARS];
+	int		count = 1;
+
+	if ( !mapname || !mapname[0] )
+	{
+		return;
+	}
+	gi.cvar( "ui_progressMaps", "", CVAR_ARCHIVE );
+	gi.Cvar_VariableStringBuffer( "ui_progressMaps", old, sizeof( old ) );
+	Q_strncpyz( out, mapname, sizeof( out ) );
+	for ( char *tok = strtok( old, " " ); tok && count < 16; tok = strtok( NULL, " " ) )
+	{
+		if ( !Q_stricmp( tok, mapname ) )
+		{
+			continue;
+		}
+		Q_strcat( out, sizeof( out ), va( " %s", tok ) );
+		count++;
+	}
+	gi.cvar_set( "ui_progressMaps", out );
+}
+
 void InitGame(  const char *mapname, const char *spawntarget, int checkSum, const char *entities, int levelTime, int randomSeed, int globalTime, SavedGameJustLoaded_e eSavedGameJustLoaded, qboolean qbLoadTransition )
 {
 	//rww - default this to 0, we will auto-set it to 1 if we run into a terrain ent
@@ -829,6 +862,8 @@ void InitGame(  const char *mapname, const char *spawntarget, int checkSum, cons
 	giMapChecksum = checkSum;
 	g_eSavedGameJustLoaded = eSavedGameJustLoaded;
 	g_qbLoadTransition = qbLoadTransition;
+
+	G_RecordProgressMap( mapname );	// JKEnhanced: main menu background
 
 	gi.Printf ("------- Game Initialization -------\n");
 	gi.Printf ("gamename: %s\n", JK_VERSION);

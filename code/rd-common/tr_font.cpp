@@ -1331,8 +1331,9 @@ static CFontInfo *RE_Font_GetVariant(CFontInfo *font, float *scale) {
 
 	if (variants > 0) {
 		CFontInfo *variant;
+		// (float: the old int division made 1080p count as 2x and 1440p as 3x)
 		int requestedSize = font->GetPointSize() * *scale *
-			r_fontSharpness->value * (glConfig.vidHeight / SCREEN_HEIGHT);
+			r_fontSharpness->value * ((float)glConfig.vidHeight / SCREEN_HEIGHT);
 
 		if (requestedSize <= font->GetPointSize())
 			return font;
@@ -1757,7 +1758,21 @@ int RE_Font_HeightPixels(const int iFontHandle, const float fScaleIn)
 
 // iMaxPixelWidth is -1 for "all of string", else pixel display count...
 //
-void RE_Font_DrawString(int ox, int oy, const char *psText, const float *rgba, const int iFontHandleIn, int iMaxPixelWidth, const float fScaleIn, const float fAspectCorrection)
+// Glyphs land on whole screen pixels (not whole 640x480 units): positions can be fractional in
+// menu space now, and snapping to the real pixel grid keeps the glyphs from smearing across two
+// pixels without the old 3px-at-1080p jumps.
+static inline float Font_SnapX( float x )
+{
+	const float s = glConfig.vidWidth / (float)SCREEN_WIDTH;
+	return s > 0.0f ? floorf( x * s + 0.5f ) / s : x;
+}
+static inline float Font_SnapY( float y )
+{
+	const float s = glConfig.vidHeight / (float)SCREEN_HEIGHT;
+	return s > 0.0f ? floorf( y * s + 0.5f ) / s : y;
+}
+
+void RE_Font_DrawString(float ox, float oy, const char *psText, const float *rgba, const int iFontHandleIn, int iMaxPixelWidth, const float fScaleIn, const float fAspectCorrection)
 {
 	int iFontHandle = iFontHandleIn;
 	float fScale = fScaleIn;
@@ -2088,8 +2103,8 @@ void RE_Font_DrawString(int ox, int oy, const char *psText, const float *rgba, c
 					fy += 3.0f; // I'm sick and tired of going round in circles trying to do this legally, so bollocks to it
 				}
 
-				RE_StretchPic(curfont->mbRoundCalcs ? fx + Round(pLetter->horizOffset * fThisScale * fAspectCorrection) : fx + pLetter->horizOffset * fThisScale * fAspectCorrection, // float x
-								(uiLetter > (unsigned)g_iNonScaledCharRange) ? fy - fAsianYAdjust : fy,	// float y
+				RE_StretchPic(Font_SnapX( curfont->mbRoundCalcs ? fx + Round(pLetter->horizOffset * fThisScale * fAspectCorrection) : fx + pLetter->horizOffset * fThisScale * fAspectCorrection ), // float x
+								Font_SnapY( (uiLetter > (unsigned)g_iNonScaledCharRange) ? fy - fAsianYAdjust : fy ),	// float y
 								curfont->mbRoundCalcs ? Round(pLetter->width * fThisScale * fAspectCorrection) : pLetter->width * fThisScale * fAspectCorrection,	// float w
 								curfont->mbRoundCalcs ? Round(pLetter->height * fThisScale) : pLetter->height * fThisScale, // float h
 								pLetter->s,						// float s1
@@ -2176,6 +2191,9 @@ void R_InitFonts(void)
 	g_iNonScaledCharRange = INT_MAX;	// default all chars to have no special scaling (other than user supplied)
 
 	r_fontSharpness = ri.Cvar_Get( "r_fontSharpness", "1", CVAR_ARCHIVE_ND );
+	// keeps 2D text in proportion on wide screens (UI/cgame widthRatioCoef). rd-vanilla also
+	// registers it; rend2 never did, so under rend2 it silently stayed off unless set by hand
+	ri.Cvar_Get( "r_ratioFix", "1", CVAR_ARCHIVE );
 }
 
 /*

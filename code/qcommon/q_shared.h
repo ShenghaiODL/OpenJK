@@ -340,7 +340,8 @@ typedef enum
 typedef enum {
 	iSAVEGAME_VERSION_BASE = 1,
 	iSAVEGAME_VERSION_ENHANCED_FIRST = 256,
-	iSAVEGAME_VERSION_ENHANCED = iSAVEGAME_VERSION_ENHANCED_FIRST,
+	iSAVEGAME_VERSION_ENHANCED_AI = 257,	// JKEnhanced AI overhaul: new NPC/squad fields, old ones removed
+	iSAVEGAME_VERSION_ENHANCED = iSAVEGAME_VERSION_ENHANCED_AI,
 	iSAVEGAME_VERSION = iSAVEGAME_VERSION_ENHANCED,
 	iSAVEGAME_VERSION_MAX
 }iSavegame_version_e;
@@ -2711,7 +2712,7 @@ Ghoul2 Insert End
 		saved_game.read<int32_t>(isPortalEnt);
 		saved_game.read<int32_t>(radarIcon);
 #endif // !JK2_MODE
-		if (version >= iSAVEGAME_VERSION_ENHANCED)
+		if (version >= iSAVEGAME_VERSION_ENHANCED_FIRST)
 		{
 			saved_game.read<int32_t>(eFlags2);
 		}
