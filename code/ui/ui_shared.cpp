@@ -3171,7 +3171,7 @@ static void Menu_SelectDefaultTabs( menuDef_t *menu )
 	for ( i = 0; i < menu->itemCount; i++ )
 	{
 		itemDef_t *it = menu->items[i];
-		if ( it && it->tabGroup && Item_IsSelected( it ) && it->selectedCvar )
+		if ( it && it->tabGroup && Item_IsSelected( it ) && it->numSelectedCvars )
 		{
 			Menu_SelectTab( menu, it );
 		}
@@ -4517,7 +4517,10 @@ tabDefault					the tab selected when the menu opens
 selectedCvar <cvar> <value>	selected while the cvar holds the value (no tabGroup needed). Items with
 							selectedColor / selectedBackground use their action's first setcvar by
 							default; "selectedCvar none" turns that off. A tab whose cvar matches is
-							the one selected when the menu opens.
+							the one selected when the menu opens. Repeat it: all must match.
+							Guard: when several showing items of one set (same tabGroup, or the
+							same first selection cvar) match, only one is selected: the last
+							clicked, else the tabDefault, else the first in the file.
 							(list boxes: selectedColor = the selected row's text colour)
 sliderColor / sliderThumbColor <r g b a>	slider bar / thumb tint
 scrollColor / scrollThumbColor <r g b a>	list / text scroll bar + arrows / thumb tint
@@ -4649,22 +4652,34 @@ qboolean ItemParse_tabDefault( itemDef_t *item )
 	return qtrue;
 }
 
-// selectedCvar <cvar> <value> | none: the item shows as selected while the cvar holds the value.
-// Without it, an item with selectedColor / selectedBackground uses the first "setcvar X Y" in its
-// action; "none" turns that off (plain tabGroup behaviour).
+// selectedCvar <cvar> <value> | none: the item shows as selected while the cvar holds the value;
+// give it more than once and they all must match (g_spskill 2 + handicap 50). Without it, an item
+// with selectedColor / selectedBackground uses the first "setcvar X Y" in its action; "none" turns
+// that off (plain tabGroup behaviour).
 qboolean ItemParse_selectedCvar( itemDef_t *item )
 {
-	if ( !PC_ParseStringMem( &item->selectedCvar ) )
+	const char *name, *value;
+	if ( !PC_ParseStringMem( &name ) )
 	{
 		return qfalse;
 	}
 	item->selectedCvarChecked = qtrue;
-	if ( !Q_stricmp( item->selectedCvar, "none" ) )
+	if ( !Q_stricmp( name, "none" ) )
 	{
-		item->selectedCvar = NULL;
+		item->numSelectedCvars = 0;
 		return qtrue;
 	}
-	return PC_ParseStringMem( &item->selectedValue );
+	if ( !PC_ParseStringMem( &value ) )
+	{
+		return qfalse;
+	}
+	if ( item->numSelectedCvars < MAX_SELECTED_CVARS )
+	{
+		item->selectedCvar[item->numSelectedCvars] = name;
+		item->selectedValue[item->numSelectedCvars] = value;
+		item->numSelectedCvars++;
+	}
+	return qtrue;
 }
 
 
@@ -4815,15 +4830,16 @@ static void Item_SelectedCvarFromAction( itemDef_t *item )
 		p = Item_ScriptToken( p, value, sizeof( value ) );
 		if ( name[0] && value[0] && Q_stricmp( value, ";" ) )
 		{
-			item->selectedValue = String_Alloc( value );
-			item->selectedCvar = String_Alloc( name );
+			item->selectedValue[0] = String_Alloc( value );
+			item->selectedCvar[0] = String_Alloc( name );
+			item->numSelectedCvars = 1;
 		}
 		break;
 	}
 }
 
-// is this item the selected one: its cvar holds its value, or (no cvar) it's the selected tab
-static qboolean Item_IsSelected( itemDef_t *item )
+// look at the action once (items with selectedColor / selectedBackground and no selectedCvar)
+static void Item_SelectionPrepare( itemDef_t *item )
 {
 	if ( !item->selectedCvarChecked )
 	{
@@ -4833,20 +4849,94 @@ static qboolean Item_IsSelected( itemDef_t *item )
 			Item_SelectedCvarFromAction( item );
 		}
 	}
-	if ( item->selectedCvar && item->selectedValue )
+}
+
+// do all the item's selection cvars hold their values? (numbers: "1" matches "1.000000")
+static qboolean Item_SelectionCvarsMatch( const itemDef_t *item )
+{
+	for ( int i = 0; i < item->numSelectedCvars; i++ )
 	{
 		char buf[256];
-		DC->getCVarString( item->selectedCvar, buf, sizeof( buf ) );
-		if ( !Q_stricmp( buf, item->selectedValue ) )
+		DC->getCVarString( item->selectedCvar[i], buf, sizeof( buf ) );
+		if ( !Q_stricmp( buf, item->selectedValue[i] ) )
 		{
-			return qtrue;
+			continue;
 		}
-		// numbers: "1" matches "1.000000"
 		char *end1, *end2;
-		const double a = strtod( buf, &end1 ), b = strtod( item->selectedValue, &end2 );
-		return (qboolean)( buf[0] && !*end1 && !*end2 && end1 != buf && a == b );
+		const double a = strtod( buf, &end1 ), b = strtod( item->selectedValue[i], &end2 );
+		if ( !( buf[0] && !*end1 && !*end2 && end1 != buf && a == b ) )
+		{
+			return qfalse;
+		}
 	}
-	return item->tabSelected;
+	return qtrue;
+}
+
+// two items pick between each other: the same tabGroup, or (neither has one) the same first
+// selection cvar, e.g. Single / Dual / Staff all testing ui_saber_type
+static qboolean Item_SameSelectionSet( const itemDef_t *a, const itemDef_t *b )
+{
+	if ( a->tabGroup || b->tabGroup )
+	{
+		return (qboolean)( a->tabGroup && b->tabGroup && !Q_stricmp( a->tabGroup, b->tabGroup ) );
+	}
+	return (qboolean)( a->numSelectedCvars && b->numSelectedCvars && !Q_stricmp( a->selectedCvar[0], b->selectedCvar[0] ) );
+}
+
+qboolean Item_EnableShowViaCvar( itemDef_t *item, int flag );
+
+// is this item the selected one: its cvars hold its values, or (no cvars) it's the selected tab.
+// Guard: when several showing items of one set match (two buttons setting the same value), only one
+// is selected: the one clicked last, else the tabDefault, else the first in the file.
+static qboolean Item_IsSelected( itemDef_t *item )
+{
+	Item_SelectionPrepare( item );
+	if ( !item->numSelectedCvars )
+	{
+		return item->tabSelected;
+	}
+	if ( !Item_SelectionCvarsMatch( item ) )
+	{
+		return qfalse;
+	}
+	const menuDef_t *menu = (const menuDef_t *)item->parent;
+	if ( !menu )
+	{
+		return qtrue;
+	}
+	itemDef_t *winner = NULL;
+	for ( int i = 0; i < menu->itemCount; i++ )
+	{
+		itemDef_t *it = menu->items[i];
+		if ( !it || ( it != item && !Item_SameSelectionSet( it, item ) ) )
+		{
+			continue;
+		}
+		Item_SelectionPrepare( it );
+		if ( it != item )
+		{
+			// only items that are showing take part (cvar-hidden variants, hidden groups)
+			if ( !( it->window.flags & WINDOW_VISIBLE )
+				|| ( ( it->cvarFlags & ( CVAR_SHOW | CVAR_HIDE ) ) && !Item_EnableShowViaCvar( it, CVAR_SHOW ) )
+				|| !it->numSelectedCvars || !Item_SelectionCvarsMatch( it ) )
+			{
+				continue;
+			}
+		}
+		if ( !winner )
+		{
+			winner = it;
+		}
+		else if ( it->pickedTime != winner->pickedTime )
+		{
+			if ( it->pickedTime > winner->pickedTime ) winner = it;
+		}
+		else if ( it->tabDefault && !winner->tabDefault )
+		{
+			winner = it;
+		}
+	}
+	return (qboolean)( winner == item );
 }
 
 /*
@@ -12927,6 +13017,7 @@ void Item_Action(itemDef_t *item)
 {
 	if (item)
 	{
+		item->pickedTime = DC->realTime;	// JKEnhanced: the last one picked wins a selection tie
 		if ( item->tabGroup )
 		{	// JKEnhanced tabs: show this tab's panel before its own action script runs
 			Menu_SelectTab( (menuDef_t *)item->parent, item );

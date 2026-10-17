@@ -445,9 +445,13 @@ typedef struct itemDef_s {
 	qboolean	tabSelected;
 	// selected = a cvar holds a value (selectedCvar, or the first setcvar in the action of an item
 	// with selectedColor / selectedBackground), so the highlight follows the setting
-	const char	*selectedCvar;
-	const char	*selectedValue;
+	// (several selectedCvar lines: all must match)
+#define MAX_SELECTED_CVARS 4
+	const char	*selectedCvar[MAX_SELECTED_CVARS];
+	const char	*selectedValue[MAX_SELECTED_CVARS];
+	int			numSelectedCvars;
 	qboolean	selectedCvarChecked;		// the action has been looked at (or selectedCvar given / "none")
+	int			pickedTime;					// realTime of the last click / Enter (breaks ties between matches)
 	vec4_t		sliderColor;				// slider bar tint
 	qboolean	hasSliderColor;
 	vec4_t		sliderThumbColor;			// slider thumb tint (default: the bar's)
