@@ -298,6 +298,7 @@ static const char *gcmds[] = {
 	"force_stasis",
 	"force_throw",
 	"completelevel",	// JKEnhanced cheat: fire the level's target_level_change
+	"story",			// JKEnhanced cheat: show / set tier_storyinfo and tiers_complete
 	"give",
 	"gloat",
 	"god",

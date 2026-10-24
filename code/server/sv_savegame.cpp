@@ -1295,6 +1295,9 @@ qboolean SG_ReadSavegame(
 			::GetString_FailedToOpenSaveGame(
 				psPathlessBaseName,
 				qtrue));
+		// JKEnhanced: the usual reason since the AI overhaul's save break
+		::Com_Printf( S_COLOR_YELLOW "(If it was made before the last save-format change it can't be loaded; "
+			"\"developer 1\" shows its version.)\n" );
 
 		return qfalse;
 	}

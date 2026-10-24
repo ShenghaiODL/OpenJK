@@ -87,8 +87,10 @@ bool SavedGame::open(
 			{
 				is_succeed = false;
 
+				// (developer-only: the load menu opens every save to read its title, so this would
+				// print once per old save on every launch. SG_ReadSavegame says it on a real load.)
 				::Com_DPrintf(
-					S_COLOR_RED "File \"%s\" has version # %d (expecting %d)\n",
+					S_COLOR_RED "Save \"%s\" is from an incompatible version (# %d, this build needs %d)\n",
 					base_file_name.c_str(),
 					sg_version,
 					iSAVEGAME_VERSION);
@@ -190,6 +192,8 @@ bool SavedGame::read_chunk(
 	{
 		return false;
 	}
+
+	last_read_chunk_id_ = chunk_id;
 
 	if (file_handle_ == 0)
 	{
@@ -819,7 +823,22 @@ void SavedGame::throw_error()
 {
 	if (error_message_.empty())
 	{
-		error_message_ = "Generic error.";
+		// JKEnhanced: the usual empty-message case is a chunk read that didn't use up all its data
+		// (the saver wrote more fields than the loader reads) - say which chunk and by how much
+		if (is_readable_ && !is_failed_ && last_read_chunk_id_ != 0 && io_buffer_offset_ != io_buffer_.size())
+		{
+			error_message_ = "Chunk " + get_chunk_id_string(last_read_chunk_id_) + ": read " +
+				std::to_string(io_buffer_offset_) + " of " + std::to_string(io_buffer_.size()) +
+				" bytes (saved and loaded layouts differ).";
+		}
+		else
+		{
+			error_message_ = "Generic error.";
+			if (last_read_chunk_id_ != 0)
+			{
+				error_message_ += " (last chunk " + get_chunk_id_string(last_read_chunk_id_) + ")";
+			}
+		}
 	}
 
 	error_message_ = "SG: " + error_message_;

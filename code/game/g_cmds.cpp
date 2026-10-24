@@ -579,6 +579,60 @@ void Cmd_CompleteLevel_f( gentity_t *ent )
 	GEntity_UseFunc( exits[pick], ent, ent );
 }
 
+/*
+==================
+Cmd_Story_f (JKEnhanced)
+
+argv(0) story                       show tier_storyinfo and tiers_complete
+argv(0) story <tier> [map map ...]  set tier_storyinfo (and, if maps are given, tiers_complete)
+argv(0) story clear                 empty tiers_complete
+For testing menus and mission select at any story point without replaying. Pair with
+"devmap t1_inter" (etc.) to stand in that interlude. Cheat.
+==================
+*/
+void Cmd_Story_f( gentity_t *ent )
+{
+	char	complete[2048];
+
+	if ( !CheatsOk( ent ) )
+	{
+		return;
+	}
+	if ( gi.argc() > 1 )
+	{
+		const char *arg = gi.argv( 1 );
+		if ( !Q_stricmp( arg, "clear" ) )
+		{
+			gi.cvar_set( "tiers_complete", "" );
+		}
+		else if ( arg[0] >= '0' && arg[0] <= '9' )
+		{
+			gi.cvar_set( "tier_storyinfo", va( "%i", atoi( arg ) ) );
+			if ( gi.argc() > 2 )
+			{
+				complete[0] = '\0';
+				for ( int i = 2; i < gi.argc(); i++ )
+				{
+					if ( complete[0] )
+					{
+						Q_strcat( complete, sizeof( complete ), " " );
+					}
+					Q_strcat( complete, sizeof( complete ), gi.argv( i ) );
+				}
+				gi.cvar_set( "tiers_complete", complete );
+			}
+		}
+		else
+		{
+			gi.SendServerCommand( ent-g_entities, "print \"usage: story [<tier> [completed maps...] | clear]\n\"" );
+			return;
+		}
+	}
+	gi.Cvar_VariableStringBuffer( "tiers_complete", complete, sizeof( complete ) );
+	gi.SendServerCommand( ent-g_entities, va( "print \"tier_storyinfo %i, tiers_complete \\\"%s\\\"\n\"",
+		gi.Cvar_VariableIntegerValue( "tier_storyinfo" ), complete ) );
+}
+
 
 /*
 ==================
@@ -1544,6 +1598,8 @@ void ClientCommand( int clientNum ) {
 		Cmd_God_f (ent);
 	else if (Q_stricmp (cmd, "undying") == 0)
 		Cmd_Undying_f (ent);
+	else if (Q_stricmp (cmd, "story") == 0)
+		Cmd_Story_f (ent);
 	else if (Q_stricmp (cmd, "completelevel") == 0)
 		Cmd_CompleteLevel_f (ent);
 	else if (Q_stricmp (cmd, "notarget") == 0)

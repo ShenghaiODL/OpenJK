@@ -168,6 +168,9 @@ private:
 	// Savegame version
 	int32_t sg_version_;
 
+	// JKEnhanced: the last chunk read, so a load error can name it
+	uint32_t last_read_chunk_id_ = 0;
+
 
 	// Compresses data.
 	static void compress(

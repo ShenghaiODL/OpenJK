@@ -3675,6 +3675,16 @@ void UI_FreeAllCustomSabers( void )
 		UI_FreeCustomSaber(&uiInfo.customSabers[i]);
 	}
 	free(uiInfo.customSabers);
+
+	// JKEnhanced: reset, like UI_FreeAllSpecies. The UI can be shut down twice (an error during
+	// a load runs CL_FlushMemory -> CL_ShutdownUI after an earlier shutdown); without this the
+	// second pass walked the freed array and free()d garbage -> access violation, which also hid
+	// the error message that started it.
+	uiInfo.customSabersCount = 0;
+	uiInfo.customSabersMax = 0;
+	uiInfo.customSabersIndex = 0;
+	uiInfo.customSabers2Index = 0;
+	uiInfo.customSabers = NULL;
 }
 
 static void UI_BuildCustomSaber_List()
@@ -3696,11 +3706,11 @@ static void UI_BuildCustomSaber_List()
 	for (int i=0; i<fileCnt; i++,holdChar+=csabFNLen+1)
 	{
 		char buffer[2048];
-		char Skin1Root[16];
-		char Skin2Root[16];
-		char Skin3Root[16];
-		char Skin4Root[16];
-		char Skin5Root[16];
+		char Skin1Root[16] = "";	// (a .csab without a root left these as garbage)
+		char Skin2Root[16] = "";
+		char Skin3Root[16] = "";
+		char Skin4Root[16] = "";
+		char Skin5Root[16] = "";
 		
 		csabFNLen = strlen(holdChar);
 		
@@ -3714,6 +3724,12 @@ static void UI_BuildCustomSaber_List()
 		
 		if (f)
 		{
+			if ( len >= (int)sizeof( buffer ) )
+			{	// JKEnhanced: buffer[len] = 0 below wrote past the end
+				Com_Printf( "UI_BuildCustomSaber_List: %s is too big (%d bytes), skipped\n", holdChar, len );
+				ui.FS_FCloseFile(f);
+				continue;
+			}
 			ui.FS_Read(&buffer, len, f);
 			ui.FS_FCloseFile(f);
 			buffer[len] = 0;

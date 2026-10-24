@@ -2531,6 +2531,104 @@ void SP_NPC_MorganKatarn( gentity_t *self)
 	SP_NPC_spawner( self );
 }
 
+// ---------------------------------------------------------------------------
+// Random NPC pools: weighted lists of NPC types in ext_data/npcs/<pool>.cfg
+// ("<npc_type> <weight>" per line, // comments). Used by NPC_StormtrooperRandom
+// (stormtrooper_random.cfg) and NPC_Jedi's RANDOM flag / "npc spawn jedi_random"
+// (jedi_random.cfg). Each has a built-in fallback list if its file is missing.
+// ---------------------------------------------------------------------------
+#define NPC_RANDOM_MAX_VARIANTS 32
+
+typedef struct
+{
+	char	name[NPC_RANDOM_MAX_VARIANTS][64];
+	int		weight[NPC_RANDOM_MAX_VARIANTS];
+	int		count;
+	int		total;
+} npcRandomPool_t;
+
+typedef struct
+{
+	const char	*name;
+	int			weight;
+} npcRandomEntry_t;
+
+static void NPC_LoadRandomPool( const char *fileName, npcRandomPool_t *pool, const npcRandomEntry_t *fallback, int numFallback )
+{
+	pool->count = 0;
+	pool->total = 0;
+
+	char *buffer = NULL;
+	const int len = gi.FS_ReadFile( va( "ext_data/npcs/%s", fileName ), (void **)&buffer );
+
+	if ( len > 0 && buffer )
+	{
+		COM_BeginParseSession( fileName );
+		const char *p = buffer;
+		while ( pool->count < NPC_RANDOM_MAX_VARIANTS )
+		{
+			// allowLineBreaks must be qtrue here - COM_ParseExt(...,qfalse) returns an empty
+			// token every time it has to cross a newline (e.g. past a "//" comment line)
+			const char *token = COM_ParseExt( &p, qtrue );
+			if ( !token[0] ) break;
+			Q_strncpyz( pool->name[pool->count], token, sizeof( pool->name[0] ) );
+
+			int w = 1;
+			COM_ParseInt( &p, &w );
+			if ( w < 1 ) w = 1;
+			pool->weight[pool->count] = w;
+			pool->total += w;
+			pool->count++;
+		}
+		COM_EndParseSession();
+		gi.FS_FreeFile( buffer );
+	}
+	else
+	{
+		Com_Printf( S_COLOR_RED"NPC_LoadRandomPool: failed to read ext_data/npcs/%s (len=%d)\n", fileName, len );
+	}
+
+	if ( !pool->count )
+	{
+		for ( int i = 0; i < numFallback && i < NPC_RANDOM_MAX_VARIANTS; i++ )
+		{
+			Q_strncpyz( pool->name[i], fallback[i].name, sizeof( pool->name[0] ) );
+			pool->weight[i] = fallback[i].weight;
+			pool->total += fallback[i].weight;
+			pool->count++;
+		}
+		Com_Printf( S_COLOR_YELLOW"NPC_LoadRandomPool: using the built-in list for %s\n", fileName );
+	}
+}
+
+// a weighted pick; avoid: skip types containing this text (e.g. the player's model), if possible
+static const char *NPC_PickFromRandomPool( const npcRandomPool_t *pool, const char *avoid )
+{
+	if ( !pool->count )
+	{
+		return NULL;
+	}
+	const char *pick = pool->name[0];
+	for ( int tries = 0; tries < 20; tries++ )
+	{
+		int roll = Q_irand( 0, pool->total - 1 );
+		for ( int i = 0; i < pool->count; i++ )
+		{
+			roll -= pool->weight[i];
+			if ( roll < 0 )
+			{
+				pick = pool->name[i];
+				break;
+			}
+		}
+		if ( !avoid || !avoid[0] || !strstr( pick, avoid ) )
+		{
+			break;
+		}
+	}
+	return G_NewString( pick );	// NPC_type outlives the pool buffer (reloaded per spawn)
+}
+
 //=============================================================================================
 //ALLIES
 //=============================================================================================
@@ -2553,56 +2651,15 @@ void SP_NPC_Jedi( gentity_t *self)
 	if(!self->NPC_type)
 	{
 		if ( self->spawnflags & 4 )
-		{//random!
-			int sanityCheck = 20;	//just in case
-			while ( sanityCheck-- )
-			{
-				switch( Q_irand( 0, 11 ) )
-				{
-				case 0:
-					self->NPC_type = "jedi_hf1";
-					break;
-				case 1:
-					self->NPC_type = "jedi_hf2";
-					break;
-				case 2:
-					self->NPC_type = "jedi_hm1";
-					break;
-				case 3:
-					self->NPC_type = "jedi_hm2";
-					break;
-				case 4:
-					self->NPC_type = "jedi_kdm1";
-					break;
-				case 5:
-					self->NPC_type = "jedi_kdm2";
-					break;
-				case 6:
-					self->NPC_type = "jedi_rm1";
-					break;
-				case 7:
-					self->NPC_type = "jedi_rm2";
-					break;
-				case 8:
-					self->NPC_type = "jedi_tf1";
-					break;
-				case 9:
-					self->NPC_type = "jedi_tf2";
-					break;
-				case 10:
-					self->NPC_type = "jedi_zf1";
-					break;
-				case 11:
-				default://just in case
-					self->NPC_type = "jedi_zf2";
-					break;
-				}
-				if ( strstr( self->NPC_type, g_char_model->string ) != NULL )
-				{//bah, we're using this one, try again
-					continue;
-				}
-				break;	//get out of the while
-			}
+		{//random! JKEnhanced: the list is ext_data/npcs/jedi_random.cfg (this is the fallback);
+		 //types using the player's current model are skipped when possible
+			static const npcRandomEntry_t fallback[] = {
+				{ "jedi_hf1", 1 }, { "jedi_hf2", 1 }, { "jedi_hm1", 1 }, { "jedi_hm2", 1 },
+				{ "jedi_kdm1", 1 }, { "jedi_kdm2", 1 }, { "jedi_rm1", 1 }, { "jedi_rm2", 1 },
+				{ "jedi_tf1", 1 }, { "jedi_tf2", 1 }, { "jedi_zf1", 1 }, { "jedi_zf2", 1 } };
+			static npcRandomPool_t pool;
+			NPC_LoadRandomPool( "jedi_random.cfg", &pool, fallback, ARRAY_LEN( fallback ) );
+			self->NPC_type = (char *)NPC_PickFromRandomPool( &pool, g_char_model->string );
 		}
 		else if ( self->spawnflags & 2 )
 		{
@@ -2812,83 +2869,15 @@ void SP_NPC_StormtrooperOfficer( gentity_t *self)
 	SP_NPC_Stormtrooper( self );
 }
 
-// ---------------------------------------------------------------------------
-// NPC_StormtrooperRandom — weighted random selection from stormtrooper_random.cfg
-// ---------------------------------------------------------------------------
-#define ST_RANDOM_MAX_VARIANTS 16
-
-static struct { char name[64]; int weight; } s_stVariants[ST_RANDOM_MAX_VARIANTS];
-static int s_stNumVariants = 0;
-static int s_stTotalWeight = 0;
-
-static void ST_LoadRandomVariants( void )
-{
-	s_stNumVariants = 0;
-	s_stTotalWeight = 0;
-
-	char *buffer = NULL;
-	int len = gi.FS_ReadFile( "ext_data/npcs/stormtrooper_random.cfg", (void **)&buffer );
-
-	if ( len > 0 && buffer )
-	{
-		COM_BeginParseSession( "stormtrooper_random.cfg" );
-		const char *p = buffer;
-		const char *token;
-		while ( s_stNumVariants < ST_RANDOM_MAX_VARIANTS )
-		{
-			// allowLineBreaks must be qtrue here - COM_ParseString/COM_ParseExt(...,qfalse)
-			// returns an empty token every time it has to cross a newline (e.g. past a
-			// "//" comment line), which previously made this loop bail out immediately
-			// after the file's leading comment block, before reading any real data.
-			token = COM_ParseExt( &p, qtrue );
-			if ( !token[0] ) break;
-			Q_strncpyz( s_stVariants[s_stNumVariants].name, token, 64 );
-
-			int w = 1;
-			COM_ParseInt( &p, &w );
-			if ( w < 1 ) w = 1;
-			s_stVariants[s_stNumVariants].weight = w;
-			s_stTotalWeight += w;
-			s_stNumVariants++;
-		}
-		COM_EndParseSession();
-		gi.FS_FreeFile( buffer );
-	}
-	else
-	{
-		Com_Printf( S_COLOR_RED"ST_LoadRandomVariants: failed to read ext_data/npcs/stormtrooper_random.cfg (len=%d)\n", len );
-	}
-
-	// Fallback if file is missing or empty
-	if ( !s_stNumVariants )
-	{
-		Q_strncpyz( s_stVariants[0].name, "stormtrooper_rifle",     64 ); s_stVariants[0].weight = 5;
-		Q_strncpyz( s_stVariants[1].name, "stormtrooper_heavy",     64 ); s_stVariants[1].weight = 2;
-		Q_strncpyz( s_stVariants[2].name, "stormtrooper_officer",   64 ); s_stVariants[2].weight = 2;
-		Q_strncpyz( s_stVariants[3].name, "stormtrooper_grenadier", 64 ); s_stVariants[3].weight = 1;
-		s_stNumVariants = 4;
-		s_stTotalWeight = 10;
-		Com_Printf( S_COLOR_YELLOW"ST_LoadRandomVariants: using hardcoded fallback variant list\n" );
-	}
-
-}
-
 void SP_NPC_StormtrooperRandom( gentity_t *self )
 {
-	ST_LoadRandomVariants();
+	static const npcRandomEntry_t fallback[] = {
+		{ "stormtrooper_rifle", 5 }, { "stormtrooper_heavy", 2 },
+		{ "stormtrooper_officer", 2 }, { "stormtrooper_grenadier", 1 } };
+	static npcRandomPool_t pool;
+	NPC_LoadRandomPool( "stormtrooper_random.cfg", &pool, fallback, ARRAY_LEN( fallback ) );
 
-	int roll = Q_irand( 0, s_stTotalWeight - 1 );
-	int cumulative = 0;
-	self->NPC_type = s_stVariants[0].name; // safe default
-	for ( int i = 0; i < s_stNumVariants; i++ )
-	{
-		cumulative += s_stVariants[i].weight;
-		if ( roll < cumulative )
-		{
-			self->NPC_type = s_stVariants[i].name;
-			break;
-		}
-	}
+	self->NPC_type = (char *)NPC_PickFromRandomPool( &pool, NULL );
 	SP_NPC_spawner( self );
 }
 

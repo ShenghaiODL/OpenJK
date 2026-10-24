@@ -1484,6 +1484,11 @@ Ghoul2 Insert End
 		saved_game.write<int32_t>(NPC_type);
 		saved_game.write<int32_t>(NPC_targetname);
 		saved_game.write<int32_t>(NPC_target);
+		// JKEnhanced (save v258): these were in savefields_gEntity (their strings went out as STRG
+		// chunks) but not here, so a load read length 0 and failed "Chunk STRG: read 0 of N"
+		saved_game.write<int32_t>(NPC_subduetarget);
+		saved_game.write<int32_t>(squadname);
+		saved_game.write<int32_t>(nonlethal);
 		saved_game.write<int32_t>(moverState);
 		saved_game.write<int32_t>(soundPos1);
 		saved_game.write<int32_t>(sound1to2);
@@ -1685,6 +1690,9 @@ Ghoul2 Insert End
 		saved_game.read<int32_t>(NPC_type);
 		saved_game.read<int32_t>(NPC_targetname);
 		saved_game.read<int32_t>(NPC_target);
+		saved_game.read<int32_t>(NPC_subduetarget);
+		saved_game.read<int32_t>(squadname);
+		saved_game.read<int32_t>(nonlethal);
 		saved_game.read<int32_t>(moverState);
 		saved_game.read<int32_t>(soundPos1);
 		saved_game.read<int32_t>(sound1to2);
