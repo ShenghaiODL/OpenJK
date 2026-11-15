@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../cgame/cg_local.h"
 #include "Q3_Interface.h"
 #include "g_local.h"
+#include "g_difficulty.h"
 #include "g_functions.h"
 #include "anims.h"
 #include "wp_saber.h"
@@ -2993,7 +2994,7 @@ qboolean ClientSpawn(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded 
 
 		// clear entity values
 		client->ps.stats[STAT_MAX_HEALTH] = client->pers.maxHealth;
-		client->ps.stats[STAT_MAX_ARMOR] = ( g_spskill->integer >= 3 ) ? 100 : 200;
+		client->ps.stats[STAT_MAX_ARMOR] = G_IsJediMaster() ? 100 : 200;
 		ent->s.groundEntityNum = ENTITYNUM_NONE;
 		ent->client = &level.clients[index];
 		ent->mass = 10;
@@ -3267,6 +3268,8 @@ qboolean ClientSpawn(gentity_t *ent, SavedGameJustLoaded_e eSavedGameJustLoaded 
 	if ( eSavedGameJustLoaded != eNO && ent->s.number == 0 )
 	{
 		G_RepairPlayerSaberLoadState( ent, "ClientSpawn" );
+		extern void WP_GripLoadReset( gentity_t *self );
+		WP_GripLoadReset( ent );//what Grip holds isn't saved: let go
 	}
 
 	return beamInEffect;

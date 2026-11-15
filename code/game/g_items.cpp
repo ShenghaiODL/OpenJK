@@ -22,6 +22,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "g_difficulty.h"
 #include "g_functions.h"
 #include "g_items.h"
 #include "wp_saber.h"
@@ -700,7 +701,7 @@ int ITM_AddArmor (gentity_t *ent, int count)
 
 	ent->client->ps.stats[STAT_ARMOR] += count;
 
-	int armorCap = ( g_spskill->integer >= 3 ) ? 100 : 200;
+	int armorCap = G_IsJediMaster() ? 100 : 200;
 	if (ent->client->ps.stats[STAT_ARMOR] > armorCap)
 	{
 		ent->client->ps.stats[STAT_ARMOR] = armorCap;
@@ -719,7 +720,7 @@ int Pickup_Armor( gentity_t *ent, gentity_t *other ) {
 	other->client->ps.stats[STAT_ARMOR] += ent->item->quantity;
 	if ( other->s.number < MAX_CLIENTS )
 	{
-		int armorCap = ( g_spskill->integer >= 3 ) ? 100 : 200;
+		int armorCap = G_IsJediMaster() ? 100 : 200;
 		if ( other->client->ps.stats[STAT_ARMOR] > armorCap )
 			other->client->ps.stats[STAT_ARMOR] = armorCap;
 	}

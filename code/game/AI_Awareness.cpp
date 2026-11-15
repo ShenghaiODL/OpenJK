@@ -9,6 +9,7 @@ Awareness and stealth. See AI_Awareness.h.
 #include "anims.h"
 #include "Q3_Interface.h"
 #include "AI_Awareness.h"
+#include "g_difficulty.h"
 
 cvar_t	*g_stealth;
 cvar_t	*g_stealthLightScale;
@@ -209,8 +210,8 @@ float AI_SightRating( gentity_t *npc, gentity_t *target, qboolean *instant )
 	{//swamptroopers can see much better
 		target_rating *= 1.33f;
 	}
-	//difficulty: easy 0.8, medium 1.0, hard 1.2
-	target_rating *= 0.8f + 0.2f * Com_Clamp( 0, 2, g_spskill->integer );
+	//difficulty
+	target_rating *= 0.8f + 0.2f * G_DifficultyLevel();//easy 0.8, medium 1.0, hard 1.2, Jedi Master 1.4
 
 	return Q_max( 0.0f, target_rating );
 }
