@@ -27,6 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_functions.h"
 #include "wp_saber.h"
 #include "g_vehicles.h"
+#include "g_force.h"
 #include "../qcommon/tri_coll_test.h"
 #include "../cgame/cg_local.h"
 
@@ -54,20 +55,265 @@ extern cvar_t	*g_forceStaggerLockoutScale;
 
 extern int forcePowerNeeded[NUM_FORCE_POWERS];
 
-void RepulseDamage( gentity_t *self, gentity_t *enemy, vec3_t location, int damageLevel )
+extern qboolean	G_IsSaberBoss( const gentity_t *ent, qboolean includeElites );
+extern int		WP_RepulseFullCharge( const gentity_t *self );
+
+extern cvar_t	*g_debugForce;
+extern void	G_Knockdown( gentity_t *self, gentity_t *attacker, const vec3_t pushDir, float strength, qboolean breakSaberLock );
+
+//JKEnhanced 4B.4: the blast itself barely hurts (force.cfg repulse.damage, 0 by default) - the damage is
+//in what they're thrown into (G_RepulseSlam)
+static void RepulseDamage( gentity_t *self, gentity_t *enemy, float power )
 {
-	switch (damageLevel) {
-  case FORCE_LEVEL_1:
-			G_Damage( enemy, self, self, NULL, location, 10, DAMAGE_NO_KNOCKBACK, MOD_UNKNOWN );
-			break;
-  case FORCE_LEVEL_2:
-			G_Damage( enemy, self, self, NULL, location, 25, DAMAGE_NO_KNOCKBACK, MOD_UNKNOWN );
-			break;
-  case FORCE_LEVEL_3:
-			G_Damage( enemy, self, self, NULL, location, 50, DAMAGE_NO_KNOCKBACK, MOD_UNKNOWN );
-			break;
-  default:
-			break;
+	const int dmg = (int)( G_ForceTuning()->repulseDamage * power + 0.5f );
+	if ( dmg > 0 )
+	{
+		G_Damage( enemy, self, self, NULL, enemy->currentOrigin, dmg, DAMAGE_NO_KNOCKBACK, MOD_UNKNOWN );
+	}
+}
+
+//JKEnhanced: a shot coming at us goes back at whoever fired it (G_ReflectMissile aims by the saber
+//defense rules and the crosshair, which suits a parry, not a blast all round)
+static void RepulseReflectShot( gentity_t *self, gentity_t *missile, const vec3_t dir2Me )
+{
+	vec3_t bounceDir;
+	if ( missile->owner && missile->owner->inuse && missile->owner != self )
+	{
+		VectorSubtract( missile->owner->currentOrigin, missile->currentOrigin, bounceDir );
+	}
+	else
+	{
+		VectorScale( dir2Me, -1.0f, bounceDir );
+	}
+	VectorNormalize( bounceDir );
+	for ( int i = 0; i < 3; i++ )
+	{
+		bounceDir[i] += Q_flrand( -0.1f, 0.1f );
+	}
+	VectorNormalize( bounceDir );
+	const float speed = VectorLength( missile->s.pos.trDelta );
+	VectorScale( bounceDir, speed, missile->s.pos.trDelta );
+	missile->s.pos.trTime = level.time - 10;	// move a bit on the very first frame
+	VectorCopy( missile->currentOrigin, missile->s.pos.trBase );
+	if ( !missile->lastEnemy )
+	{//remember who originally shot this missile
+		missile->lastEnemy = missile->owner;
+	}
+	missile->owner = self;
+	if ( missile->s.weapon == WP_ROCKET_LAUNCHER )
+	{//stop homing
+		missile->e_ThinkFunc = thinkF_NULL;
+	}
+}
+
+/*
+Catching shots (JKEnhanced): while the player charges Repulse, shots coming at them within
+REPULSE_CATCH_RADIUS stop dead in the air (TR_STATIONARY, their own timeout paused). When it fires they
+all go back at whoever shot them (G_RepulseFlingShots); a charge that's cancelled lets them carry on
+(G_RepulseReleaseShots). Not saved: a held shot from a loaded save just times out.
+*/
+#define REPULSE_CATCH_RADIUS	192.0f
+static struct
+{
+	int		by;			// catcher + 1 (0 = not caught)
+	int		stamp;		// s.pos.trTime when caught (a reused slot won't match)
+	int		trType;		// to restore
+	int		thinkLeft;	// ms left on its think when caught
+} s_caught[MAX_GENTITIES];
+
+static qboolean G_RepulseHolds( const gentity_t *self, const gentity_t *missile )
+{
+	const int n = missile->s.number;
+	return (qboolean)( s_caught[n].by == self->s.number + 1 && missile->inuse && missile->s.eType == ET_MISSILE
+		&& missile->s.pos.trType == TR_STATIONARY && missile->s.pos.trTime == s_caught[n].stamp );
+}
+
+static void RepulseReflectShot( gentity_t *self, gentity_t *missile, const vec3_t dir2Me );
+
+void G_RepulseCatchShots( gentity_t *self )
+{
+	if ( !self || !self->client || self->s.number >= MAX_CLIENTS )
+	{
+		return;
+	}
+	gentity_t	*list[MAX_GENTITIES];
+	vec3_t		mins, maxs;
+	for ( int i = 0; i < 3; i++ )
+	{
+		mins[i] = self->currentOrigin[i] - REPULSE_CATCH_RADIUS;
+		maxs[i] = self->currentOrigin[i] + REPULSE_CATCH_RADIUS;
+	}
+	const int num = gi.EntitiesInBox( mins, maxs, list, MAX_GENTITIES );
+	for ( int i = 0; i < num; i++ )
+	{
+		gentity_t *m = list[i];
+		if ( !m->inuse || m->s.eType != ET_MISSILE )
+		{
+			continue;
+		}
+		const int n = m->s.number;
+		if ( G_RepulseHolds( self, m ) )
+		{//still held: its timeout stays paused
+			if ( m->nextthink )
+			{
+				m->nextthink = level.time + s_caught[n].thinkLeft;
+			}
+			continue;
+		}
+		if ( m->owner == self || m->s.weapon == WP_SABER
+			|| ( m->s.pos.trType != TR_LINEAR && m->s.pos.trType != TR_GRAVITY )
+			|| ( m->s.powerups & ( 1 << PW_FORCE_PROJECTILE ) ) )
+		{
+			continue;
+		}
+		vec3_t toMe;
+		VectorSubtract( self->currentOrigin, m->currentOrigin, toMe );
+		if ( VectorLengthSquared( toMe ) > REPULSE_CATCH_RADIUS*REPULSE_CATCH_RADIUS
+			|| DotProduct( m->s.pos.trDelta, toMe ) <= 0 )
+		{//not coming at us
+			continue;
+		}
+		s_caught[n].by = self->s.number + 1;
+		s_caught[n].trType = m->s.pos.trType;
+		s_caught[n].thinkLeft = m->nextthink ? Q_max( FRAMETIME, m->nextthink - level.time ) : 0;
+		VectorCopy( m->currentOrigin, m->s.pos.trBase );
+		m->s.pos.trType = TR_STATIONARY;	//(trDelta kept: its speed for the way back)
+		m->s.pos.trTime = level.time;
+		s_caught[n].stamp = m->s.pos.trTime;
+		if ( g_debugForce && g_debugForce->integer )
+		{
+			gi.Printf( "  REPULSE caught shot %d (%s)\n", n, m->classname ? m->classname : "?" );
+		}
+	}
+}
+
+//fling: back at whoever fired them (it went off); otherwise they carry on as they were (cancelled)
+static void G_RepulseLetGo( gentity_t *self, qboolean fling )
+{
+	if ( !self || self->s.number >= MAX_CLIENTS )
+	{
+		return;
+	}
+	for ( int n = MAX_CLIENTS; n < globals.num_entities; n++ )
+	{
+		gentity_t *m = &g_entities[n];
+		if ( !s_caught[n].by )
+		{
+			continue;
+		}
+		if ( s_caught[n].by != self->s.number + 1 )
+		{
+			continue;
+		}
+		const qboolean held = G_RepulseHolds( self, m );
+		s_caught[n].by = 0;
+		if ( !held )
+		{
+			continue;
+		}
+		m->s.pos.trType = (trType_t)s_caught[n].trType;
+		VectorCopy( m->currentOrigin, m->s.pos.trBase );
+		m->s.pos.trTime = level.time;
+		if ( m->nextthink )
+		{
+			m->nextthink = level.time + s_caught[n].thinkLeft;
+		}
+		if ( fling )
+		{
+			vec3_t dir2Me;
+			VectorSubtract( self->currentOrigin, m->currentOrigin, dir2Me );
+			RepulseReflectShot( self, m, dir2Me );
+		}
+	}
+}
+
+void G_RepulseReleaseShots( gentity_t *self )
+{
+	G_RepulseLetGo( self, qfalse );
+}
+static qboolean G_RepulseCanBlock( gentity_t *self, gentity_t *victim )
+{
+	return (qboolean)( victim->client->ps.weapon == WP_SABER
+		&& victim->client->ps.SaberActive()
+		&& victim->client->ps.groundEntityNum != ENTITYNUM_NONE
+		&& !PM_InKnockDown( &victim->client->ps )
+		&& victim->client->ps.forceRageRecoveryTime < level.time
+		&& !( victim->client->ps.eFlags & EF_FORCE_GRIPPED )
+		&& InFront( self->currentOrigin, victim->currentOrigin, victim->client->ps.viewangles, 0.3f ) );
+}
+
+/*
+Repulse slams: someone thrown by Repulse who hits a wall / prop / another person in the next
+REPULSE_SLAM_MS takes damage by how fast they hit (force.cfg repulse.slamMin / slamFull / slamDamage);
+a person they hit takes most of it too and goes down. Once per throw; landing on a floor doesn't count.
+Called from DoImpact (g_active.cpp).
+*/
+#define REPULSE_SLAM_MS		1200
+static struct
+{
+	int		until;
+	int		pusher;
+} s_repulseSlam[MAX_GENTITIES];
+
+static void G_RepulseMarkSlam( gentity_t *victim, gentity_t *pusher )
+{
+	s_repulseSlam[victim->s.number].until = level.time + REPULSE_SLAM_MS;
+	s_repulseSlam[victim->s.number].pusher = pusher->s.number;
+}
+
+void G_RepulseSlam( gentity_t *self, gentity_t *other, trace_t *trace, float speed )
+{
+	if ( !self || !self->client || !other || self->s.number < 0 || self->s.number >= MAX_GENTITIES )
+	{
+		return;
+	}
+	const int until = s_repulseSlam[self->s.number].until;
+	if ( until <= level.time || until > level.time + REPULSE_SLAM_MS )//(over, or stale from a loaded save)
+	{
+		return;
+	}
+	const int pusherNum = s_repulseSlam[self->s.number].pusher;
+	if ( other->s.number == pusherNum || other == self )
+	{
+		return;
+	}
+	if ( !other->client && trace && trace->plane.normal[2] > 0.7f )
+	{//landing on a floor
+		return;
+	}
+	const forceTuning_t *ft = G_ForceTuning();
+	if ( speed < ft->repulseSlamMin )
+	{
+		return;
+	}
+	s_repulseSlam[self->s.number].until = 0;	//once
+	gentity_t *pusher = ( pusherNum >= 0 && pusherNum < ENTITYNUM_WORLD ) ? &g_entities[pusherNum] : NULL;
+	const float frac = Q_min( 1.0f, ( speed - ft->repulseSlamMin ) / (float)( ft->repulseSlamFull - ft->repulseSlamMin ) );
+	const int dmg = Q_max( 1, (int)( ft->repulseSlamDamage * frac + 0.5f ) );
+
+	if ( trace )
+	{
+		G_PlayEffect( G_EffectIndex( "env/impact_dustonly" ), trace->endpos, trace->plane.normal );
+	}
+	G_Sound( self, G_SoundIndex( va( "sound/weapons/melee/punch%d", Q_irand( 1, 4 ) ) ) );
+	G_Damage( self, pusher, pusher, NULL, self->currentOrigin, dmg, DAMAGE_NO_ARMOR|DAMAGE_NO_KNOCKBACK, MOD_IMPACT );
+	if ( other->client && other->health > 0 )
+	{//thrown into someone: they take most of it and go down
+		vec3_t dir;
+		VectorSubtract( other->currentOrigin, self->currentOrigin, dir );
+		VectorNormalize( dir );
+		G_Damage( other, pusher, pusher, dir, other->currentOrigin, dmg * 3 / 4, DAMAGE_NO_ARMOR|DAMAGE_NO_KNOCKBACK, MOD_IMPACT );
+		if ( other->health > 0 && !G_IsSaberBoss( other, qfalse )
+			&& !( pusher && pusher->client && other->client->playerTeam == pusher->client->playerTeam ) )
+		{//(not the pusher's own side: a body thrown into your companion bowled them over)
+			G_Knockdown( other, pusher ? pusher : self, dir, 300, qtrue );
+		}
+	}
+	if ( g_debugForce && g_debugForce->integer )
+	{
+		gi.Printf( "  REPULSE slam: %d (%s) hit %s at %.0f u/s: %d damage%s\n", self->s.number,
+			self->NPC_type ? self->NPC_type : "player", other->client ? ( other->NPC_type ? other->NPC_type : "player" ) : "something solid",
+			speed, dmg, other->client ? " (and most of it to them)" : "" );
 	}
 }
 
@@ -88,7 +334,7 @@ void ForceRepulseThrow( gentity_t *self, int chargeTime )
 	vec3_t		center, ent_org, size, forward, right, end, dir, fwdangles = {0};
 	trace_t		tr;
 	int			anim, hold, soundIndex, cost;
-	int			damageLevel = FORCE_LEVEL_0;
+	const forceTuning_t *ft = G_ForceTuning();
 	
 	if ( self->health <= 0 )
 	{
@@ -106,17 +352,12 @@ void ForceRepulseThrow( gentity_t *self, int chargeTime )
 	{//can't force throw/pull when zoomed in or in cinematic
 		return;
 	}
-	if ( self->client->ps.saberLockTime > level.time )
-	{
-		if ( self->client->ps.forcePowerLevel[FP_REPULSE] < FORCE_LEVEL_3 )
-		{//this can be a way to break out
-			return;
-		}
-		//else, I'm breaking my half of the saberlock
-		self->client->ps.saberLockTime = 0;
-		self->client->ps.saberLockEnemy = ENTITYNUM_NONE;
+	extern qboolean WP_RepulseHeld( const gentity_t *self );
+	if ( WP_RepulseHeld( self ) )
+	{//JKEnhanced 4B.4: not out of a saber lock / Grip / Drain (Push is the way out of those)
+		return;
 	}
-	
+
 	if ( self->client->ps.legsAnim == BOTH_KNOCKDOWN3
 		|| (self->client->ps.torsoAnim == BOTH_FORCE_GETUP_F1 && self->client->ps.torsoAnimTimer > 400)
 		|| (self->client->ps.torsoAnim == BOTH_FORCE_GETUP_F2 && self->client->ps.torsoAnimTimer > 900)
@@ -134,40 +375,23 @@ void ForceRepulseThrow( gentity_t *self, int chargeTime )
 		return;
 	}
 	
-	if ( chargeTime > 2500.0f )
-	{
-		damageLevel = FORCE_LEVEL_3;
-	}
-	else if ( chargeTime > 1250.0f )
-	{
-		damageLevel = FORCE_LEVEL_2;
-	}
-	else if ( chargeTime > 500.0f )
-	{
-		damageLevel = FORCE_LEVEL_1;
-	}
+	//JKEnhanced 4B.4: charge -> strength 0-1 (a tap still throws at repulse.minPct)
+	const int fullCharge = WP_RepulseFullCharge( self );
+	float power = ( fullCharge > 0 ) ? (float)chargeTime / fullCharge : 1.0f;
+	power = Com_Clamp( ft->repulseMinPct / 100.0f, 1.0f, power );
 	
-	cost = forcePowerNeeded[FP_REPULSE];
-	if ( !WP_ForcePowerUsable( self, FP_REPULSE, cost ) )
-	{
+	extern int WP_RepulseCost( const gentity_t *self );
+	cost = WP_RepulseCost( self );//JKEnhanced: NPCs pay here; the player paid while charging (WP_RepulseChargeDrain)
+	if ( self->s.number >= MAX_CLIENTS && !WP_ForcePowerUsable( self, FP_REPULSE, cost ) )
+	{//(the player's charge already passed this when it started - an empty bar at the end still fires)
 		return;
 	}
 	//make sure this plays and that you cannot press fire for about 1 second after this
-	anim = BOTH_FORCE_2HANDEDLIGHTNING_HOLD;
+	anim = BOTH_FORCE_2HANDEDLIGHTNING_RELEASE;//JKEnhanced: the release brings the hands back (the hold loops forever)
 	soundIndex = G_SoundIndex( "sound/weapons/force/repulse.wav" );
 	hold = 650;
 	
 	int parts = SETANIM_TORSO;
-	if ( !PM_InKnockDown( &self->client->ps ) )
-	{
-		if ( self->client->ps.saberLockTime > level.time )
-		{
-			self->client->ps.saberLockTime = 0;
-			self->painDebounceTime = level.time + 2000;
-			hold += 1000;
-			parts = SETANIM_BOTH;
-		}
-	}
 	NPC_SetAnim( self, parts, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART );
 	self->client->ps.saberMove = self->client->ps.saberBounceMove = LS_READY;//don't finish whatever saber anim you may have been in
 	self->client->ps.saberBlocked = BLOCKED_NONE;
@@ -202,11 +426,15 @@ void ForceRepulseThrow( gentity_t *self, int chargeTime )
 		{
 			ent = entityList[ e ];
 			
-			if ( !WP_ForceThrowable( ent, forwardEnt, self, qfalse, 0.0f, radius, forward ) )
+			//JKEnhanced: every shot in flight, blaster bolts included (Push only takes the heavy ones)
+			const qboolean shot = (qboolean)( ent->inuse && ent->s.eType == ET_MISSILE && ent->owner != self
+				&& ent->s.weapon != WP_SABER && ent->s.pos.trType != TR_STATIONARY
+				&& !( ent->s.powerups & ( 1 << PW_FORCE_PROJECTILE ) ) );
+			if ( !shot && !WP_ForceThrowable( ent, forwardEnt, self, qfalse, 0.0f, radius, forward ) )
 			{
 				continue;
 			}
-			
+
 			//this is all to see if we need to start a saber attack, if it's in flight, this doesn't matter
 			// find the distance from the edge of the bounding box
 			for ( i = 0 ; i < 3 ; i++ )
@@ -263,246 +491,133 @@ void ForceRepulseThrow( gentity_t *self, int chargeTime )
 	for ( int x = 0; x < ent_count; x++ )
 	{
 		if ( push_list[x]->client )
-		{
-			vec3_t	pushDir;
-			float	knockback = 200;
+		{//JKEnhanced 4B.4: clears space - harder the closer they are; a saber user facing it can block
+		 //(and stops attacking to); the damage comes from what they're thrown into (G_RepulseSlam)
+			gentity_t	*victim = push_list[x];
+			vec3_t		pushDir;
 
-			//SIGH band-aid...
-			if ( push_list[x]->s.number >= MAX_CLIENTS
-				&& self->s.number < MAX_CLIENTS )
-			{
-				if ( (push_list[x]->client->ps.forcePowersActive&(1<<FP_GRIP))
-					//&& push_list[x]->client->ps.forcePowerDebounce[FP_GRIP] < level.time
-					&& push_list[x]->client->ps.forceGripEntityNum == self->s.number )
-				{
-					WP_ForcePowerStop( push_list[x], FP_GRIP );
-				}
-				if ( (push_list[x]->client->ps.forcePowersActive&(1<<FP_DRAIN))
-					//&& push_list[x]->client->ps.forcePowerDebounce[FP_DRAIN] < level.time
-					&& push_list[x]->client->ps.forceDrainEntityNum == self->s.number )
-				{
-					WP_ForcePowerStop( push_list[x], FP_DRAIN );
-				}
-			}
-			
-			if ( Rosh_BeingHealed( push_list[x] ) )
+			if ( Rosh_BeingHealed( victim ) )
 			{
 				continue;
 			}
-			if ( push_list[x]->client->NPC_class == CLASS_HAZARD_TROOPER
-				&& push_list[x]->health > 0 )
+			if ( victim->client->NPC_class == CLASS_HAZARD_TROOPER
+				&& victim->health > 0 )
 			{//living hazard troopers resist push/pull
-				WP_ForceThrowHazardTrooper( self, push_list[x], qfalse );
+				WP_ForceThrowHazardTrooper( self, victim, qfalse );
 				continue;
 			}
 			if ( fake )
 			{//always resist
-				WP_ResistForcePush( push_list[x], self, qfalse );
+				WP_ResistForcePush( victim, self, qfalse );
 				continue;
 			}
 
-			int powerLevel, powerUse;
-			powerLevel = self->client->ps.forcePowerLevel[FP_REPULSE];
-			powerUse = FP_REPULSE;
-
-			int modPowerLevel = WP_AbsorbConversion( push_list[x], push_list[x]->client->ps.forcePowerLevel[FP_ABSORB], self, powerUse, powerLevel, forcePowerNeeded[self->client->ps.forcePowerLevel[powerUse]] );
-			if (push_list[x]->client->NPC_class==CLASS_ASSASSIN_DROID ||
-				push_list[x]->client->NPC_class==CLASS_HAZARD_TROOPER)
+			int modPowerLevel = WP_AbsorbConversion( victim, victim->client->ps.forcePowerLevel[FP_ABSORB], self, FP_REPULSE, self->client->ps.forcePowerLevel[FP_REPULSE], forcePowerNeeded[FP_REPULSE] );//(was indexed by LEVEL)
+			if ( victim->client->NPC_class == CLASS_ASSASSIN_DROID )
 			{
 				modPowerLevel = 0;	// devides throw by 10
 			}
-			
-			//First, if this is the player we're push/pulling, see if he can counter it
 			if ( modPowerLevel != -1
-				&& InFront( self->currentOrigin, push_list[x]->client->renderInfo.eyePoint, push_list[x]->client->ps.viewangles, 0.3f ) )
+				&& InFront( self->currentOrigin, victim->client->renderInfo.eyePoint, victim->client->ps.viewangles, 0.3f ) )
 			{//absorbed and I'm in front of them
-				//counter it
-				if ( push_list[x]->client->ps.forcePowerLevel[FP_ABSORB] > FORCE_LEVEL_2 )
-				{//no reaction at all
-				}
-				else
+				if ( victim->client->ps.forcePowerLevel[FP_ABSORB] <= FORCE_LEVEL_2 )
 				{
-					WP_ResistForcePush( push_list[x], self, qfalse );
-					push_list[x]->client->ps.saberMove = push_list[x]->client->ps.saberBounceMove = LS_READY;//don't finish whatever saber anim you may have been in
-					push_list[x]->client->ps.saberBlocked = BLOCKED_NONE;
+					WP_ResistForcePush( victim, self, qfalse );
+					victim->client->ps.saberMove = victim->client->ps.saberBounceMove = LS_READY;
+					victim->client->ps.saberBlocked = BLOCKED_NONE;
 				}
 				continue;
 			}
-			else if ( !push_list[x]->s.number )
-			{//player
-				if ( ShouldPlayerResistForceThrow(push_list[x], self, qfalse) )
-				{
-					WP_ResistForcePush( push_list[x], self, qfalse );
-					push_list[x]->client->ps.saberMove = push_list[x]->client->ps.saberBounceMove = LS_READY;//don't finish whatever saber anim you may have been in
-					push_list[x]->client->ps.saberBlocked = BLOCKED_NONE;
-					continue;
-				}
-			}
-			else if ( push_list[x]->client && Jedi_WaitingAmbush( push_list[x] ) )
-			{
-				WP_ForceKnockdown( push_list[x], self, qfalse, qtrue, qfalse );
-				RepulseDamage( self, push_list[x], tr.endpos, damageLevel );
+			if ( !victim->s.number && ShouldPlayerResistForceThrow( victim, self, qfalse ) )
+			{//an NPC's Repulse on the player: the player can still brace against it (no attacking meanwhile)
+				WP_ResistForcePush( victim, self, qfalse );
+				victim->client->ps.saberMove = victim->client->ps.saberBounceMove = LS_READY;
+				victim->client->ps.saberBlocked = BLOCKED_NONE;
+				victim->client->ps.weaponTime = Q_max( victim->client->ps.weaponTime, 700 );
 				continue;
 			}
-			
-			G_KnockOffVehicle( push_list[x], self, qfalse );
-			
-			if ( push_list[x]->client->ps.forceDrainEntityNum == self->s.number
-				&& (self->s.eFlags&EF_FORCE_DRAINED) )
-			{//stop them from draining me now, dammit!
-				WP_ForcePowerStop( push_list[x], FP_DRAIN );
+			if ( Jedi_WaitingAmbush( victim ) )
+			{
+				WP_ForceKnockdown( victim, self, qfalse, qtrue, qfalse );
+				RepulseDamage( self, victim, power );
+				continue;
 			}
-			
-			//okay, everyone else (or player who couldn't resist it)...
-			if ( ((self->s.number == 0 && Q_irand( 0, 2 ) ) || Q_irand( 0, 2 ) ) && push_list[x]->client && push_list[x]->health > 0 //a living client
-				&& push_list[x]->client->ps.weapon == WP_SABER //Jedi
-				&& push_list[x]->health > 0 //alive
-				&& push_list[x]->client->ps.forceRageRecoveryTime < level.time //not recobering from rage
-				&& ((self->client->NPC_class != CLASS_DESANN&&Q_stricmp("Yoda",self->NPC_type)) || !Q_irand( 0, 2 ) )//only 30% chance of resisting a Desann push
-				&& push_list[x]->client->ps.groundEntityNum != ENTITYNUM_NONE //on the ground
-				&& InFront( self->currentOrigin, push_list[x]->currentOrigin, push_list[x]->client->ps.viewangles, 0.3f ) //I'm in front of him
-				&& ( push_list[x]->client->ps.powerups[PW_FORCE_PUSH] > level.time ||//he's pushing too
-					(push_list[x]->s.number != 0 && push_list[x]->client->ps.weaponTime < level.time)//not the player and not attacking (NPC jedi auto-defend against pushes)
-					)
-				)
-			{//Jedi don't get pushed, they resist as long as they aren't already attacking and are on the ground
-				if ( push_list[x]->client->ps.saberLockTime > level.time )
-				{//they're in a lock
-					if ( push_list[x]->client->ps.saberLockEnemy != self->s.number )
-					{//they're not in a lock with me
-						continue;
-					}
-					else if ( self->client->ps.forcePowerLevel[FP_REPULSE] < FORCE_LEVEL_3 ||
-							 push_list[x]->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_2 )
-					{//they're in a lock with me, but my push is too weak
-						continue;
-					}
-					else
-					{//we will knock them down
-						self->painDebounceTime = 0;
-						self->client->ps.weaponTime = 500;
-						if ( self->client->ps.forcePowersActive&(1<<FP_SPEED) )
-						{
-							self->client->ps.weaponTime = floor( self->client->ps.weaponTime * g_timescale->value );
-						}
-					}
+
+			G_KnockOffVehicle( victim, self, qfalse );
+
+			if ( victim->NPC && victim->NPC->jumpState == JS_JUMPING )
+			{//don't interrupt a scripted jump
+				victim->forcePushTime = level.time + 600;
+				continue;
+			}
+			if ( victim->s.number && ( victim->message || (victim->flags&FL_NO_KNOCKBACK) ) )
+			{//an NPC who has a key / can't be moved: just knock them down
+				WP_ForceKnockdown( victim, self, qfalse, qfalse, qfalse );
+				RepulseDamage( self, victim, power );
+				continue;
+			}
+
+			//strength: charge, and closer = harder (the edge of the radius gets half)
+			VectorSubtract( victim->currentOrigin, self->currentOrigin, pushDir );
+			const float d = VectorNormalize( pushDir );
+			float knockback = ft->repulseKnockMin + ( ft->repulseKnockMax - ft->repulseKnockMin ) * power;
+			knockback *= 1.0f - 0.5f * Q_min( 1.0f, d / radius );
+			if ( modPowerLevel != -1 )
+			{//absorbed from behind
+				knockback /= ( modPowerLevel <= 0 ) ? 10.0f : ( modPowerLevel == 1 ) ? 6.0f : 2.0f;
+			}
+			if ( victim->health > 0 && victim->s.number >= MAX_CLIENTS && G_RepulseCanBlock( self, victim ) )
+			{//a saber user facing it blocks: holds their ground (slides back a little), but blocking
+			 //stops their attack (the player blocks through ShouldPlayerResistForceThrow above)
+				WP_ResistForcePush( victim, self, qfalse );
+				victim->client->ps.saberMove = victim->client->ps.saberBounceMove = LS_READY;
+				victim->client->ps.saberBlocked = BLOCKED_NONE;
+				victim->client->ps.weaponTime = Q_max( victim->client->ps.weaponTime, 700 );
+				G_Throw( victim, pushDir, knockback * 0.25f );
+				victim->forcePuller = self->s.number;
+				if ( g_debugForce && g_debugForce->integer )
+				{
+					gi.Printf( "  REPULSE: %s (%d) blocked it\n", victim->NPC_type ? victim->NPC_type : "?", victim->s.number );
 				}
-				int resistChance = Q_irand(0, 2);
-				if ( push_list[x]->s.number >= MAX_CLIENTS )
-				{//NPC
-					if ( g_spskill->integer == 1 )
-					{//stupid tweak for graham
-						resistChance = Q_irand(0, 3);
-					}
-				}
-				if ( modPowerLevel == -1
-						&& self->client->ps.forcePowerLevel[FP_REPULSE] > FORCE_LEVEL_2
-						&& !resistChance
-						&& push_list[x]->client->ps.forcePowerLevel[FP_PUSH] < FORCE_LEVEL_3 )
-				{//a level 3 push can even knock down a jedi
-					if ( PM_InKnockDown( &push_list[x]->client->ps ) )
-					{//can't knock them down again
-						continue;
-					}
-					WP_ForceKnockdown( push_list[x], self, qfalse, qfalse, qtrue );
-					RepulseDamage( self, push_list[x], tr.endpos, damageLevel );
+				continue;
+			}
+			const qboolean boss = G_IsSaberBoss( victim, qfalse );
+			if ( boss )
+			{//shoved back, not off their feet
+				knockback *= 0.5f;
+			}
+			G_Throw( victim, pushDir, knockback );
+			victim->forcePuller = self->s.number;//so they don't hurt me if thrown into me
+			G_RepulseMarkSlam( victim, self );
+			if ( victim->client->ps.groundEntityNum != ENTITYNUM_NONE && victim->client->ps.velocity[2] < knockback * 0.5f )
+			{//off the ground a little
+				victim->client->ps.velocity[2] = knockback * 0.5f;
+			}
+
+			if ( victim->health > 0 )
+			{
+				//whatever they were doing, it stops: a swing, a parry, a held power
+				victim->client->ps.saberMove = victim->client->ps.saberBounceMove = LS_READY;
+				victim->client->ps.saberBlocked = BLOCKED_NONE;
+				if ( !boss && !PM_InKnockDown( &victim->client->ps )
+					&& ( self->client->ps.forcePowerLevel[FP_REPULSE] > FORCE_LEVEL_1 || power >= 1.0f ) )
+				{//L2+ (or a full L1 charge) puts them down
+					WP_ForceKnockdown( victim, self, qfalse, (qboolean)( knockback > 150 ), qfalse );
 				}
 				else
-				{
-					WP_ResistForcePush( push_list[x], self, qfalse );
+				{//a brief stun: no attacking for a moment
+					victim->client->ps.weaponTime = Q_max( victim->client->ps.weaponTime, 500 );
+					if ( victim->NPC )
+					{
+						victim->painDebounceTime = Q_max( victim->painDebounceTime, level.time + 500 );
+					}
 				}
+				RepulseDamage( self, victim, power );
 			}
-			else
-			{
-				//UGH: FIXME: for enemy jedi, they should probably always do force pull 3, and not your weapon (if player?)!
-				//shove them
-				if ( push_list[x]->NPC
-					&& push_list[x]->NPC->jumpState == JS_JUMPING )
-				{//don't interrupt a scripted jump
-					//WP_ResistForcePush( push_list[x], self, qfalse );
-					push_list[x]->forcePushTime = level.time + 600; // let the push effect last for 600 ms
-					continue;
-				}
-				
-				if ( push_list[x]->s.number
-					&& (push_list[x]->message || (push_list[x]->flags&FL_NO_KNOCKBACK)) )
-				{//an NPC who has a key
-					//don't push me... FIXME: maybe can pull the key off me?
-					WP_ForceKnockdown( push_list[x], self, qfalse, qfalse, qfalse );
-					RepulseDamage( self, push_list[x], tr.endpos, damageLevel );
-					continue;
-				}
-				{
-					VectorSubtract( push_list[x]->currentOrigin, self->currentOrigin, pushDir );
-					knockback -= VectorNormalize( pushDir );
-					if ( knockback < 100 )
-					{
-						knockback = 100;
-					}
-					//scale for push level
-					if ( self->client->ps.forcePowerLevel[FP_REPULSE] < FORCE_LEVEL_2 )
-					{//maybe just knock them down
-						knockback /= 3;
-					}
-					else if ( self->client->ps.forcePowerLevel[FP_REPULSE] > FORCE_LEVEL_2 )
-					{//super-hard push
-						//Hmm, maybe in this case can even nudge/knockdown a jedi?  Especially if close?
-						//knockback *= 5;
-					}
-				}
-				
-				if ( modPowerLevel != -1 )
-				{
-					if ( !modPowerLevel )
-					{
-						knockback /= 10.0f;
-					}
-					else if ( modPowerLevel == 1 )
-					{
-						knockback /= 6.0f;
-					}
-					else// if ( modPowerLevel == 2 )
-					{
-						knockback /= 2.0f;
-					}
-				}
-				//actually push/pull the enemy
-				G_Throw( push_list[x], pushDir, knockback );
-				//make it so they don't actually hurt me when pulled at me...
-				push_list[x]->forcePuller = self->s.number;
-				
-				if ( push_list[x]->client->ps.groundEntityNum != ENTITYNUM_NONE )
-				{//if on the ground, make sure they get shoved up some
-					if ( push_list[x]->client->ps.velocity[2] < knockback )
-					{
-						push_list[x]->client->ps.velocity[2] = knockback;
-					}
-				}
-				
-				if ( push_list[x]->health > 0 )
-				{//target is still alive
-					if ( (push_list[x]->s.number||(cg.renderingThirdPerson&&!cg.zoomMode)) //NPC or 3rd person player
-						&& ((self->client->ps.forcePowerLevel[FP_REPULSE] < FORCE_LEVEL_2 && push_list[x]->client->ps.forcePowerLevel[FP_PUSH] < FORCE_LEVEL_1)) )
-					{//NPC or third person player (without force push/pull skill), and force push/pull level is at 1
-						WP_ForceKnockdown( push_list[x], self, qfalse, (qboolean)(knockback>150), qfalse );
-						RepulseDamage( self, push_list[x], tr.endpos, damageLevel );
-					}
-					else if ( !push_list[x]->s.number )
-					{//player, have to force an anim on him
-						WP_ForceKnockdown( push_list[x], self, qfalse, (qboolean)(knockback>150), qfalse );
-						RepulseDamage( self, push_list[x], tr.endpos, damageLevel );
-					}
-					else
-					{//NPC and force-push/pull at level 2 or higher
-						WP_ForceKnockdown( push_list[x], self, qfalse, (qboolean)(knockback>100), qfalse );
-						RepulseDamage( self, push_list[x], tr.endpos, damageLevel );
-					}
-				}
-				push_list[x]->forcePushTime = level.time + 600; // let the push effect last for 600 ms
-			}
-			if ( push_list[x]->client->ps.torsoAnimTimer > maxVictimRecovery )
+			victim->forcePushTime = level.time + 600; // let the push effect last for 600 ms
+			if ( victim->client->ps.torsoAnimTimer > maxVictimRecovery )
 			{//track the longest recovery we just inflicted, so our own lockout below can respect it
-				maxVictimRecovery = push_list[x]->client->ps.torsoAnimTimer;
+				maxVictimRecovery = victim->client->ps.torsoAnimTimer;
 			}
 		}
 		else if ( !fake )
@@ -554,8 +669,8 @@ void ForceRepulseThrow( gentity_t *self, int chargeTime )
 					push_list[x]->nextthink = level.time + Q_irand( 500, 3000 );
 				}
 				if ( dot >= 0 )
-				{//it's heading towards me
-					G_ReflectMissile( self, push_list[x], forward );
+				{//it's heading towards me: back out the way it came (all round, not just ahead)
+					RepulseReflectShot( self, push_list[x], dir2Me );
 				}
 				else
 				{
@@ -720,7 +835,11 @@ void ForceRepulseThrow( gentity_t *self, int chargeTime )
 		}
 	}
 
-	WP_ForcePowerDrain(self, FP_REPULSE, cost);
+	G_RepulseLetGo( self, qtrue );//JKEnhanced: the shots it caught while charging go back out
+	if ( cost > 0 )
+	{
+		WP_ForcePowerDrain( self, FP_REPULSE, cost );
+	}
 
 	if ( self->NPC )
 	{//NPCs can push more often
@@ -736,4 +855,34 @@ void ForceRepulseThrow( gentity_t *self, int chargeTime )
 		int scaledHold = (int)( maxVictimRecovery * g_forceStaggerLockoutScale->value );
 		self->client->ps.weaponTime = Q_max( self->client->ps.weaponTime, scaledHold );
 	}
+}
+
+/*
+G_NPCRepulse (JKEnhanced)
+
+An NPC casts Repulse at once with the given charge (ms; ForceRepulseThrow scales radius/strength by
+it), skipping the player's hold-to-charge loop. Bosses get it at spawn,
+any other NPC through its .npc (FP_REPULSE). Returns qtrue if it fired (ForceRepulseThrow re-arms
+the debounce only when it does).
+*/
+qboolean G_NPCRepulse( gentity_t *npc, int chargeMs )
+{
+	if ( !npc || !npc->client || npc->health <= 0
+		|| npc->client->ps.forcePowerLevel[FP_REPULSE] <= FORCE_LEVEL_0
+		|| npc->client->ps.forcePowerDebounce[FP_REPULSE] > level.time
+		|| PM_InKnockDown( &npc->client->ps ) )
+	{
+		return qfalse;
+	}
+	extern void WP_StopShieldsForAttack( gentity_t *self );
+	WP_StopShieldsForAttack( npc );	//L1-2 drop; an L3 toggle stays up (4B.3)
+	const int before = npc->client->ps.forcePowerDebounce[FP_REPULSE];
+	ForceRepulseThrow( npc, chargeMs );
+	const qboolean fired = (qboolean)( npc->client->ps.forcePowerDebounce[FP_REPULSE] != before );
+	if ( fired )
+	{//skips WP_ForcePowerStart, so log it here for g_debugForce / forcetally
+		extern void WP_ForceDebugCast( const gentity_t *self, int power, int cost );
+		WP_ForceDebugCast( npc, FP_REPULSE, forcePowerNeeded[FP_REPULSE] );
+	}
+	return fired;
 }

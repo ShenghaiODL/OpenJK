@@ -13,9 +13,9 @@ through AI_NerveEvent, and nearby allies who can see it through AI_NerveWitness.
 
 typedef enum
 {
-	NT_STEADY = 0,	// >= 60
-	NT_SHAKEN,		// 35-60
-	NT_BREAKING,	// 15-35
+	NT_STEADY = 0,	// >= 50 (tier changes have +/-5 hysteresis, AI_NerveUpdate)
+	NT_SHAKEN,		// 30-50
+	NT_BREAKING,	// 15-30
 	NT_BROKEN,		// < 15
 	NT_NUM
 } nerveTier_t;
@@ -39,6 +39,7 @@ typedef enum
 	NE_ALLY_KILLS_ENEMY,	// the killer and anyone who saw it
 	NE_REINFORCED,			// someone joined the squad mid-fight
 	NE_LEADER_HURT,			// witnessed: the leader (the player, for companions) took damage
+	NE_TERROR,				// Insanity (Terror): scaled by the nerve it deals; witnesses get a flat delta
 	NE_NUM
 } nerveEvent_t;
 

@@ -354,6 +354,7 @@ SetForceCmd SetForceTable[NUM_FORCE_POWERS] = {
 	{ "forceSight",			"setForceSight",		FORCE_LEVEL_3			},
 	{ "forceInsanity",		"setForceInsanity",		FORCE_LEVEL_3			},
 	{ "forceStasis",		"setForceStasis",		FORCE_LEVEL_3			},
+	{ "forceRepulse",		"setForceRepulse",		FORCE_LEVEL_3			},	// JKEnhanced 4B: neutral core power
 };
 
 static void Svcmd_ForceSetLevel_f( int forcePower )
@@ -1125,7 +1126,7 @@ static void Svcmd_NPCNerve_f( void )
 		{//set the effective value by adjusting shock
 			int sit;
 			AI_NerveEffective( ent, &sit );
-			ent->NPC->nerveShock = Com_Clamp( -100, 40, atoi( what ) - ent->NPC->nerveBase - sit );
+			ent->NPC->nerveShock = Com_Clamp( -60, 30, atoi( what ) - ent->NPC->nerveBase - sit );//(the real shock range, AI_Nerve.cpp NERVE_SHOCK_MIN/MAX)
 		}
 		else
 		{
@@ -1203,6 +1204,7 @@ static svcmd_t svcmds[] = {
 	{ "setForceSight",				Svcmd_ForceSetLevel_f<FP_SEE>,				CMD_CHEAT },
 	{ "setForceInsanity",			Svcmd_ForceSetLevel_f<FP_INSANITY>,			CMD_CHEAT },
 	{ "setForceStasis",				Svcmd_ForceSetLevel_f<FP_STASIS>,			CMD_CHEAT },
+	{ "setForceRepulse",			Svcmd_ForceSetLevel_f<FP_REPULSE>,			CMD_CHEAT },
 	{ "setForceAll",				Svcmd_SetForceAll_f,						CMD_CHEAT },
 	{ "setSaberAll",				Svcmd_SetSaberAll_f,						CMD_CHEAT },
 

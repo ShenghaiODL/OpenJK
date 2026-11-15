@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../cgame/cg_local.h"
 #include "g_nav.h"
 #include "g_functions.h"
+#include "g_force.h"
 
 extern Vehicle_t *G_IsRidingVehicle( gentity_t *pEnt );
 
@@ -265,6 +266,10 @@ qboolean NPC_UpdateAngles ( qboolean doPitch, qboolean doYaw )
 			targetYaw = NPCInfo->desiredYaw;
 			NPCInfo->lockedDesiredYaw = NPCInfo->desiredYaw;
 		}
+	}
+	if ( doYaw && NPC->enemy )
+	{//JKEnhanced 4B.8: Insanity L3 - they're aiming at a phantom beside their enemy (shots fire along viewangles)
+		targetYaw += G_InsanityAimYaw( NPC );
 	}
 
 	if ( NPC->s.weapon == WP_EMPLACED_GUN )
@@ -1359,6 +1364,44 @@ qboolean NPC_CheckEnemyExt( qboolean checkAlerts )
 	return NPC_FindEnemy();
 */
 	return NPC_FindEnemy( checkAlerts );
+}
+
+/*
+-------------------------
+NPC_GroundAlongPath (JKEnhanced)
+
+Floor under the whole straight walk from -> to (checked every 24 units, allowing stairs and slopes but
+not a ledge). For spots picked by traces instead of the nav graph (geo cover, flee probes): a waist-high
+trace across an elevator shaft or a pit hits the far wall, and the spot in front of it is mid-air.
+-------------------------
+*/
+qboolean NPC_GroundAlongPath( gentity_t *self, const vec3_t from, const vec3_t to )
+{
+	vec3_t	dir;
+	VectorSubtract( to, from, dir );
+	dir[2] = 0;
+	const float	len = VectorNormalize( dir );
+	const float	floorDrop = -self->mins[2] + 40.0f;//feet, then a little more for stairs going down
+	const int	mask = ( self->clipmask & ~CONTENTS_BODY ) | CONTENTS_BOTCLIP;
+	for ( float d = 24.0f; ; d += 24.0f )
+	{
+		const float at = Q_min( d, len );
+		vec3_t	p, end;
+		trace_t	tr;
+		VectorMA( from, at, dir, p );
+		p[2] = from[2];
+		VectorCopy( p, end );
+		end[2] -= floorDrop;
+		gi.trace( &tr, p, vec3_origin, vec3_origin, end, self->s.number, mask, (EG2_Collision)0, 0 );
+		if ( tr.fraction >= 1.0f && !tr.startsolid )
+		{//nothing under this bit
+			return qfalse;
+		}
+		if ( at >= len )
+		{
+			return qtrue;
+		}
+	}
 }
 
 /*

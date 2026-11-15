@@ -6008,6 +6008,7 @@ static powerEnum_t powerEnums[MAX_POWER_ENUMS] =
 	{ "jump",			FP_LEVITATION },
 	{ "pull",			FP_PULL },
 	{ "push",			FP_PUSH },
+	{ "repulse",		FP_REPULSE },	//JKEnhanced 4B: neutral core power
 
 #ifndef JK2_MODE
 	{ "sense",		FP_SEE },

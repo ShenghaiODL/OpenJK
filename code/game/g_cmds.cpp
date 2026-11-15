@@ -633,6 +633,72 @@ void Cmd_Story_f( gentity_t *ent )
 		gi.Cvar_VariableIntegerValue( "tier_storyinfo" ), complete ) );
 }
 
+/*
+==================
+Cmd_ForceSandbox_f (JKEnhanced, Step 4A audit)
+
+argv(0) forcesandbox [level 1-3]
+Gives the player every Force power (Repulse included) at that level (default 3) with a
+full Force bar, spawns a ring of test targets facing the player - a stormtrooper, a Reborn, a Reborn
+lieutenant, Tavion (boss: stages and Repulse) and a Reborn with Absorb 3 + Protect 3 held on (the
+counter test) - and turns on g_debugForce. "forcetally reset" first to count just this test. Cheat.
+==================
+*/
+extern gentity_t	*NPC_SandboxSpawn( const char *npcType, const vec3_t origin, float yaw );
+extern void			WP_ForceTallyReset( void );
+void Cmd_ForceSandbox_f( gentity_t *ent )
+{
+	if ( !CheatsOk( ent ) || !ent->client )
+	{
+		return;
+	}
+	const int level = gi.argc() > 1 ? Q_max( 1, Q_min( 3, atoi( gi.argv( 1 ) ) ) ) : 3;
+	playerState_t *ps = &ent->client->ps;
+	for ( int i = FP_HEAL; i < NUM_FORCE_POWERS; i++ )
+	{
+		if ( i == FP_SABER_OFFENSE )
+		{//saber offense is the style list, left alone
+			continue;
+		}
+		ps->forcePowersKnown |= ( 1 << i );
+		ps->forcePowerLevel[i] = level;
+	}
+	ps->forcePower = ps->forcePowerMax > 0 ? ps->forcePowerMax : 100;
+
+	static const char *targets[5] = { "stormtrooper", "reborn", "reborn_new", "tavion", "reborn" };
+	const float radius = 220.0f;
+	for ( int t = 0; t < 5; t++ )
+	{
+		const float yaw = ps->viewangles[YAW] - 60.0f + t * 30.0f;	//a 120-degree arc in front
+		vec3_t dir, spot;
+		const vec3_t yawAngles = { 0, yaw, 0 };
+		AngleVectors( yawAngles, dir, NULL, NULL );
+		VectorMA( ent->currentOrigin, radius, dir, spot );
+		trace_t tr;
+		gi.trace( &tr, ent->currentOrigin, ent->mins, ent->maxs, spot, ent->s.number, MASK_PLAYERSOLID, (EG2_Collision)0, 0 );
+		VectorCopy( tr.endpos, spot );
+		gentity_t *npc = NPC_SandboxSpawn( targets[t], spot, yaw + 180.0f );
+		if ( !npc || !npc->client )
+		{
+			gi.Printf( S_COLOR_YELLOW "forcesandbox: couldn't spawn %s\n", targets[t] );
+			continue;
+		}
+		if ( t == 4 )
+		{//the counter test: Absorb and Protect at 3, held on
+			npc->client->ps.forcePowersKnown |= ( 1 << FP_ABSORB ) | ( 1 << FP_PROTECT );
+			npc->client->ps.forcePowerLevel[FP_ABSORB] = FORCE_LEVEL_3;
+			npc->client->ps.forcePowerLevel[FP_PROTECT] = FORCE_LEVEL_3;
+			npc->client->ps.forcePowersActive |= ( 1 << FP_ABSORB ) | ( 1 << FP_PROTECT );
+			npc->client->ps.forcePowerDuration[FP_ABSORB] = Q3_INFINITE;
+			npc->client->ps.forcePowerDuration[FP_PROTECT] = Q3_INFINITE;
+			gi.Printf( "forcesandbox: the last Reborn has Absorb 3 + Protect 3 held on\n" );
+		}
+	}
+	WP_ForceTallyReset();
+	gi.cvar_set( "g_debugForce", "1" );
+	gi.Printf( "forcesandbox: all Force powers at level %d, g_debugForce 1, forcetally reset\n", level );
+}
+
 
 /*
 ==================
@@ -1600,6 +1666,13 @@ void ClientCommand( int clientNum ) {
 		Cmd_Undying_f (ent);
 	else if (Q_stricmp (cmd, "story") == 0)
 		Cmd_Story_f (ent);
+	else if (Q_stricmp (cmd, "forcesandbox") == 0)
+		Cmd_ForceSandbox_f (ent);
+	else if (Q_stricmp (cmd, "forcetally") == 0)
+	{
+		extern void WP_ForceTally_f( void );
+		WP_ForceTally_f();
+	}
 	else if (Q_stricmp (cmd, "completelevel") == 0)
 		Cmd_CompleteLevel_f (ent);
 	else if (Q_stricmp (cmd, "notarget") == 0)

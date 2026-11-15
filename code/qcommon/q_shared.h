@@ -342,7 +342,9 @@ typedef enum {
 	iSAVEGAME_VERSION_ENHANCED_FIRST = 256,
 	iSAVEGAME_VERSION_ENHANCED_AI = 257,	// JKEnhanced AI overhaul: new NPC/squad fields, old ones removed
 	iSAVEGAME_VERSION_ENHANCED_AI2 = 258,	// gentity NPC_subduetarget / squadname / nonlethal now saved
-	iSAVEGAME_VERSION_ENHANCED = iSAVEGAME_VERSION_ENHANCED_AI2,
+	iSAVEGAME_VERSION_ENHANCED_AI3 = 259,	// FP_REPULSE restored (NUM_FORCE_POWERS +1), gNPC_t guardStages
+	iSAVEGAME_VERSION_ENHANCED_AI4 = 260,	// gentity bossbar / stage1target-stage3target (boss bar and stage events)
+	iSAVEGAME_VERSION_ENHANCED = iSAVEGAME_VERSION_ENHANCED_AI4,
 	iSAVEGAME_VERSION = iSAVEGAME_VERSION_ENHANCED,
 	iSAVEGAME_VERSION_MAX
 }iSavegame_version_e;
@@ -779,6 +781,7 @@ typedef enum
 	//extra powers!
 	FP_INSANITY,//instant
 	FP_STASIS,//duration + instant?
+	FP_REPULSE,//hold/charge - JKEnhanced: restored (removed in 45210704), player: neutral core power, hold to charge (save v259)
 #endif // !JK2_MODE
 
 	NUM_FORCE_POWERS

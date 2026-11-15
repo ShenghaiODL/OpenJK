@@ -299,6 +299,8 @@ static const char *gcmds[] = {
 	"force_throw",
 	"completelevel",	// JKEnhanced cheat: fire the level's target_level_change
 	"story",			// JKEnhanced cheat: show / set tier_storyinfo and tiers_complete
+	"forcesandbox",		// JKEnhanced cheat (4A audit): all Force powers + a ring of test targets + g_debugForce
+	"forcetally",		// JKEnhanced (4A audit): Force casts per NPC ("forcetally reset")
 	"give",
 	"gloat",
 	"god",

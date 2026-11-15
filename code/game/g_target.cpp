@@ -1005,6 +1005,7 @@ void set_mission_stats_cvars( void )
 
 	gi.cvar_set("ui_stats_insanity", va("%d",client->sess.missionStats.forceUsed[FP_INSANITY]));
 	gi.cvar_set("ui_stats_stasis", va("%d",client->sess.missionStats.forceUsed[FP_STASIS]));
+	gi.cvar_set("ui_stats_repulse", va("%d",client->sess.missionStats.forceUsed[FP_REPULSE]));
 }
 
 #include "../cgame/cg_media.h"	//access to cgs

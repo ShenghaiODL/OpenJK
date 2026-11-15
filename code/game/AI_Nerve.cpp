@@ -7,6 +7,7 @@ Per-NPC nerve. See AI_Nerve.h.
 #include "g_local.h"
 #include "b_local.h"
 #include "AI_Nerve.h"
+#include "g_difficulty.h"
 
 extern cvar_t	*d_nerveLog;
 
@@ -38,6 +39,7 @@ static const nerveEventDef_t nerveEvents[NE_NUM] =
 	{ "ally killed enemy",	  6,   6, 1024, 1000 },
 	{ "reinforced",			  5,   0,    0,10000 },
 	{ "leader hurt",		  0,  -4, 1024, 2000 },
+	{ "terror",			 -1,  -5,  768, 1000 },	// delta x insanity.nerve (the scale)
 };
 
 static const char *nerveTierNames[NT_NUM] = { "STEADY", "SHAKEN", "BREAKING", "BROKEN" };
@@ -127,6 +129,10 @@ void AI_NerveInit( gentity_t *npc )
 	{
 		base = 90;
 	}
+	else if ( npc->client && npc->client->playerTeam != TEAM_PLAYER )
+	{//enemies hold their nerve longer on harder difficulties (ext_data/difficulty.cfg)
+		base += G_Difficulty()->nerveShift;
+	}
 	if ( (ni->scriptFlags&SCF_DONT_FLEE) )
 	{
 		base = 100;
@@ -134,7 +140,9 @@ void AI_NerveInit( gentity_t *npc )
 
 	ni->nerveBase = Com_Clamp( 0, 100, base );
 	ni->nerveShock = 0;
-	ni->nerveTier = NT_STEADY;
+	//start in the tier their base nerve puts them in (the AI_NerveUpdate bands): starting everyone at
+	//STEADY made low bases (civilians, crewmen on easy) fall a tier per think, with nothing happening
+	ni->nerveTier = ni->nerveBase >= 50 ? NT_STEADY : ( ni->nerveBase >= 30 ? NT_SHAKEN : ( ni->nerveBase >= 15 ? NT_BREAKING : NT_BROKEN ) );
 	ni->nerveLastEvent = -1;
 	ni->nerveLastEventTime = 0;
 }
@@ -322,7 +330,7 @@ void AI_NerveUpdate( gentity_t *npc )
 AI_NerveEvent
 -------------------------
 */
-static void Nerve_Apply( gentity_t *npc, int ev, int delta, gentity_t *source )
+static void Nerve_Apply( gentity_t *npc, int ev, int delta, gentity_t *source, qboolean witnessed = qfalse )
 {
 	gNPC_t *ni = npc->NPC;
 	if ( delta == 0 )
@@ -333,8 +341,10 @@ static void Nerve_Apply( gentity_t *npc, int ev, int delta, gentity_t *source )
 	{
 		return;
 	}
+	//seeing it happen to someone else has its own debounce, so a witnessed push can't swallow the
+	//NPC's own push a moment later
 	char timerName[24];
-	Com_sprintf( timerName, sizeof(timerName), "nrv%d", ev );
+	Com_sprintf( timerName, sizeof(timerName), witnessed ? "nrvw%d" : "nrv%d", ev );
 	if ( !TIMER_Done( npc, timerName ) )
 	{
 		return;
@@ -431,7 +441,7 @@ void AI_NerveWitness( gentity_t *victim, int ev, gentity_t *source )
 				continue;
 			}
 		}
-		Nerve_Apply( ent, ev, def->witnessDelta, source );
+		Nerve_Apply( ent, ev, def->witnessDelta, source, qtrue );
 	}
 }
 
