@@ -91,6 +91,7 @@ out vec4 var_Color;
 out vec4 var_RefractPosR;
 out vec4 var_RefractPosG;
 out vec4 var_RefractPosB;
+out vec4 var_ClipPos;	// JKEnhanced: the unbent position, so the fragment only applies the bend as a delta
 
 #if defined(USE_DEFORM_VERTEXES)
 float GetNoiseValue( float x, float y, float z, float t )
@@ -349,6 +350,7 @@ void main()
 	vec3 wsPosition = mat3(u_ModelMatrix) * position;
 	mat4 MVP = u_viewProjectionMatrix * u_ModelMatrix;
 	gl_Position = MVP * vec4(position, 1.0);
+	var_ClipPos = gl_Position;
 
 #if defined(USE_TCGEN)
 	vec2 tex = GenTexCoords(u_TCGen0, wsPosition.xyz, normal, u_TCGen0Vector0, u_TCGen0Vector1);
@@ -381,7 +383,14 @@ void main()
 	}
 
 	vec3 ws_Normal		= normalize(mat3(u_ModelMatrix) * normal);
-	vec3 ws_ViewDir		= normalize((u_ViewForward + u_ViewLeft * -gl_Position.x) + u_ViewUp * gl_Position.y);
+	// JKEnhanced: the real eye->vertex ray. It used to be built from gl_Position (clip space, not divided by w),
+	// so the sampled patch slid with the camera angle instead of bending locally. A point along this ray projects
+	// onto the same pixel, so only the bend shows: small facing the camera, strongest at the silhouette
+	vec3 ws_ViewDir		= normalize((u_ModelMatrix * vec4(position, 1.0)).xyz - u_ViewOrigin);
+	if (dot(ws_ViewDir, ws_Normal) > 0.0)
+	{// back face (two-sided pass): refract through the side facing us
+		ws_Normal = -ws_Normal;
+	}
 
 	#if defined(USE_TCMOD)
 	float distance = u_Color.a * clamp(1.0 - distance(tex, var_DiffuseTex), 0.0, 1.0);
@@ -460,6 +469,7 @@ in vec4 var_Color;
 in vec4 var_RefractPosR;
 in vec4 var_RefractPosG;
 in vec4 var_RefractPosB;
+in vec4 var_ClipPos;
 
 out vec4 out_Color;
 
@@ -488,9 +498,14 @@ vec3 FilmicTonemap(vec3 x)
 
 void main()
 {
-	vec2 texR = (var_RefractPosR.xy / var_RefractPosR.w) * 0.5 + 0.5;
-	vec2 texG = (var_RefractPosG.xy / var_RefractPosG.w) * 0.5 + 0.5;
-	vec2 texB = (var_RefractPosB.xy / var_RefractPosB.w) * 0.5 + 0.5;
+	// JKEnhanced: anchor on this fragment's real pixel and add only the bend (refracted minus unbent
+	// projection). Reconstructing the whole coordinate from the clip-space varyings landed off-screen
+	// (clamped to the top edge: a cloaked trooper filled with sky) whatever the strength
+	vec2 screenUV = gl_FragCoord.xy / vec2(textureSize(u_TextureMap, 0));
+	vec2 baseNDC = var_ClipPos.xy / var_ClipPos.w;
+	vec2 texR = screenUV + ((var_RefractPosR.xy / var_RefractPosR.w) - baseNDC) * 0.5;
+	vec2 texG = screenUV + ((var_RefractPosG.xy / var_RefractPosG.w) - baseNDC) * 0.5;
+	vec2 texB = screenUV + ((var_RefractPosB.xy / var_RefractPosB.w) - baseNDC) * 0.5;
 
 	vec4 color;
 	color.r	= texture(u_TextureMap, texR).r;

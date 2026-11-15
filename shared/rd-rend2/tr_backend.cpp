@@ -1354,7 +1354,11 @@ static void RB_SubmitDrawSurfs(
 				cubemapIndex == oldCubemapIndex &&
 				entityNum == oldEntityNum &&
 				dlighted == oldDlighted &&
-				backEnd.refractionFill == shader->useDistortion )
+				//JKEnhanced: entity-aware, like the slow path below - an RF_DISTORTION entity (cloak) with a
+				//normal shader used to slip its 2nd+ surfaces into the main pass here, refracting the buffer
+				//it was drawing into (white) and writing the glow buffer (halo)
+				backEnd.refractionFill == (shader->useDistortion == qtrue
+					|| (backEnd.currentEntity && (backEnd.currentEntity->e.renderfx & RF_DISTORTION))) )
 		{
 			// fast path, same as previous sort
 			rb_surfaceTable[*drawSurf->surface](drawSurf->surface);

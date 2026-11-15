@@ -3284,7 +3284,12 @@ void R_AddGhoulSurfaces( trRefEntity_t *ent, int entityNum )
 		skin_t *skin = nullptr;
 		shader_t *cust_shader = nullptr;
 
-		if (ent->e.customShader)
+		if (ent->e.renderfx & RF_DISTORTION)
+		{//JKEnhanced: a refracting model (cloak) draws every surface with the single-stage refraction shader.
+		 //Its own skin's stages (env maps, detail, glow) leaked the env texture through on the head/armour
+			cust_shader = tr.distortionShader;
+		}
+		else if (ent->e.customShader)
 		{
 			cust_shader = R_GetShaderByHandle(ent->e.customShader );
 		}

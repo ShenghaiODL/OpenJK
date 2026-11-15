@@ -1583,6 +1583,8 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 
 	UniformDataWriter uniformDataWriter;
 	SamplerBindingsWriter samplerBindingsWriter;
+	bool entityRefractionDrawn = false;
+	bool alphaFadeDrawn = false;
 
 	for ( int stage = 0; stage < MAX_SHADER_STAGES; stage++ )
 	{
@@ -1646,6 +1648,17 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 			if (input->shader->useDistortion == qtrue || backEnd.currentEntity->e.renderfx & RF_DISTORTION)
 				forceRefraction = true;
 
+			if (backEnd.currentEntity->e.renderfx & RF_DISTORTION)
+			{//JKEnhanced: an entity drawn as refraction (cloak): one opaque, unlit pass. Every stage of the
+			 //skin (additive, env-map, glow) used to refract the scene again on top - blown out and rainbowed
+				if (entityRefractionDrawn)
+					break;
+				entityRefractionDrawn = true;
+				stateBits = GLS_DEPTHMASK_TRUE;
+				forceRGBGen = CGEN_IDENTITY;
+				forceAlphaGen = AGEN_IDENTITY;
+			}
+
 			if ( backEnd.currentEntity->e.renderfx & RF_FORCE_ENT_ALPHA )
 			{
 				stateBits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
@@ -1680,7 +1693,11 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 			if (backEnd.currentEntity->e.renderfx & RF_ALPHA_FADE)
 			{
 				if (backEnd.currentEntity->e.shaderRGBA[3] < 255)
-				{
+				{//JKEnhanced: only the base stage - forcing an alpha blend onto env/specular/glow stages
+				 //painted them over the body (a faded deathtrooper went grey chrome)
+					if (alphaFadeDrawn)
+						break;
+					alphaFadeDrawn = true;
 					stateBits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
 					forceAlphaGen = AGEN_ENTITY;
 				}
@@ -1791,6 +1808,11 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 			color[1] =
 			color[2] = powf(2.0f, r_cameraExposure->value);
 			color[3] = 10.0f;
+			if (backEnd.currentEntity && (backEnd.currentEntity->e.renderfx & RF_DISTORTION)
+				&& backEnd.currentEntity->e.shaderRGBA[3] < 255)
+			{//JKEnhanced: entity alpha below 255 sets the refraction depth (0-20 units; the saboteur cloak scales it with movement)
+				color[3] = 20.0f * backEnd.currentEntity->e.shaderRGBA[3] / 255.0f;
+			}
 			uniformDataWriter.SetUniformVec4(UNIFORM_COLOR, color);
 			uniformDataWriter.SetUniformVec2(UNIFORM_AUTOEXPOSUREMINMAX, tr.refdef.autoExposureMinMax);
 			uniformDataWriter.SetUniformVec3(UNIFORM_TONEMINAVGMAXLINEAR, tr.refdef.toneMinAvgMaxLinear);
@@ -1852,7 +1874,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input, const VertexArrays
 			samplerBindingsWriter.AddStaticImage(srcFbo->colorImage[0], TB_COLORMAP);
 			samplerBindingsWriter.AddStaticImage(tr.renderDepthImage, TB_SHADOWMAP);
 			qboolean autoExposure = (qboolean)(r_autoExposure->integer || r_forceAutoExposure->integer);
-			uniformDataWriter.SetUniformFloat(UNIFORM_CHROMATICABERRATIONDELTA, r_refractionChromaticAberration->value);
+			//JKEnhanced: a refracting entity (cloak) gets a third of the colour split - full strength reads as a rainbow
+			uniformDataWriter.SetUniformFloat(UNIFORM_CHROMATICABERRATIONDELTA, r_refractionChromaticAberration->value
+				* (entityRefractionDrawn ? 0.33f : 1.0f));
 
 			if (autoExposure)
 				samplerBindingsWriter.AddStaticImage(tr.calcLevelsImage, TB_LEVELSMAP);
