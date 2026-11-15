@@ -27,6 +27,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "wp_saber.h"
 #include "g_vehicles.h"
 #include "../cgame/cg_local.h"
+#include "g_difficulty.h"
+#include "g_force.h"
 #if !defined(RUFL_HSTRING_INC)
 	#include "../Rufl/hstring.h"
 #endif
@@ -91,6 +93,7 @@ stringID_table_t FPTable[] =
 	//new bonus powers
 	ENUM2STRING(FP_INSANITY),
 	ENUM2STRING(FP_STASIS),
+	ENUM2STRING(FP_REPULSE),
 	{ "",	-1 }
 };
 
@@ -520,6 +523,15 @@ static void ParseAnimationEvtBlock(int glaIndex, unsigned short modelIndex, cons
 		curAnimEvent = CG_CheckAnimFrameForEventType( animEvents, keyFrame, eventType, modelIndex );
 		if ( curAnimEvent == -1 )
 		{//this anim frame doesn't already have an event of this type on it
+			if ( lastAnimEvent >= Q_min( MAX_ANIM_EVENTS, 255 ) - 1 )
+			{//full (the count is an unsigned char: past 255 it wrapped to 0 and overwrote the first events);
+			 //keep the last slot clear as the end-of-list marker
+#ifndef FINAL_BUILD
+				Com_Printf( S_COLOR_YELLOW"WARNING: %s: too many anim events, skipping the rest\n", aeb_filename );
+#endif
+				SkipRestOfLine( text_p );
+				continue;
+			}
 			curAnimEvent = lastAnimEvent;
 		}
 
@@ -1374,17 +1386,15 @@ void NPC_PrecacheAnimationCFG( const char *NPC_type )
 	COM_EndParseSession(  );
 }
 
-extern int NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type );
+extern uint64_t NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type );
 void NPC_PrecacheWeapons( team_t playerTeam, int spawnflags, char *NPCtype )
 {
-	int weapons = NPC_WeaponsForTeam( playerTeam, spawnflags, NPCtype );
+	uint64_t weapons = NPC_WeaponsForTeam( playerTeam, spawnflags, NPCtype );
 	gitem_t	*item;
-	// "weapons" is a 32-bit int bitmask (see NPC_WeaponsForTeam) - shifting by >=32 is UB and
-	// aliases back to a low bit on x86 (e.g. 1<<35 behaves as 1<<3/WP_BLASTER), so the loop
-	// must never reach weapon_t values at or above 32.
-	for ( int curWeap = WP_SABER; curWeap < WP_NUM_WEAPONS && curWeap < 32; curWeap++ )
+	// "weapons" is a 64-bit bitmask (see NPC_WeaponsForTeam; was a 32-bit int, so Z-6/cycler/custom never worked)
+	for ( int curWeap = WP_SABER; curWeap < WP_NUM_WEAPONS && curWeap < 64; curWeap++ )
 	{
-		if ( (weapons & ( 1 << curWeap )) )
+		if ( (weapons & ( 1ULL << curWeap )) )
 		{
 			item = FindItemForWeapon( ((weapon_t)(curWeap)) );	//precache the weapon
 			CG_RegisterItemSounds( (item-bg_itemlist) );
@@ -3254,6 +3264,26 @@ qboolean NPC_ParseParms( const char *NPCName, gentity_t *NPC )
 				continue;
 			}
 
+			// guardStages — boss health stages, each only lost on a guard break (0 = default, 1 = none)
+			if ( !Q_stricmp( token, "guardStages" ) )
+			{
+				if ( COM_ParseInt( &p, &n ) )
+				{
+					SkipRestOfLine( &p );
+					continue;
+				}
+				if ( n < 0 || n > 10 )
+				{
+					gi.Printf( S_COLOR_YELLOW"WARNING: bad %s in NPC '%s'\n", token, NPCName );
+					continue;
+				}
+				if ( NPC->NPC )
+				{
+					NPC->NPC->guardStages = n;
+				}
+				continue;
+			}
+
 			// fullName
 			if ( !Q_stricmp( token, "fullName" ) )
 			{
@@ -4368,12 +4398,8 @@ Ghoul2 Insert End
 	// the .npc file supplied maxGuard/guardRegen explicitly.
 	if ( NPC->NPC && !parsingPlayer && NPC->client )
 	{
-		const qboolean guardBoss = (qboolean)( (NPC->NPC->aiFlags&NPCAI_BOSS_CHARACTER)
-			|| NPC->client->NPC_class == CLASS_DESANN
-			|| NPC->client->NPC_class == CLASS_TAVION
-			|| NPC->client->NPC_class == CLASS_ALORA
-			|| NPC->client->NPC_class == CLASS_KYLE
-			|| NPC->client->NPC_class == CLASS_SHADOWTROOPER );
+		extern qboolean G_IsSaberBoss( const gentity_t *ent, qboolean includeElites );
+		const qboolean guardBoss = G_IsSaberBoss( NPC, qtrue );
 		if ( NPC->NPC->guardMax <= 0
 			&& NPC->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_0 )
 		{
@@ -4387,12 +4413,36 @@ Ghoul2 Insert End
 			{
 				NPC->NPC->guardMax = NPC->NPC->guardMax * 3 / 2;
 			}
+			//ext_data/difficulty.cfg
+			NPC->NPC->guardMax = Q_max( 1, (int)( NPC->NPC->guardMax * G_Difficulty()->guardScale ) );
 		}
 		if ( NPC->NPC->guardMax > 0 && NPC->NPC->guardRegen <= 0 )
 		{
 			NPC->NPC->guardRegen = guardBoss ? 14 : 8;
 		}
 		NPC->NPC->guard = NPC->NPC->guardMax;
+
+		// Bosses get Repulse for their stage transitions unless the .npc gave a level
+		if ( G_IsSaberBoss( NPC, qfalse ) && NPC->client->ps.forcePowerLevel[FP_REPULSE] <= FORCE_LEVEL_0 )
+		{
+			NPC->client->ps.forcePowersKnown |= ( 1 << FP_REPULSE );
+			NPC->client->ps.forcePowerLevel[FP_REPULSE] = FORCE_LEVEL_3;
+		}
+		if ( G_IsSaberBoss( NPC, qfalse ) )
+		{//stage-break shockwave (G_BossStageClamp)
+			G_EffectIndex( "scepter/slam" );
+			//JKEnhanced 4B: bosses get a bigger Force budget for the NPC pool (force.cfg npc block).
+			//Spawn only - a loaded save keeps the scaled values.
+			const forceTuning_t *ft = G_ForceTuning();
+			if ( NPC->client->ps.forcePowerMax <= 0 )
+			{
+				NPC->client->ps.forcePowerMax = FORCE_POWER_MAX;
+			}
+			NPC->client->ps.forcePowerMax = Q_max( 1, (int)( NPC->client->ps.forcePowerMax * ft->bossPoolScale ) );
+			const int regenMs = NPC->client->ps.forcePowerRegenRate > 0 ? NPC->client->ps.forcePowerRegenRate : 100;
+			NPC->client->ps.forcePowerRegenRate = Q_max( 1, (int)( regenMs / ft->bossRegenScale ) );
+			NPC->client->ps.forcePower = NPC->client->ps.forcePowerMax;
+		}
 	}
 
 	return qtrue;

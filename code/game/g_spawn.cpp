@@ -335,6 +335,10 @@ field_t fields[] = {
 	{"NPC_target2", FOFS(target2), F_LSTRING},//NPC_spawner only
 	{"NPC_target4", FOFS(target4), F_LSTRING},//NPC_spawner only
 	{"NPC_subduetarget", FOFS(NPC_subduetarget), F_LSTRING},//NPC_spawner only: fired instead of NPC_target when taken alive
+	{"bossbar", FOFS(bossbar), F_LSTRING},//NPC_spawner: boss bar name (JKEnhanced)
+	{"stage1target", FOFS(stage1target), F_LSTRING},//NPC_spawner: fired as a staged boss loses stage 1 / 2 / 3
+	{"stage2target", FOFS(stage2target), F_LSTRING},
+	{"stage3target", FOFS(stage3target), F_LSTRING},
 	{"squadname", FOFS(squadname), F_LSTRING},//NPC_spawner only: NPCs sharing it form a squad
 	{"nonlethal", FOFS(nonlethal), F_INT},//NPC_spawner only: 0 default, 1 never taken alive, 2 always taken alive when eligible
 	{"NPC_type", FOFS(NPC_type), F_LSTRING},

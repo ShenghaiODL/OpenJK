@@ -75,6 +75,10 @@ static const save_field_t savefields_gEntity[] =
 	{strFOFS(NPC_target),		F_STRING},
 	{strFOFS(NPC_subduetarget),	F_STRING},
 	{strFOFS(squadname),		F_STRING},
+	{strFOFS(bossbar),			F_STRING},
+	{strFOFS(stage1target),		F_STRING},
+	{strFOFS(stage2target),		F_STRING},
+	{strFOFS(stage3target),		F_STRING},
 	{strFOFS(ownername),		F_STRING},
 	{strFOFS(lastEnemy),		F_GENTITY},
 	{strFOFS(behaviorSet),		F_BEHAVIORSET},
@@ -1148,6 +1152,15 @@ static void ReadGEntities(qboolean qbAutosave)
 		if (pEnt->m_pVehicle)	// will be qtrue/qfalse
 		{
 			Vehicle_t tempVehicle;
+
+			// load this vehicle type into g_vehicleInfo before the saved vehicle's pointers are fixed up:
+			// a console-spawned vehicle (npc spawn vehicle swoop) isn't in the map's precache, so loading
+			// a save with one crashed (OpenJK PR #1071, issue #757)
+			extern int BG_VehicleGetIndex( const char *vehicleName );
+			if ( pEnt->NPC_type && pEnt->NPC_type[0] )
+			{
+				BG_VehicleGetIndex( pEnt->NPC_type );
+			}
 
 			EvaluateFields(savefields_gVHIC, &tempVehicle,(byte *)pEntOriginal->m_pVehicle, INT_ID('V','H','I','C'));
 

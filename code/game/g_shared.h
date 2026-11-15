@@ -1257,6 +1257,10 @@ Ghoul2 Insert End
 	char		*NPC_subduetarget;	//fired instead of NPC_target when taken alive (non-lethal)
 	char		*squadname;			//NPCs sharing a squadname form a squad at spawn
 	int			nonlethal;			//0 default, 1 never (must die properly), 2 prefer (always taken alive when eligible)
+	char		*bossbar;			//boss bar name: set = this boss gets the bar (spawner key, or ICARUS SET_BOSSBAR)
+	char		*stage1target;		//fired as a staged boss loses stage 1 / 2 / 3 (spawner keys)
+	char		*stage2target;
+	char		*stage3target;
 
 //Variables used by movers (most likely exclusively by them)
 	moverState_t moverState;
@@ -1489,6 +1493,10 @@ Ghoul2 Insert End
 		saved_game.write<int32_t>(NPC_subduetarget);
 		saved_game.write<int32_t>(squadname);
 		saved_game.write<int32_t>(nonlethal);
+		saved_game.write<int32_t>(bossbar);
+		saved_game.write<int32_t>(stage1target);
+		saved_game.write<int32_t>(stage2target);
+		saved_game.write<int32_t>(stage3target);
 		saved_game.write<int32_t>(moverState);
 		saved_game.write<int32_t>(soundPos1);
 		saved_game.write<int32_t>(sound1to2);
@@ -1693,6 +1701,10 @@ Ghoul2 Insert End
 		saved_game.read<int32_t>(NPC_subduetarget);
 		saved_game.read<int32_t>(squadname);
 		saved_game.read<int32_t>(nonlethal);
+		saved_game.read<int32_t>(bossbar);
+		saved_game.read<int32_t>(stage1target);
+		saved_game.read<int32_t>(stage2target);
+		saved_game.read<int32_t>(stage3target);
 		saved_game.read<int32_t>(moverState);
 		saved_game.read<int32_t>(soundPos1);
 		saved_game.read<int32_t>(sound1to2);

@@ -265,6 +265,7 @@ typedef enum //# setType_e
 	SET_FORCE_DRAIN,//## %t="BOOL_TYPES" # Causes this ent to start force draining their enemy at whatever level of force drain they have (will drain until scripted to stop)
 	SET_FORCE_INSANITY,
 	SET_FORCE_STASIS,
+	SET_FORCE_REPULSE,
 	
 	SET_WINTER_GEAR, //## %t="BOOL_TYPES" # Set the player to wear his/her winter gear (skins torso_g1 and lower_e1), or restore the default skins.
 	SET_NO_ANGLES, //## %t="BOOL_TYPES" # This NPC/player will not have any bone angle overrides or pitch or roll (should only be used in cinematics)
@@ -304,6 +305,7 @@ typedef enum //# setType_e
 	SET_FORCE_SIGHT_LEVEL,//## %t="FORCE_LEVELS" # Change force power level
 	SET_FORCE_INSANITY_LEVEL,
 	SET_FORCE_STASIS_LEVEL,
+	SET_FORCE_REPULSE_LEVEL,
 	SET_SABER1_COLOR1,		//## %t="SABER_COLORS" # Set color of first blade of first saber
 	SET_SABER1_COLOR2,		//## %t="SABER_COLORS" # Set color of second blade of first saber
 	SET_SABER2_COLOR1,		//## %t="SABER_COLORS" # Set color of first blade of first saber
@@ -340,6 +342,10 @@ typedef enum //# setType_e
 	//non-lethal
 	SET_SUBDUESCRIPT,//## %s="NULL" !!"W:\game\base\scripts\!!#*.txt" # Script to run when taken alive instead of killed
 	SET_SUBDUED,//## %t="BOOL_TYPES" # (get only) NPC has been taken alive (maimed, knocked out, surrendered...)
+
+	//bosses (JKEnhanced 4B.9)
+	SET_BOSSBAR,//## %s="NULL" # Show the boss bar for this NPC with this name ("none" hides it)
+	SET_BOSSSTAGE,//## %d="0" # (get only) staged boss: the stage they are in, 1 = first (0 = no stages)
 
 	//# #eol
 	SET_

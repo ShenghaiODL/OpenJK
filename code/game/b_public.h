@@ -403,6 +403,7 @@ public:
 	int			guardBreakTime;		//while level.time < this, NPC is guard-broken (can't parry/evade, takes bonus saber damage)
 	int			lastBlockDir;		//saberBlocked direction of last blocked attack (predictability scaling)
 	int			sameBlockDirCount;	//consecutive same-direction blocked attacks
+	int			guardStages;		//boss guard stages from the .npc "guardStages" key; 0 = default (g_bossGuardStages for bosses, else 1)
 
 	// Non-lethal / neutral state (NPC_neutral.cpp)
 	int			neutralState;		//neutralState_t: out of the fight but alive
@@ -570,6 +571,7 @@ public:
 		saved_game.write<int32_t>(guardBreakTime);
 		saved_game.write<int32_t>(lastBlockDir);
 		saved_game.write<int32_t>(sameBlockDirCount);
+		saved_game.write<int32_t>(guardStages);
 		saved_game.write<int32_t>(neutralState);
 		saved_game.write<int32_t>(neutralHow);
 		saved_game.write<int32_t>(neutralTime);
@@ -727,6 +729,7 @@ public:
 		saved_game.read<int32_t>(guardBreakTime);
 		saved_game.read<int32_t>(lastBlockDir);
 		saved_game.read<int32_t>(sameBlockDirCount);
+		saved_game.read<int32_t>(guardStages);
 		saved_game.read<int32_t>(neutralState);
 		saved_game.read<int32_t>(neutralHow);
 		saved_game.read<int32_t>(neutralTime);

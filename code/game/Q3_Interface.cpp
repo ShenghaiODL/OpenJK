@@ -530,6 +530,7 @@ stringID_table_t setTable[] =
 	ENUM2STRING(SET_FORCE_SIGHT_LEVEL),
 	ENUM2STRING(SET_FORCE_INSANITY_LEVEL),
 	ENUM2STRING(SET_FORCE_STASIS_LEVEL),
+	ENUM2STRING(SET_FORCE_REPULSE_LEVEL),
 	ENUM2STRING(SET_SABER1_COLOR1),
 	ENUM2STRING(SET_SABER1_COLOR2),
 	ENUM2STRING(SET_SABER2_COLOR1),
@@ -598,6 +599,7 @@ stringID_table_t setTable[] =
 	ENUM2STRING(SET_FORCE_DRAIN),
 	ENUM2STRING(SET_FORCE_INSANITY),
 	ENUM2STRING(SET_FORCE_STASIS),
+	ENUM2STRING(SET_FORCE_REPULSE),
 	ENUM2STRING(SET_WINTER_GEAR),
 	ENUM2STRING(SET_NO_ANGLES),
 	ENUM2STRING(SET_SABER_ORIGIN),
@@ -606,6 +608,8 @@ stringID_table_t setTable[] =
 	ENUM2STRING(SET_RADAR_OBJECT),
 	ENUM2STRING(SET_SUBDUESCRIPT),
 	ENUM2STRING(SET_SUBDUED),
+	ENUM2STRING(SET_BOSSBAR),
+	ENUM2STRING(SET_BOSSSTAGE),
 
 	{ "",	SET_ }
 };
@@ -8838,6 +8842,19 @@ void	CQuake3GameInterface::Set( int taskID, int entID, const char *type_name, co
 			DebugPrint( WL_ERROR, "SetBehaviorSet: Invalid bSet %s\n", type_name );
 		break;
 
+	case SET_BOSSBAR://JKEnhanced 4B.9
+		{
+			gentity_t *boss = &g_entities[entID];
+			if ( !boss->NPC )
+			{
+				DebugPrint( WL_WARNING, "Q3_Set: SET_BOSSBAR, %s not an NPC\n", boss->targetname );
+				break;
+			}
+			const char *name = (const char *)data;
+			boss->bossbar = ( !name || !name[0] || !Q_stricmp( name, "none" ) || !Q_stricmp( name, "NULL" ) ) ? NULL : G_NewString( name );
+		}
+		break;
+
 	case SET_NO_MINDTRICK:
 		if(!Q_stricmp("true", ((char *)data)))
 			Q3_SetNoMindTrick( entID, qtrue);
@@ -9571,6 +9588,7 @@ extern void LockDoors(gentity_t *const ent);
 	case SET_FORCE_SIGHT_LEVEL:
 	case SET_FORCE_INSANITY_LEVEL:
 	case SET_FORCE_STASIS_LEVEL:
+	case SET_FORCE_REPULSE_LEVEL:
 		int_data = atoi((char *) data);
 		Q3_SetForcePowerLevel( entID, (toSet-SET_FORCE_HEAL_LEVEL), int_data );
 		break;
@@ -9664,6 +9682,9 @@ extern void Saboteur_Cloak( gentity_t *self );
 		break;
 	case SET_FORCE_STASIS:
 		Q3_SetForcePower( entID, FP_STASIS, (qboolean)(Q_stricmp("true",(char*)data)==0) );
+		break;
+	case SET_FORCE_REPULSE:
+		Q3_SetForcePower( entID, FP_REPULSE, (qboolean)(Q_stricmp("true",(char*)data)==0) );
 		break;
 
 
@@ -10446,6 +10467,12 @@ int		CQuake3GameInterface::GetFloat( int entID, const char *name, float *value )
 	case SET_SUBDUED://## %t="BOOL_TYPES" # NPC has been taken alive
 		*value = ( ent->NPC && ent->NPC->neutralState != 0 ) ? 1 : 0;
 		break;
+	case SET_BOSSSTAGE://JKEnhanced 4B.9: staged boss, the stage they are in (1 = first, 0 = no stages)
+		{
+			extern int G_BossStage( const gentity_t *ent );
+			*value = G_BossStage( ent );
+		}
+		break;
 	case SET_NOAVOID://## %t="BOOL_TYPES" # Will not avoid other NPCs or architecture
 		if ( ent->NPC == NULL )
 		{
@@ -10841,6 +10868,13 @@ int		CQuake3GameInterface::GetString( int entID, const char *name, char **value 
 		break;
 	case SET_SUBDUESCRIPT://## %s="NULL" !!"W:\game\base\scripts\!!#*.txt" # Script to run when taken alive instead of killed
 		*value = ent->behaviorSet[BSET_SUBDUE];
+		break;
+	case SET_BOSSBAR://JKEnhanced 4B.9
+		if ( !ent->bossbar )
+		{
+			return false;
+		}
+		*value = ent->bossbar;
 		break;
 
 	//# #sep Standard strings
