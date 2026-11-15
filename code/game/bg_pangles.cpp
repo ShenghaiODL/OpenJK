@@ -722,10 +722,32 @@ qboolean PM_AdjustAnglesForBackAttack( gentity_t *ent, usercmd_t *ucmd )
 	return qfalse;
 }
 
+/*
+Saber lock camera (JKEnhanced saber rules)
+
+In a lock the body stays on the opponent, but the player's mouse still moves: that movement
+orbits the third-person camera instead of being thrown away (cg_view.cpp adds these to the
+camera angles and eases them back out afterwards). When the lock ends the view is re-synced, so
+the character keeps facing the way it faced rather than snapping round to where the camera looked.
+*/
+float	g_saberLockCamYaw = 0.0f;
+float	g_saberLockCamPitch = 0.0f;
+int		g_saberLockCamTime = 0;
+static qboolean s_saberLockCam = qfalse;
+
 qboolean PM_AdjustAnglesForSaberLock( gentity_t *ent, usercmd_t *ucmd )
 {
 	if ( ent->client->ps.saberLockTime > level.time )
 	{
+		if ( ent->s.number == 0 && WP_SaberRules() )
+		{//how far the mouse has turned since the view was pinned
+			const playerState_t *ps = &ent->client->ps;
+			g_saberLockCamYaw = AngleSubtract( SHORT2ANGLE( ucmd->angles[YAW] + ps->delta_angles[YAW] ), ps->viewangles[YAW] );
+			g_saberLockCamPitch = Com_Clamp( -40.0f, 50.0f,
+				AngleSubtract( SHORT2ANGLE( ucmd->angles[PITCH] + ps->delta_angles[PITCH] ), ps->viewangles[PITCH] ) );
+			g_saberLockCamTime = level.time;
+			s_saberLockCam = qtrue;
+		}
 		if ( ent->client->ps.viewEntity <= 0 || ent->client->ps.viewEntity >= ENTITYNUM_WORLD )
 		{//don't clamp angles when looking through a viewEntity
 			SetClientViewAngle( ent, ent->client->ps.viewangles );
@@ -733,6 +755,12 @@ qboolean PM_AdjustAnglesForSaberLock( gentity_t *ent, usercmd_t *ucmd )
 		ucmd->angles[PITCH] = ANGLE2SHORT( ent->client->ps.viewangles[PITCH] ) - ent->client->ps.delta_angles[PITCH];
 		ucmd->angles[YAW] = ANGLE2SHORT( ent->client->ps.viewangles[YAW] ) - ent->client->ps.delta_angles[YAW];
 		return qtrue;
+	}
+	if ( ent->s.number == 0 && s_saberLockCam )
+	{//the lock just ended: keep facing the same way (the camera eases back on its own)
+		s_saberLockCam = qfalse;
+		ent->client->ps.delta_angles[PITCH] = ( ANGLE2SHORT( ent->client->ps.viewangles[PITCH] ) - ucmd->angles[PITCH] ) & 0xffff;
+		ent->client->ps.delta_angles[YAW] = ( ANGLE2SHORT( ent->client->ps.viewangles[YAW] ) - ucmd->angles[YAW] ) & 0xffff;
 	}
 	return qfalse;
 }
@@ -1357,7 +1385,7 @@ qboolean G_OkayToLean( playerState_t *ps, usercmd_t *cmd, qboolean interruptOkay
 				&& !ps->legsAnimTimer//not in any held legs anim
 				&& !ps->torsoAnimTimer) //not in any held torso anim
 			)
-		&& !(cmd->buttons&(BUTTON_ATTACK|BUTTON_ALT_ATTACK|BUTTON_FORCE_LIGHTNING|BUTTON_USE_FORCE|BUTTON_FORCE_DRAIN|BUTTON_FORCEGRIP))//not trying to attack
+		&& !(cmd->buttons&(BUTTON_ATTACK|BUTTON_ALT_ATTACK|BUTTON_FORCE_LIGHTNING|BUTTON_USE_FORCE|BUTTON_FORCE_DRAIN|BUTTON_FORCEGRIP|BUTTON_REPULSE))//not trying to attack
 		//&& (ps->forcePowersActive&(1<<FP_SPEED))
 		&& VectorCompare( ps->velocity, vec3_origin )//not moving
 		&& !cg_usingInFrontOf )//use button wouldn't be used for anything else

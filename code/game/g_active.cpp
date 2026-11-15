@@ -22,10 +22,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "g_local.h"
+#include "g_difficulty.h"
 #include "g_functions.h"
 #include "../cgame/cg_local.h"
 #include "Q3_Interface.h"
 #include "wp_saber.h"
+#include "g_force.h"
 #include "g_vehicles.h"
 #include "b_local.h"
 #include "g_navigator.h"
@@ -76,6 +78,7 @@ extern qboolean PM_LeapingSaberAnim( int anim );
 extern qboolean PM_SpinningSaberAnim( int anim );
 extern qboolean PM_SaberInAttack( int move );
 extern qboolean PM_SaberInParry( int move );
+extern qboolean PM_SaberInKnockaway( int move );
 extern void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlock );
 extern qboolean PM_KickingAnim( int anim );
 extern int PM_AnimLength( int index, animNumber_t anim );
@@ -112,6 +115,7 @@ extern qboolean G_JediInNormalAI( gentity_t *ent );
 extern qboolean PlayerAffectedByStasis( void );
 
 extern bool		in_camera;
+extern void		WP_SaberHitStopThink( gentity_t *ent, usercmd_t *ucmd );
 extern qboolean	player_locked;
 extern qboolean	stop_icarus;
 extern qboolean	MatrixMode;
@@ -770,6 +774,10 @@ void DoImpact( gentity_t *self, gentity_t *other, qboolean damageSelf, trace_t *
 	else
 	{
 		magnitude = VectorLength( velocity ) * my_mass / 50;
+	}
+	{//JKEnhanced 4B.4: thrown by Repulse into a wall / someone: that's where its damage comes from
+		extern void G_RepulseSlam( gentity_t *self, gentity_t *other, trace_t *trace, float speed );
+		G_RepulseSlam( self, other, trace, VectorLength( velocity ) );
 	}
 
 	//if vehicle hit another vehicle, factor in their data, too
@@ -1754,7 +1762,7 @@ void ClientTimerActions( gentity_t *ent, int msec ) {
 		// passive shield regen — player only, out of combat, caps at regen threshold
 		if ( ent->health > 0 && ent->s.number < MAX_CLIENTS )
 		{
-			int regenCap = ( g_spskill->integer >= 3 ) ? 50 : 75;
+			int regenCap = G_IsJediMaster() ? 50 : 75;
 			if ( client->ps.stats[STAT_ARMOR] < regenCap
 				&& level.time > ent->painDebounceTime + 5000
 				&& level.time > ent->regenDebounceTime )
@@ -2032,7 +2040,10 @@ gentity_t *G_KickTrace( gentity_t *ent, vec3_t kickDir, float kickDist, vec3_t k
 					if ( hitEnt->takedamage )
 					{//hurt it
 						G_Damage( hitEnt, ent, ent, kickDir, trace.endpos, kickDamage, DAMAGE_NO_KNOCKBACK|DAMAGE_NO_KILL|DAMAGE_NONLETHAL, MOD_MELEE );
-						G_DamageGuard( hitEnt, ent, 20 );	//kicks chunk saber guard
+						if ( !WP_SaberRules() )
+						{//(saber rules: the cost is paid below, and only by a raised guard)
+							G_DamageGuard( hitEnt, ent, 20 );	//kicks chunk saber guard
+						}
 					}
 					//do kick hit sound and impact effect
 					if ( TIMER_Done( ent, "kickSoundDebounce" ) )
@@ -2053,9 +2064,26 @@ gentity_t *G_KickTrace( gentity_t *ent, vec3_t kickDir, float kickDist, vec3_t k
 						TIMER_Set( ent, "kickSoundDebounce", 2000 );
 					}
 					TIMER_Set( hitEnt, "kickedDebounce", 1000 );
+					if ( WP_SaberRules() && hitEnt->client && hitEnt->health > 0 && hitEnt->client->ps.weapon == WP_SABER
+						&& hitEnt->client->ps.SaberActive() && !PM_InKnockDown( &hitEnt->client->ps ) )
+					{//JKEnhanced saber rules: a raised guard takes the kick on the blade and pays Force for it;
+					 //a kick that catches a saber fighter mid-swing knocks them Open
+						if ( WP_SaberGuardUp( hitEnt ) )
+						{
+							WP_SaberGuardCost( hitEnt, ent, 20 );
+							WP_SaberBlockNonRandom( hitEnt, trace.endpos, qfalse );
+							return hitEnt;
+						}
+						if ( WP_SaberSwingRunTime( hitEnt ) >= 0 )
+						{
+							extern cvar_t *g_saberOpenMedium;
+							WP_SaberSetOpen( hitEnt, g_saberOpenMedium->integer );
+						}
+					}
 					if ( hitEnt->NPC && hitEnt->health > 0 && hitEnt->client->ps.weapon == WP_SABER && hitEnt->client->ps.SaberActive()
-						&& hitEnt->NPC->guardMax > 0 && hitEnt->NPC->guard * 2 > hitEnt->NPC->guardMax
-						&& hitEnt->NPC->guardBreakTime <= level.time
+						&& ( WP_SaberRules() ? WP_SaberGuardUp( hitEnt )//saber rules: only a raised guard takes it
+							: ( hitEnt->NPC->guardMax > 0 && hitEnt->NPC->guard * 2 > hitEnt->NPC->guardMax
+								&& hitEnt->NPC->guardBreakTime <= level.time ) )
 						&& !PM_SaberInAttack( hitEnt->client->ps.saberMove ) && !PM_InKnockDown( &hitEnt->client->ps ) )
 					{//a saber fighter with their guard still up takes the kick on the blade: it costs them
 					 //guard (above), but doesn't put them down until the guard is half gone
@@ -2633,9 +2661,17 @@ qboolean G_CheckClampUcmd( gentity_t *ent, usercmd_t *ucmd )
 		return G_SpyTakedownUpdate( ent, ucmd );
 	}
 
+	if ( ent->s.number == 0 && !TIMER_Done( ent, "parryStaggered" ) )
+	{//JKEnhanced: knocked off balance (an NPC's perfect parry, or a broken block against a heavy
+	 //attack): no attacking or blocking until it passes
+		ucmd->buttons &= ~( BUTTON_ATTACK | BUTTON_ALT_ATTACK | BUTTON_SABERBLOCK );
+	}
+
 	if ( ent->s.number == 0 && (ucmd->buttons&BUTTON_ATTACK) && !TIMER_Done( ent, "riposteWindow" )
-		&& ent->client->ps.weapon == WP_SABER && PM_SaberInParry( ent->client->ps.saberMove ) )
+		&& ent->client->ps.weapon == WP_SABER
+		&& ( PM_SaberInParry( ent->client->ps.saberMove ) || PM_SaberInKnockaway( ent->client->ps.saberMove ) ) )
 	{//riposte: attacking right off a block skips the rest of the parry, so the swing starts now
+	 //(a perfect parry plays a knockaway, so that counts too)
 		TIMER_Remove( ent, "riposteWindow" );
 		ent->client->ps.weaponTime = 0;
 		ent->client->ps.saberMove = ent->client->ps.saberMoveNext = LS_READY;
@@ -4084,6 +4120,7 @@ qboolean G_CheckClampUcmd( gentity_t *ent, usercmd_t *ucmd )
 			|| (ucmd->buttons&BUTTON_FORCEGRIP)
 			|| (ucmd->buttons&BUTTON_FORCE_LIGHTNING)
 			|| (ucmd->buttons&BUTTON_FORCE_DRAIN)
+			|| (ucmd->buttons&BUTTON_REPULSE)
             || (ucmd->buttons&BUTTON_SABERTHROW)
 			|| ucmd->upmove )
 		{//stop the anim
@@ -4813,6 +4850,14 @@ void	ClientAlterSpeed(gentity_t *ent, usercmd_t *ucmd, qboolean	controlledByPlay
 			}
 		}
 	}
+	if ( G_SpeedLevelPS( &client->ps ) && client->ps.speed > 0 )
+	{//JKEnhanced 4B.6: Speed's Burst (every level) - quicker on your feet, on top of the slow-mo
+		client->ps.speed *= G_ForceTuning()->speedRunPct / 100.0f;
+	}
+	if ( client->ps.speed > 0 )
+	{//JKEnhanced 4B.7: slowed by a Stasis cone (saber users; everyone else is frozen outright)
+		client->ps.speed *= G_StasisSlowScale( ent );
+	}
 	if ( client->NPC_class == CLASS_ATST && client->ps.legsAnim == BOTH_RUN1START )
 	{//HACK: when starting to move as atst, ramp up speed
 		//float animLength = PM_AnimLength( client->clientInfo.animFileIndex, (animNumber_t)client->ps.legsAnim);
@@ -5266,7 +5311,8 @@ extern cvar_t	*g_skippingcin;
 					}
 				}
 				else if ( groundEnt->client->ps.groundEntityNum != ENTITYNUM_NONE &&
-							groundEnt->health > 0 && !PM_InRoll( &groundEnt->client->ps )
+							groundEnt->health > 0 && !G_IsDownedBody( groundEnt )//JKEnhanced: out cold is a body, not someone to bounce off
+							&& !PM_InRoll( &groundEnt->client->ps )
 							&& !(groundEnt->client->ps.eFlags&EF_LOCKED_TO_WEAPON)
 							&& !(groundEnt->client->ps.eFlags&EF_HELD_BY_RANCOR)
 							&& !(groundEnt->client->ps.eFlags&EF_HELD_BY_WAMPA)
@@ -5609,6 +5655,9 @@ extern cvar_t	*g_skippingcin;
 			cg.overrides.thirdPersonVertOffset = 200;
 		}
 	}
+
+	//JKEnhanced: sabers bound blade-on-blade hold still (and part when it's over, or the player breaks out)
+	WP_SaberHitStopThink( ent, ucmd );
 
 	//play/stop any looping sounds tied to controlled movement
 	G_CheckMovingLoopingSounds( ent, ucmd );

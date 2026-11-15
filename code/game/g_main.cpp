@@ -38,6 +38,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "qcommon/ojk_saved_game_helper.h"
 #include "qcommon/game_version.h"
+#include "g_difficulty.h"
+#include "g_force.h"
 
 extern void WP_SaberLoadParms( void );
 extern qboolean G_PlayerSpawned( void );
@@ -194,10 +196,61 @@ cvar_t	*g_perfectParryCooldownMissile;
 cvar_t	*g_forceStaggerLockoutScale;
 cvar_t	*g_heavyAttackCooldown;
 cvar_t	*g_heavyAttackSpeedScale;
+// JKEnhanced combat feel (Step 3A): parry window scaling, perfect-parry reward, heavy-attack counter
+cvar_t	*g_perfectParryHeavyScale;
+cvar_t	*g_perfectParryMissileScale;
+cvar_t	*g_debugParry;
+cvar_t	*g_debugBlock;
+cvar_t	*g_blockReleaseGrace;
+cvar_t	*g_saberDeterministic;
+cvar_t	*g_blockCancelCost;
+cvar_t	*g_blockCancelWindow;
+cvar_t	*g_blockCancelCooldown;
+cvar_t	*g_saberClashBlock;
+cvar_t	*g_saberClashWeight;
+cvar_t	*g_saberBlockThreat;
+cvar_t	*g_saberRules;
+cvar_t	*g_saberOpenShort;
+cvar_t	*g_saberOpenMedium;
+cvar_t	*g_saberOpenLong;
+cvar_t	*g_saberGuardRegenPause;
+cvar_t	*g_saberHeavyStopCost;
+cvar_t	*g_saberCutDepth;
+cvar_t	*g_saberHeavyWindup;
+cvar_t	*g_saberLockTapCost;
+cvar_t	*g_saberHitStop;
+cvar_t	*g_saberCamKick;
+cvar_t	*g_saberTransitionCap;
+cvar_t	*g_saboteurCloakV2;
+cvar_t	*g_bossGuardStages;
+cvar_t	*g_bossBarAll;
+cvar_t	*g_bossStageRecover;
+cvar_t	*g_bossBurstRadius;
+cvar_t	*g_perfectRiposteTime;
+cvar_t	*g_perfectParryGuardDamage;
+cvar_t	*g_perfectParryStagger;
+cvar_t	*g_perfectParryForceGain;
+cvar_t	*g_heavyBlockStagger;
+cvar_t	*g_heavyBlockDamage;
+cvar_t	*g_heavyBlockForceCost;
+cvar_t	*g_heavyAttackSound;
+cvar_t	*g_guardBreakSound;
+cvar_t	*g_guardBreakDamage;
+cvar_t	*g_lightningDamage;
+cvar_t	*g_bossLightningBreak;
+cvar_t	*g_npcForcePool;
+cvar_t	*g_scepterBeamDamage;
+cvar_t	*g_playerMaxStep;
+cvar_t	*g_ledgeAssist;
+cvar_t	*g_debugForce;
+cvar_t	*g_debugFrameRate;
+cvar_t	*g_blockFailSound;
+cvar_t	*g_heavyAttackThreshold;
 cvar_t	*g_saberRealisticCombat;
 cvar_t	*debug_subdivision;
 cvar_t	*g_saberDamageCapping;
 cvar_t	*g_saberMaxPlayerHitPct;
+cvar_t	*g_saberPlayerDamageScale;
 cvar_t	*g_saberMoveSpeed;
 cvar_t	*g_saberAnimSpeed;
 cvar_t	*g_saberAutoAim;
@@ -710,11 +763,62 @@ void G_InitCvars( void ) {
 	g_forceStaggerLockoutScale = gi.cvar( "g_forceStaggerLockoutScale", "0.6", CVAR_ARCHIVE );//when a push/pull/repulse/grip actually staggers someone, scale the caster's own follow-up attack lockout by this much of the victim's recovery time, so they can't just walk up and get free hits
 	g_heavyAttackCooldown = gi.cvar( "g_heavyAttackCooldown", "7000", CVAR_ARCHIVE );//minimum ms between one NPC's telegraphed heavy attacks
 	g_heavyAttackSpeedScale = gi.cvar( "g_heavyAttackSpeedScale", "0.7", CVAR_ARCHIVE );//playback speed multiplier for a forced heavy attack's telegraphed windup only (the strike itself plays at normal speed)
+	// perfect parry: the window (g_perfectParryWindow) is scaled by the attacker's style and swing speed
+	g_perfectParryHeavyScale = gi.cvar( "g_perfectParryHeavyScale", "1.5", CVAR_ARCHIVE );//window x this vs a telegraphed heavy attack or kata
+	g_perfectParryMissileScale = gi.cvar( "g_perfectParryMissileScale", "1.0", CVAR_ARCHIVE );//window x this vs blaster bolts
+	g_debugParry = gi.cvar( "g_debugParry", "0", 0 );//1 = print each parry check: tap timing vs the window
+	g_debugBlock = gi.cvar( "g_debugBlock", "0", 0 );//1 = when a saber hit damages the player while blocking, print why the block didn't stop it
+	g_saberDeterministic = gi.cvar( "g_saberDeterministic", "1", CVAR_ARCHIVE );//1 = saber clashes resolve from player actions/visible state, not hidden dice (held blocks hold, Force wears you down; see wp_saber.cpp); 0 = stock rolls
+	g_blockCancelCost = gi.cvar( "g_blockCancelCost", "5", CVAR_ARCHIVE );//Force it costs to cancel your own live swing by pressing block (wind-up/bounce/recovery cancel free)
+	g_blockCancelWindow = gi.cvar( "g_blockCancelWindow", "300", CVAR_ARCHIVE );//ms into a live swing that block can still pull it back (after that you're committed)
+	g_blockCancelCooldown = gi.cvar( "g_blockCancelCooldown", "500", CVAR_ARCHIVE );//ms before another live swing can be cancelled
+	g_bossGuardStages = gi.cvar( "g_bossGuardStages", "3", CVAR_ARCHIVE );//bosses' health comes in this many stages: each needs a guard break to get through (1 = off)
+	g_bossBarAll = gi.cvar( "g_bossBarAll", "0", 0 );//testing: any saber boss gets the boss bar, not just ones a map / script opted in
+	g_bossStageRecover = gi.cvar( "g_bossStageRecover", "1500", CVAR_ARCHIVE );
+	g_bossBurstRadius = gi.cvar( "g_bossBurstRadius", "300", CVAR_ARCHIVE );//reach of a boss's Repulse-style burst when they lose a stage//ms a boss is untouchable after losing a stage (they push you back and regroup)
+	g_saberClashBlock = gi.cvar( "g_saberClashBlock", "1", CVAR_ARCHIVE );//1 = mid-swing, an enemy's (non-heavy) swing landing on you from the front is blocked by your own swing instead of trading hits
+	g_saberClashWeight = gi.cvar( "g_saberClashWeight", "1", 0 );//1 = in a clash the heavier style wins (Strong > Medium/Tavion/Dual/Staff > Fast): their swing bounces, yours carries on. 0 = your swing always becomes the block
+	g_saberBlockThreat = gi.cvar( "g_saberBlockThreat", "1", CVAR_ARCHIVE );//1 = the held block pose faces the nearest enemy swing (WASD when nobody's swinging). 0 = WASD only
+	g_saberRules = gi.cvar( "g_saberRules", "1", CVAR_ARCHIVE );//JKEnhanced "a blade in the way" (Saber_System_Concept.md): 1 = a raised guard stops every swing from the front and costs Force; with no guard up a blade that reaches the body cuts. 0 = the old rules
+	g_saberOpenShort = gi.cvar( "g_saberOpenShort", "400", 0 );//ms Open (off balance) after your swing is perfect-parried
+	g_saberOpenMedium = gi.cvar( "g_saberOpenMedium", "800", 0 );//ms Open after your heavy attack or kata is perfect-parried
+	g_saberOpenLong = gi.cvar( "g_saberOpenLong", "1500", 0 );//ms Open when a guard runs out of Force
+	g_saberGuardRegenPause = gi.cvar( "g_saberGuardRegenPause", "1000", 0 );//ms Force regen pauses after a guard stops a saber swing (holding guard never pauses it)
+	g_saberHeavyStopCost = gi.cvar( "g_saberHeavyStopCost", "50", 0 );//Force a guard pays to stop a heavy attack or kata (normal swings: stopCost per style in ext_data/saberanims.cfg)
+	g_saberCutDepth = gi.cvar( "g_saberCutDepth", "10", 0 );//saber rules: how far the blade has to travel inside a saber fighter (units, added up over the swing) before a graze becomes a solid cut; half that on a limb. g_debugDamage 1 prints each cut's depth
+	g_saberHeavyWindup = gi.cvar( "g_saberHeavyWindup", "700", 0 );//saber rules: ms a telegraphed heavy attack's wind-up lasts at least (played at full speed, then held at full draw)
+	g_saberLockTapCost = gi.cvar( "g_saberLockTapCost", "3", 0 );//saber rules: Force each push in a saber lock costs; out of Force loses the lock
+	g_saberHitStop = gi.cvar( "g_saberHitStop", "60", CVAR_ARCHIVE );//saber rules: ms both fighters freeze when a cut lands (0 = off)
+	g_saberCamKick = gi.cvar( "g_saberCamKick", "1", CVAR_ARCHIVE );//saber rules: scale on the camera shake for guard collapses, perfect parries and cuts the player gives or takes (0 = off)
+	g_saberTransitionCap = gi.cvar( "g_saberTransitionCap", "400", 0 );//saber rules: ms a transition between two swings may last; a longer one (the behind-the-back spins run 650-700) is played faster to fit. 0 = stock speed
+	g_saboteurCloakV2 = gi.cvar( "g_saboteurCloakV2", "1", 0 );//1 = saboteur hit-and-fade cycle (AI_Stormtrooper.cpp), 2 = plus debug lines, 0 = stock 12 s cloak
+	g_blockReleaseGrace = gi.cvar( "g_blockReleaseGrace", "350", CVAR_ARCHIVE );//ms block stays up after releasing it; a hit in that time while starting an attack cancels the attack into a parry (0 = off)
+	g_perfectRiposteTime = gi.cvar( "g_perfectRiposteTime", "600", CVAR_ARCHIVE );//ms after a perfect parry: the next swing comes out at once and is a riposte
+	g_perfectParryGuardDamage = gi.cvar( "g_perfectParryGuardDamage", "40", CVAR_ARCHIVE );//guard (composure) taken from the attacker by a perfect parry
+	g_perfectParryStagger = gi.cvar( "g_perfectParryStagger", "300", CVAR_ARCHIVE );//extra ms the parried attacker can't act
+	g_perfectParryForceGain = gi.cvar( "g_perfectParryForceGain", "5", CVAR_ARCHIVE );//Force gained on a perfect parry (on top of the refund; doubled vs heavy attacks)
+	g_heavyBlockStagger = gi.cvar( "g_heavyBlockStagger", "900", CVAR_ARCHIVE );//ms a mistimed block of a heavy attack leaves the defender unable to block or attack
+	g_heavyBlockDamage = gi.cvar( "g_heavyBlockDamage", "0.75", CVAR_ARCHIVE );//damage x through a mistimed block of a heavy attack
+	g_heavyBlockForceCost = gi.cvar( "g_heavyBlockForceCost", "15", CVAR_ARCHIVE );//Force lost on a mistimed block of a heavy attack
+	g_heavyAttackSound = gi.cvar( "g_heavyAttackSound", "sound/weapons/force/rage.mp3", CVAR_ARCHIVE );//played on the attacker as a heavy attack winds up ("" = none)
+	g_guardBreakSound = gi.cvar( "g_guardBreakSound", "sound/weapons/saber/saberbounce3.mp3", CVAR_ARCHIVE );//JKEnhanced 3D: played on an NPC when its guard breaks ("" = none)
+	g_guardBreakDamage = gi.cvar( "g_guardBreakDamage", "1", CVAR_ARCHIVE );//JKEnhanced: saber damage multiplier on a guard-broken NPC (1 = no bonus; was a fixed x2.5)
+	g_lightningDamage = gi.cvar( "g_lightningDamage", "0.4", CVAR_ARCHIVE );//JKEnhanced: Force Lightning damage multiplier per tick (1 = stock: ~40 dps at L1-2, up to 100 at L3, 200 two-handed)
+	g_bossLightningBreak = gi.cvar( "g_bossLightningBreak", "1200", CVAR_ARCHIVE );//JKEnhanced: ms a boss resists a held Lightning stream before Pushing the caster (0 = never; stock = stun-locked)
+	g_scepterBeamDamage = gi.cvar( "g_scepterBeamDamage", "1", CVAR_ARCHIVE );//JKEnhanced: Tavion scepter beam damage scale (6-10 x (skill+1) per hit, one hit per 300 ms per target)
+	g_npcForcePool = gi.cvar( "g_npcForcePool", "1", CVAR_ARCHIVE );//JKEnhanced 4B: 1 = NPCs spend Force on powers like the player (blocks/jumps/scripted stay free), 0 = stock infinite NPC Force
+	g_playerMaxStep = gi.cvar( "g_playerMaxStep", "8", CVAR_ARCHIVE );//JKEnhanced 3G: player movement runs in steps of at most this many ms (0 = one step per frame, as stock)
+	g_ledgeAssist = gi.cvar( "g_ledgeAssist", "1", CVAR_ARCHIVE );//JKEnhanced 3H: jump+forward into a ledge just out of reach lifts you onto it
+	g_debugForce = gi.cvar( "g_debugForce", "0", 0 );//JKEnhanced 4A audit: 1 = print every Force cast, Force damage and Absorb result; 2 = also per-tick spends
+	g_debugFrameRate = gi.cvar( "g_debugFrameRate", "0", 0 );//JKEnhanced 3G: print each jump's apex, air time and frame length on landing
+	g_blockFailSound = gi.cvar( "g_blockFailSound", "sound/interface/ammocon_empty.mp3", CVAR_ARCHIVE );//JKEnhanced 3D: played to the player when a hit gets through their held block ("" = none)
+	g_heavyAttackThreshold = gi.cvar( "g_heavyAttackThreshold", "0.6", CVAR_ARCHIVE );//NPC heavy-attack desirability needed to throw one (AI_JediBrain_HeavyAttackScore)
 	g_saberRealisticCombat = gi.cvar( "g_saberMoreRealistic", "0", CVAR_ARCHIVE );//makes collision more precise, increases damage
 	debug_subdivision = gi.cvar( "debug_subdivision", "0", CVAR_ARCHIVE );//debug for dismemberment
 	g_dismemberProbabilities = gi.cvar ( "g_dismemberProbabilities", "1", CVAR_ARCHIVE );//0 = ignore probabilities, 1 = use probabilities
 	g_saberDamageCapping = gi.cvar( "g_saberDamageCapping", "1", CVAR_CHEAT );//caps damage of sabers vs players and NPC who use sabers
 	g_saberMaxPlayerHitPct = gi.cvar( "g_saberMaxPlayerHitPct", "0.5", CVAR_ARCHIVE );//one saber hit takes at most this fraction of the player's max health (needs g_saberDamageCapping)
+	g_saberPlayerDamageScale = gi.cvar( "g_saberPlayerDamageScale", "1", CVAR_ARCHIVE );//JKEnhanced: x on the tiered NPC saber damage to the player (peon 20-25, Jedi 35-40, master 45, boss 55; heavy x1.5; Easy x0.75 / Hard x1.25)
 	g_saberMoveSpeed = gi.cvar( "g_saberMoveSpeed", "1", CVAR_CHEAT );//how fast you run while attacking with a saber
 	g_saberAnimSpeed = gi.cvar( "g_saberAnimSpeed", "1", CVAR_CHEAT );//how fast saber animations run
 	g_saberAutoAim = gi.cvar( "g_saberAutoAim", "1", CVAR_CHEAT );//auto-aims at enemies when not moving or when just running forward
@@ -733,7 +837,7 @@ void G_InitCvars( void ) {
 	g_stealth = gi.cvar( "g_stealth", "1", CVAR_ARCHIVE );//1 = NPCs notice you in stages (AI_Awareness.cpp); 0 = the old instant spot
 	g_stealthLightScale = gi.cvar( "g_stealthLightScale", "1.0", CVAR_ARCHIVE );//how much being lit counts against you
 	g_stealthNoiseScale = gi.cvar( "g_stealthNoiseScale", "1.0", CVAR_ARCHIVE );//how far the player's footsteps etc. carry
-	g_npcDamageEasy = gi.cvar( "g_npcDamageEasy", "0.4", CVAR_ARCHIVE );//NPC bolt damage = player damage x this, per difficulty
+	g_npcDamageEasy = gi.cvar( "g_npcDamageEasy", "0.4", CVAR_ARCHIVE );//UNUSED: replaced by npcBoltDamage in ext_data/difficulty.cfg
 	g_npcDamageNormal = gi.cvar( "g_npcDamageNormal", "0.6", CVAR_ARCHIVE );
 	g_npcDamageHard = gi.cvar( "g_npcDamageHard", "0.8", CVAR_ARCHIVE );
 	g_npcBoltSpeed = gi.cvar( "g_npcBoltSpeed", "0.75", CVAR_ARCHIVE );//NPC bolt speed = weapon velocity x this (dodge/deflect window)
@@ -911,6 +1015,17 @@ void InitGame(  const char *mapname, const char *spawntarget, int checkSum, cons
 
 	//Load sabers.cfg data
 	WP_SaberLoadParms();
+	//JKEnhanced: ext_data/difficulty.cfg (before anything spawns)
+	G_LoadDifficultyProfiles();
+	G_LoadForceTuning();	//JKEnhanced 4B: ext_data/force.cfg
+	{//JKEnhanced saber rules: ext_data/saberanims.cfg
+		extern void WP_LoadSaberStyleSheet( void );
+		WP_LoadSaberStyleSheet();
+	}
+	{//JKEnhanced 4A: forcetally counts per map (entity numbers get reused)
+		extern void WP_ForceTallyReset( void );
+		WP_ForceTallyReset();
+	}
 	//Set up NPC init data
 	NPC_InitGame();
 

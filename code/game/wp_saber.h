@@ -213,6 +213,41 @@ extern qboolean G_EnoughPowerForSpecialMove( int forcePower, int cost, qboolean 
 extern void G_DrainPowerForSpecialMove( gentity_t *self, forcePowers_t fp, int cost, qboolean kataMove = qfalse );
 extern int G_CostForSpecialMove( int cost, qboolean kataMove = qfalse );
 extern gentity_t *G_DropSaberItem( const char *saberType, saber_colors_t saberColor, vec3_t saberPos, vec3_t saberVel, vec3_t saberAngles, gentity_t *copySaber = NULL );
+extern qboolean WP_RiposteOpenOn( const gentity_t *attacker, const gentity_t *victim );	//JKEnhanced: the player's riposte is open on this NPC
+
+//JKEnhanced saber rules, "a blade in the way" (g_saberRules; wp_saber.cpp)
+#define SABER_STYLE_PHRASES		5
+#define SABER_PHRASE_SWINGS		4
+typedef struct saberStyleSheet_s
+{
+	int		stopCost;	// Force a guard pays to stop one of this style's swings
+	int		guardArc;	// degrees in front of the fighter that this style's guard covers
+	int		guardAnim;	// held guard pose when no swing is coming in (-1 = the style's saber stance)
+	int		openAnim;	// the Open (off balance) pose (-1 = the stock broken parry)
+	int		neutralAnim;	// saber lit, guard not up (-1 = the saber stance, as stock)
+	int		windup;		// ms a swing's wind-up lasts at least (a shorter stock wind-up is held at full draw)
+	int		recover;	// ms after an NPC's attack phrase before its guard can come back up
+	int		weight;		// saber lock: how far one tap pushes
+	int		numPhrases;	// NPC attack strings (LS_A_* moves), used in turn
+	int		phraseLen[SABER_STYLE_PHRASES];
+	int		phrase[SABER_STYLE_PHRASES][SABER_PHRASE_SWINGS];
+} saberStyleSheet_t;
+extern qboolean WP_SaberRules( void );
+extern void WP_LoadSaberStyleSheet( void );						// ext_data/saberanims.cfg
+extern const saberStyleSheet_t *WP_SaberStyleSheet( int saberAnimLevel );
+extern qboolean WP_SaberGuardUp( gentity_t *ent );				// Guard raised and able to stop a swing
+extern int WP_SaberOpenTime( gentity_t *ent );					// ms of Open (off balance) left, 0 = not Open
+extern void WP_SaberSetOpen( gentity_t *ent, int ms );
+extern int WP_SaberSwingRunTime( const gentity_t *ent );			// ms since ent's run of swings began, -1 = not swinging
+extern int WP_SaberStopsTaken( gentity_t *ent );				// swings this fighter's guard has stopped in a row (an NPC answers after enough)
+extern void WP_SaberGuardCost( gentity_t *ent, gentity_t *attacker, int cost );	// Force off a guard (0 Force: it collapses, Open long)
+extern int WP_SaberLockPush( gentity_t *ent );					// one saber-lock tap: pays Force, returns how far it pushes
+extern void WP_SaberStopsClear( gentity_t *ent );
+extern void WP_SaberFollowThrough( gentity_t *ent, int left, int holdMs );	// hold the end of a swing: the opening after an NPC phrase
+extern qboolean WP_SaberInFollowThrough( const gentity_t *ent );
+extern void WP_SaberFollowThroughClear( gentity_t *ent );
+extern int g_saberPhraseNext[MAX_GENTITIES];					// bg_pmove.cpp: the LS_A_* swing an NPC's AI wants next
+extern int g_saberPhraseNextTime[MAX_GENTITIES];
 
 typedef enum
 {

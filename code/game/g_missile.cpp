@@ -24,6 +24,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_local.h"
 #include "g_functions.h"
 #include "wp_saber.h"
+#include "g_force.h"
 #include "bg_local.h"
 #include "../cgame/cg_local.h"
 #include "b_local.h"
@@ -146,6 +147,23 @@ G_ReflectMissile
   Reflect the missile roughly back at it's owner
 ================
 */
+//JKEnhanced: from the missile to whatever the owner's crosshair is on (G_GetAimRay: in third person
+//the camera's ray, which isn't ps.viewangles); a reflect along the view direction missed it
+extern void G_GetAimRay( gentity_t *ent, vec3_t org, vec3_t dir );
+static void G_ReflectAimDir( gentity_t *owner, const gentity_t *missile, vec3_t out )
+{
+	vec3_t aimOrg, aimDir, aimEnd;
+	trace_t tr;
+	G_GetAimRay( owner, aimOrg, aimDir );
+	VectorMA( aimOrg, 8192.0f, aimDir, aimEnd );
+	gi.trace( &tr, aimOrg, vec3_origin, vec3_origin, aimEnd, owner->s.number, MASK_SHOT, (EG2_Collision)0, 0 );
+	VectorSubtract( tr.endpos, missile->currentOrigin, out );
+	if ( VectorNormalize( out ) < 32.0f || DotProduct( out, aimDir ) < 0.0f )
+	{//the aim point is on top of the missile (or behind it): just go along the ray
+		VectorCopy( aimDir, out );
+	}
+}
+
 extern gentity_t *Jedi_FindEnemyInCone( gentity_t *self, gentity_t *fallback, float minDot );
 void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward, qboolean perfect = qfalse )
 {
@@ -166,11 +184,29 @@ void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward, qbool
 	if ( perfect && owner && owner->client )
 	{//timed perfect parry: dead-accurate along the crosshair, no roll
 		vec3_t viewFwd;
-		AngleVectors( owner->client->ps.viewangles, viewFwd, NULL, NULL );
+		G_ReflectAimDir( owner, missile, viewFwd );
 		VectorCopy( viewFwd, bounce_dir );
 		for ( i = 0; i < 3; i++ )
 		{
 			bounce_dir[i] += Q_flrand( -0.05f, 0.05f );
+		}
+		VectorNormalize( bounce_dir );
+		reflected = qtrue;
+	}
+	else if ( owner && owner->client && G_SpeedLevel( owner ) >= FORCE_LEVEL_3
+		&& missile->owner && missile->owner->inuse && missile->owner != owner && missile->owner->health > 0 )
+	{//JKEnhanced 4B.6: Speed 3 (Focus) sends it straight back at whoever fired it
+		vec3_t aimAt;
+		VectorCopy( missile->owner->currentOrigin, aimAt );
+		if ( missile->owner->client )
+		{//center mass
+			aimAt[2] += ( missile->owner->maxs[2] + missile->owner->mins[2] ) * 0.5f;
+		}
+		VectorSubtract( aimAt, missile->currentOrigin, bounce_dir );
+		VectorNormalize( bounce_dir );
+		for ( i = 0; i < 3; i++ )
+		{
+			bounce_dir[i] += Q_flrand( -0.03f, 0.03f );
 		}
 		VectorNormalize( bounce_dir );
 		reflected = qtrue;
@@ -182,7 +218,7 @@ void G_ReflectMissile( gentity_t *ent, gentity_t *missile, vec3_t forward, qbool
 		if ( defLevel >= FORCE_LEVEL_3 && Q_irand( 0, 3 ) )
 		{//75% at level 3: aimed along player's crosshair
 			vec3_t viewFwd;
-			AngleVectors( owner->client->ps.viewangles, viewFwd, NULL, NULL );
+			G_ReflectAimDir( owner, missile, viewFwd );
 			VectorCopy( viewFwd, bounce_dir );
 			float spread = 0.15f;
 			if ( !PM_SaberInParry( owner->client->ps.saberMove )
@@ -606,8 +642,12 @@ void G_MissileImpacted( gentity_t *ent, gentity_t *other, vec3_t impactPos, vec3
 			for ( int k = 0; k < numKnock; k++ )
 			{
 				gentity_t *victim = knockList[k];
-				if ( !victim->client || victim->health <= 0 )
-					continue;
+				if ( !victim->client || victim->health <= 0 || victim == ent->owner )
+					continue;//(not the shooter: point-blank used to knock yourself down)
+				trace_t knockTr;
+				gi.trace( &knockTr, impactPos, vec3_origin, vec3_origin, victim->currentOrigin, ent->s.number, MASK_SOLID, (EG2_Collision)0, 0 );
+				if ( knockTr.fraction < 1.0f && knockTr.entityNum != victim->s.number )
+					continue;//behind a wall from the blast
 				vec3_t pushDir;
 				VectorSubtract( victim->currentOrigin, impactPos, pushDir );
 				if ( VectorNormalize( pushDir ) == 0.0f )
@@ -825,6 +865,7 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace, int hitLoc=HL_NONE )
 extern bool WP_DoingMoronicForcedAnimationForForcePowers(gentity_t *ent);
 extern cvar_t *g_saberAutoBlocking;
 extern qboolean WP_InPerfectParryWindow( const gentity_t *self );
+extern qboolean WP_InPerfectParryWindowVs( const gentity_t *self, const gentity_t *attacker, qboolean missile );
 extern void WP_PerfectParrySuccess( gentity_t *self, vec3_t impactPoint, vec3_t normal );
 extern int WP_SaberBlockForceCost( gentity_t *self, qboolean missileBlock );
 extern int WP_SaberPerfectParryRefund( gentity_t *self, qboolean missileBlock );
@@ -848,17 +889,11 @@ extern void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int o
 				|| (InFront( ent->currentOrigin, other->owner->currentOrigin, other->owner->client->ps.viewangles, SABER_REFLECT_MISSILE_CONE ) &&
 				!WP_DoingMoronicForcedAnimationForForcePowers(other)) )//other->owner->s.number != 0 ||
 			{//Jedi cannot block shots from behind!
-				if ( ent->s.weapon == WP_BOWCASTER )
-				{
-					G_MissileReflectEffect( ent, trace->endpos, trace->plane.normal );
-					G_FreeEntity( ent );
-					return;
-				}
 				// Player with no force power cannot deflect missiles (unless perfectly timed — perfect parries are free)
 				if ( other->owner && other->owner->client && !other->owner->s.number
 					&& !g_saberAutoBlocking->integer
 					&& other->owner->client->ps.forcePower <= 0
-					&& !WP_InPerfectParryWindow( other->owner ) )
+					&& !WP_InPerfectParryWindowVs( other->owner, ent->owner, qtrue ) )
 				{
 					if ( other->owner->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time )
 					{
@@ -877,7 +912,14 @@ extern void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int o
 					G_MissileImpacted( ent, other->owner, trace->endpos, trace->plane.normal, hitLoc );
 					return;
 				}
-				else if ( other->owner && WP_InPerfectParryWindow( other->owner ) )
+				else if ( ent->s.weapon == WP_BOWCASTER )
+				{//a bowcaster bolt can't be reflected: the blade soaks it (after the no-Force / not-blocking
+				 //checks above - it used to be eaten by any frontal saber, block held or not)
+					G_MissileReflectEffect( ent, trace->endpos, trace->plane.normal );
+					G_FreeEntity( ent );
+					return;
+				}
+				else if ( other->owner && WP_InPerfectParryWindowVs( other->owner, ent->owner, qtrue ) )
 				{//timed perfect parry: guaranteed reflect, dead-accurate, with distinct feedback --
 				//stays free, and refunds half of what a sloppy deflect would have cost
 					G_ReflectMissile( other, ent, trace->plane.normal, qtrue );
@@ -931,7 +973,10 @@ extern void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int o
 					{
 						int cost = WP_SaberBlockForceCost( other->owner, qtrue );
 						WP_ForcePowerDrain( other->owner, FP_SABER_DEFENSE, cost );
-						other->owner->client->ps.forcePowerRegenDebounceTime = level.time + 1500;
+						if ( !WP_SaberRules() )
+						{//(saber rules: deflecting a bolt doesn't pause Force regen - hold guard and recover)
+							other->owner->client->ps.forcePowerRegenDebounceTime = level.time + 1500;
+						}
 					}
 					G_MissileReflectEffect( ent, trace->endpos, trace->plane.normal );
 					return;
@@ -1378,6 +1423,10 @@ G_RunMissile
 void G_MoverTouchPushTriggers( gentity_t *ent, vec3_t oldOrg );
 void G_RunMissile( gentity_t *ent )
 {
+	if ( G_StasisMissileHeld( ent ) )
+	{//JKEnhanced 4B.7: hanging in a Stasis cone
+		return;
+	}
 	vec3_t		oldOrg;
 	trace_t		tr;
 	int			trHitLoc=HL_NONE;

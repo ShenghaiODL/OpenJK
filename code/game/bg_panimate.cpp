@@ -36,6 +36,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "Q3_Interface.h"
 #include "g_local.h"
 #include "wp_saber.h"
+#include "g_force.h"
 #include "g_vehicles.h"
 
 extern pmove_t	*pm;
@@ -4459,6 +4460,25 @@ void PM_SetTorsoAnimTimer( gentity_t *ent, int *torsoAnimTimer, int time )
 
 extern qboolean PM_SpinningSaberAnim( int anim );
 extern float saberAnimSpeedMod[NUM_FORCE_POWER_LEVELS];
+extern qboolean PM_LandingAnim( int anim );
+
+//JKEnhanced 4B.6: the anim of a saber move you recover in (Speed 2's Flow plays these faster)
+static qboolean PM_SaberRecoveryAnim( int anim )
+{
+	if ( anim < BOTH_A1_T__B_ )
+	{
+		return qfalse;
+	}
+	for ( int m = LS_NONE + 1; m < LS_MOVE_MAX; m++ )
+	{
+		if ( saberMoveData[m].animToUse == anim )
+		{
+			return (qboolean)( PM_SaberInBounce( m ) || PM_SaberInReturn( m ) || PM_SaberInDeflect( m )
+				|| PM_SaberInKnockaway( m ) || PM_SaberInBrokenParry( m ) || PM_SaberInReflect( m ) );
+		}
+	}
+	return qfalse;
+}
 void PM_SaberStartTransAnim( int saberAnimLevel, int anim, float *animSpeed, gentity_t *gent )
 {
 	if ( anim >= BOTH_A1_T__B_ && anim <= BOTH_ROLL_STAB )
@@ -4631,6 +4651,8 @@ static inline qboolean PM_IsHumanoid( CGhoul2Info *ghlInfo )
 PM_SetAnimFinal
 -------------------------
 */
+float pm_saberAnimBoost = 1.0f;	//set around one PM_SetAnim call by PM_SetSaberMove (bg_pmove.cpp), 1 otherwise
+
 #define G2_DEBUG_TIMING (0)
 void PM_SetAnimFinal(int *torsoAnim,int *legsAnim,
 					 int setAnimParts,int anim,int setAnimFlags,
@@ -4717,6 +4739,27 @@ void PM_SetAnimFinal(int *torsoAnim,int *legsAnim,
 	// Lower Offensive Skill Slows Down The Saber Start Attack Animations
 	//--------------------------------------------------------------------
 	PM_SaberStartTransAnim( gent->client->ps.saberAnimLevel, anim, &timeScaleMod, gent );
+	//JKEnhanced saber rules: PM_SetSaberMove plays an over-long transition between swings faster
+	timeScaleMod *= pm_saberAnimBoost;
+
+	{//JKEnhanced 4B.6: Speed perks on recovery anims - Burst lands quicker, Flow gets its saber back
+	 //quicker (bounces, deflects, knockaways, broken parries, returns). Faster anim = shorter timer too.
+		const int speedLevel = G_SpeedLevelPS( &gent->client->ps );
+		if ( speedLevel )
+		{
+			const forceTuning_t *ft = G_ForceTuning();
+			if ( PM_LandingAnim( anim ) )
+			{
+				timeScaleMod *= 100.0f / (float)Q_max( 10, ft->speedLandPct );
+			}
+			else if ( speedLevel >= FORCE_LEVEL_2 && PM_SaberRecoveryAnim( anim ) )
+			{
+				timeScaleMod *= ft->speedRecoveryPct / 100.0f;
+			}
+		}
+		//JKEnhanced 4B.7: slowed by a Stasis cone - everything they do plays slower (and lasts longer)
+		timeScaleMod *= G_StasisSlowScale( gent );
+	}
 
 
 

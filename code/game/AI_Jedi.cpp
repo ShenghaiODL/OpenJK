@@ -24,10 +24,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_nav.h"
 #include "anims.h"
 #include "wp_saber.h"
+#include "g_force.h"
 #include "../qcommon/tri_coll_test.h"
 #include "g_navigator.h"
 #include "../cgame/cg_local.h"
 #include "g_functions.h"
+#include "g_difficulty.h"
 
 //Externs
 extern qboolean G_ValidEnemy( gentity_t *self, gentity_t *enemy );
@@ -57,6 +59,7 @@ extern void WP_KnockdownTurret( gentity_t *self, gentity_t *pas );
 extern void WP_DeactivateSaber( gentity_t *self, qboolean clearLength = qfalse );
 extern int PM_AnimLength( int index, animNumber_t anim );
 extern qboolean PM_SaberInStart( int move );
+extern qboolean PM_SaberInTransition( int move );
 extern qboolean PM_SaberInSpecialAttack( int anim );
 extern qboolean PM_SaberInAttack( int move );
 extern qboolean PM_SaberInBounce( int move );
@@ -370,12 +373,18 @@ void Tavion_ScepterDamage( void )
 					G_PlayEffect( G_EffectIndex( "scepter/impact.efx" ), trace.endpos, trace.plane.normal );
 				}
 
+				static int s_beamNextHit[MAX_GENTITIES];
 				if ( traceEnt->takedamage
 					&& trace.entityNum != lastHit
-					&& (!traceEnt->client || traceEnt == NPC->enemy || traceEnt->client->NPC_class != NPC->client->NPC_class) )
+					&& (!traceEnt->client || traceEnt == NPC->enemy || traceEnt->client->NPC_class != NPC->client->NPC_class)
+					&& ( level.time >= s_beamNextHit[trace.entityNum] || s_beamNextHit[trace.entityNum] - level.time > 1000 ) )
 				{//smack
-					int dmg = Q_irand( 10, 20 )*(g_spskill->integer+1);//NOTE: was 6-12
-					//FIXME: debounce?
+				 //JKEnhanced: was 10-20 x (skill+1) on EVERY think with no debounce - on Hard (Jedi think
+				 //every 50 ms) that was 30-60 damage per 50 ms, i.e. a beam melted ~700 health in a second.
+				 //Now one hit per 300 ms per target, scaled by g_scepterBeamDamage.
+					extern cvar_t *g_scepterBeamDamage;
+					s_beamNextHit[trace.entityNum] = level.time + 300;
+					int dmg = (int)ceil( Q_irand( 6, 10 ) * (g_spskill->integer+1) * g_scepterBeamDamage->value );
 					//FIXME: do dismemberment
 					G_Damage( traceEnt, NPC, NPC, vec3_origin, trace.endpos, dmg, DAMAGE_NO_KNOCKBACK, MOD_SABER );//MOD_MELEE );
 					if ( traceEnt->client )
@@ -1747,7 +1756,7 @@ static void Jedi_CombatDistance( int enemy_dist )
 				&& !(NPC->client->ps.saberEventFlags&SEF_INWATER) )//saber not in water
 			{//throw saber
 				ucmd.buttons |= BUTTON_SABERTHROW;
-				TIMER_Set( NPC, "saberThrowDebounce", Q_irand( 4000, 8000 ) );
+				TIMER_Set( NPC, "saberThrowDebounce", Q_irand( 8000, 14000 ) );//JKEnhanced: was 4-8 s
 			}
 		}
 		else if ( NPC->enemy && NPC->enemy->client && //valid enemy
@@ -1836,10 +1845,15 @@ static void Jedi_CombatDistance( int enemy_dist )
 					chanceScale = 5;
 				}
 				if ( chanceScale
+					&& ( !WP_SaberRules() || TIMER_Done( NPC, "jediRangedForce" ) )//JKEnhanced saber rules: one ranged Force attack, then a pause
 					&& (enemy_dist > Q_irand( 100, 200 ) || (NPCInfo->scriptFlags&SCF_DONT_FIRE) || (!Q_stricmp("Yoda",NPC->NPC_type)&&!Q_irand(0,3)) )
 					&& enemy_dist < 500
 					&& (Q_irand( 0, chanceScale*10 )<3 || (NPC->enemy->client && NPC->enemy->client->ps.weapon != WP_SABER && !Q_irand( 0, chanceScale ) ) ) )
 				{//else, randomly try some kind of attack every now and then
+					if ( WP_SaberRules() )
+					{//(this roll came up about once a second at mid range for a ranked Reborn)
+						TIMER_Set( NPC, "jediRangedForce", 8000 - 500 * Q_max( 1, Q_min( 5, AI_JediBlockSkill( NPC ) ) ) );
+					}
 					//FIXME: Cultist fencers don't have any of these fancy powers
 					//			the only thing they might be able to do is throw their saber
 					if ( (NPCInfo->rank == RANK_ENSIGN //old reborn crap
@@ -1909,7 +1923,8 @@ static void Jedi_CombatDistance( int enemy_dist )
 							TIMER_Set( NPC, "gripping", 3000 );
 							TIMER_Set( NPC, "attackDelay", 3000 );
 						}
-						else if ( WP_ForcePowerUsable( NPC, FP_STASIS, 0 ) && Q_irand(0, 1) && NPC->enemy && NPC->enemy->client && NPC->enemy->client->ps.stasisTime < level.time)
+						else if ( WP_ForcePowerUsable( NPC, FP_STASIS, 0 ) && Q_irand(0, 1) && NPC->enemy && NPC->enemy->client && NPC->enemy->client->ps.stasisTime < level.time
+							&& G_StasisSlowScale( NPC->enemy ) >= 1.0f )//JKEnhanced 4B.7: not already slowed by one either
 						{
 							ForceStasis( NPC );
 							TIMER_Set( NPC, "attackDelay", NPC->client->ps.weaponTime );
@@ -1922,7 +1937,7 @@ static void Jedi_CombatDistance( int enemy_dist )
 								&& !(NPC->client->ps.saberEventFlags&SEF_INWATER) )//saber not in water
 							{//throw saber
 								ucmd.buttons |= BUTTON_SABERTHROW;
-								TIMER_Set( NPC, "saberThrowDebounce", Q_irand( 4000, 8000 ) );
+								TIMER_Set( NPC, "saberThrowDebounce", Q_irand( 8000, 14000 ) );//JKEnhanced: was 4-8 s
 							}
 						}
 					}
@@ -1934,7 +1949,7 @@ static void Jedi_CombatDistance( int enemy_dist )
 							&& !(NPC->client->ps.saberEventFlags&SEF_INWATER) )//saber not in water
 						{//throw saber
 							ucmd.buttons |= BUTTON_SABERTHROW;
-							TIMER_Set( NPC, "saberThrowDebounce", Q_irand( 4000, 8000 ) );
+							TIMER_Set( NPC, "saberThrowDebounce", Q_irand( 8000, 14000 ) );//JKEnhanced: was 4-8 s
 						}
 					}
 				}
@@ -2329,7 +2344,8 @@ qboolean Jedi_DodgeEvasion( gentity_t *self, gentity_t *shooter, trace_t *tr, in
 
 evasionType_t Jedi_CheckFlipEvasions( gentity_t *self, float rightdot, float zdiff )
 {
-	if ( self->NPC && (self->NPC->scriptFlags&SCF_NO_ACROBATICS) )
+	if ( self->NPC && ( (self->NPC->scriptFlags&SCF_NO_ACROBATICS)
+		|| !TIMER_Done( self, "woundLeg" ) ) )//JKEnhanced saber rules: a cut leg (WP_SaberCutEffects)
 	{
 		return EVASION_NONE;
 	}
@@ -4139,6 +4155,216 @@ static qboolean Jedi_SaberBlock( void )
 	}
 	return qtrue;
 }
+//JKEnhanced saber rules: an NPC's attack phrase (Jedi_PhraseThink). Per NPC and not saved: after a
+//load a stale entry just lapses and the next phrase starts fresh.
+static int	s_phraseLen[MAX_GENTITIES];			//swings in the phrase under way (0 = none)
+static int	s_phraseDone[MAX_GENTITIES];		//swings begun
+static int	s_phraseIdx[MAX_GENTITIES];			//which of the style's phrases
+static int	s_phraseStart[MAX_GENTITIES];
+static int	s_phraseLastMove[MAX_GENTITIES];
+static int	s_phraseGap[MAX_GENTITIES];			//no new phrase before this
+static int	s_noGuardUntil[MAX_GENTITIES];		//following through on a phrase's last swing: the guard can't come up yet
+
+//ms after the enemy's run of swings starts before this NPC's guard comes up (blockSkill 1-5;
+//a cut arm, "woundArm" from WP_SaberCutEffects, is slower to bring the blade up)
+static int Jedi_GuardReactionMs( gentity_t *npc )
+{
+	static const int reaction[5] = { 400, 320, 250, 180, 120 };
+	return reaction[Q_max( 1, Q_min( 5, AI_JediBlockSkill( npc ) ) ) - 1] + ( TIMER_Done( npc, "woundArm" ) ? 0 : 150 );
+}
+
+//g_debugBlock (WP_NoteGuardFail, wp_saber.cpp): why this NPC's guard wasn't up for the player's swing
+const char *Jedi_GuardDownReason( gentity_t *npc, gentity_t *attacker )
+{
+	static char why[128];
+	playerState_t *ps = &npc->client->ps;
+	const int n = npc->s.number;
+	if ( WP_SaberInFollowThrough( npc ) || ( s_noGuardUntil[n] > level.time && s_noGuardUntil[n] - level.time < 5000 ) )
+	{
+		Com_sprintf( why, sizeof( why ), "following through after his phrase (%d ms left)", s_noGuardUntil[n] - level.time );
+		return why;
+	}
+	if ( (ps->forcePowersActive&((1<<FP_GRIP)|(1<<FP_LIGHTNING)|(1<<FP_DRAIN))) )
+	{
+		return "busy with a Force power (grip, lightning or drain)";
+	}
+	if ( PM_SaberInStart( ps->saberMove ) || PM_SaberInAttack( ps->saberMove ) || PM_SaberInTransition( ps->saberMove )
+		|| PM_SaberInSpecialAttack( ps->torsoAnim ) )
+	{
+		Com_sprintf( why, sizeof( why ), "mid-swing of his own (%s)", saberMoveData[ps->saberMove].name );
+		return why;
+	}
+	const int since = WP_SaberSwingRunTime( attacker );
+	const int need = Jedi_GuardReactionMs( npc );
+	if ( since >= 0 && since < need )
+	{
+		Com_sprintf( why, sizeof( why ), "still reacting (your swing began %d ms ago, he needs %d)", since, need );
+		return why;
+	}
+	Com_sprintf( why, sizeof( why ), "not raised (your swing %d ms old, his guard lapsed %d ms ago, move %s, weaponTime %d)",
+		since, level.time - ps->saberBlockingTime, saberMoveData[ps->saberMove].name, ps->weaponTime );
+	return why;
+}
+
+//ms until ent's blade is expected to arrive, from its animation timers: the rest of a wind-up or
+//transition and then into the strike, or what is left before a strike's contact point (about a
+//third of the way through it). -1 = not swinging, or the strike is already past that point.
+static int	s_followHold[MAX_GENTITIES];	//ms of end-of-swing hold added to this NPC's last swing (while s_noGuardUntil runs)
+static int Jedi_SwingEta( gentity_t *ent )
+{
+	const playerState_t *ps = &ent->client->ps;
+	int timer = Q_max( 0, ps->torsoAnimTimer );
+	if ( ent->NPC && s_noGuardUntil[ent->s.number] > level.time && s_noGuardUntil[ent->s.number] - level.time < 5000 )
+	{//(the follow-through hold was added to the swing's timer when it began)
+		timer = Q_max( 0, timer - s_followHold[ent->s.number] );
+	}
+	if ( PM_SaberInStart( ps->saberMove ) || PM_SaberInTransition( ps->saberMove ) )
+	{
+		return timer + 120;
+	}
+	if ( PM_SaberInAttack( ps->saberMove ) )
+	{
+		const int len = PM_AnimLength( ent->client->clientInfo.animFileIndex, (animNumber_t)ps->torsoAnim );
+		const int elapsed = len - timer;
+		const int contact = len * 35 / 100;
+		return elapsed <= contact ? contact - elapsed : -1;
+	}
+	return -1;
+}
+
+/*
+Jedi_AbandonSwing (JKEnhanced saber rules)
+
+An NPC mid-swing drops it and guards when the enemy's swing is going to land first: the enemy is
+in reach, aimed at it, and their blade's expected arrival (Jedi_SwingEta) is no later than its own.
+The limits are the player's own block-cancel: a wind-up or a transition can always be dropped; a
+live strike only in its first g_blockCancelWindow ms, for g_blockCancelCost Force; a heavy attack
+or a kata never. The reaction delay has already passed (Jedi_GuardReact).
+Returns qtrue if the swing was dropped.
+*/
+static qboolean Jedi_AbandonSwing( float enemy_dist )
+{
+	extern cvar_t *g_blockCancelWindow;
+	extern cvar_t *g_blockCancelCost;
+	extern cvar_t *g_debugBlock;
+	playerState_t		*ps = &NPC->client->ps;
+	gentity_t			*enemy = NPC->enemy;
+	const playerState_t	*eps = &enemy->client->ps;
+	const int			n = NPC->s.number;
+	if ( ps->heavyAttackMove != LS_NONE || PM_SaberInSpecialAttack( ps->torsoAnim ) )
+	{//committed
+		return qfalse;
+	}
+	if ( enemy_dist > 40.0f )
+	{//they can't reach me from there
+		return qfalse;
+	}
+	vec3_t fwd, toMe;
+	const vec3_t yawOnly = { 0, eps->viewangles[YAW], 0 };
+	AngleVectors( yawOnly, fwd, NULL, NULL );
+	VectorSubtract( NPC->currentOrigin, enemy->currentOrigin, toMe );
+	toMe[2] = 0;
+	VectorNormalize( toMe );
+	if ( DotProduct( fwd, toMe ) < 0.5f )
+	{//not swinging my way
+		return qfalse;
+	}
+	const int mine = Jedi_SwingEta( NPC );
+	const int theirs = Jedi_SwingEta( enemy );
+	if ( mine < 0 || theirs < 0 || theirs > mine )
+	{//my blade is already there, theirs has already passed, or mine lands first (and the cut stops their swing)
+		return qfalse;
+	}
+	if ( PM_SaberInAttack( ps->saberMove ) )
+	{//a live strike: only early, and it costs
+		const int len = PM_AnimLength( NPC->client->clientInfo.animFileIndex, (animNumber_t)ps->torsoAnim );
+		const int cost = g_blockCancelCost->integer;
+		if ( len - ps->torsoAnimTimer > g_blockCancelWindow->integer
+			|| ( ps->forcePowerMax > 0 && ps->forcePower < cost ) )
+		{
+			return qfalse;
+		}
+		if ( ps->forcePowerMax > 0 && cost > 0 )
+		{
+			ps->forcePower -= cost;
+		}
+	}
+	if ( d_saberCombat->integer || ( g_debugBlock->integer && enemy->s.number == 0 ) )
+	{
+		gi.Printf( S_COLOR_CYAN "ABANDON" S_COLOR_WHITE " %s drops his %s to guard: your blade lands in %d ms, his in %d\n",
+			NPC->NPC_type, saberMoveData[ps->saberMove].name, theirs, mine );
+	}
+	if ( ps->legsAnim == ps->torsoAnim )
+	{
+		ps->legsAnimTimer = 0;
+	}
+	ps->weaponTime = 0;
+	ps->torsoAnimTimer = 0;
+	ps->saberMove = ps->saberMoveNext = LS_READY;
+	ps->saberBounceMove = LS_NONE;
+	ps->saberBlocked = BLOCKED_NONE;
+	ps->saberAttackChainCount = 0;
+	//the phrase is over; guard for a moment before the next
+	s_phraseLen[n] = 0;
+	s_phraseGap[n] = level.time + 600;
+	s_noGuardUntil[n] = 0;
+	g_saberPhraseNext[n] = LS_NONE;
+	return qtrue;
+}
+
+/*
+Jedi_GuardReact (JKEnhanced saber rules, g_saberRules)
+
+NPC saber defence is a reaction time, not dice. The guard comes up a fixed delay after the enemy's
+run of swings starts (blockSkill 1-5: 400 / 320 / 250 / 180 / 120 ms) and stays up while the
+swings keep coming, unless this NPC is committed to a swing of its own. A swing quicker than the
+reaction lands, and the blade is visibly late. Raising it is all this does: what the guard stops,
+and what that costs, is WP_GuardState / WP_SaberGuardStop (wp_saber.cpp).
+*/
+static void Jedi_GuardReact( float enemy_dist )
+{
+	const int since = WP_SaberSwingRunTime( NPC->enemy );
+	if ( since < 0 || enemy_dist > 256.0f )
+	{//not swinging, or too far off to be swinging at me
+		return;
+	}
+	if ( since < Jedi_GuardReactionMs( NPC ) )
+	{//seen it, blade still coming up
+		return;
+	}
+	playerState_t *ps = &NPC->client->ps;
+	if ( ps->saberInFlight && !( ps->dualSabers && ps->saber[1].Active() ) )
+	{//no blade in hand to guard with
+		return;
+	}
+	if ( PM_SaberInStart( ps->saberMove ) || PM_SaberInAttack( ps->saberMove ) || PM_SaberInTransition( ps->saberMove )
+		|| PM_SaberInSpecialAttack( ps->torsoAnim ) )
+	{//in a swing of my own: the blade isn't free to guard with - unless theirs is going to land
+	 //first and mine can still be dropped
+		if ( !Jedi_AbandonSwing( enemy_dist ) )
+		{
+			return;
+		}
+		WP_SaberFollowThroughClear( NPC );
+	}
+	if ( s_noGuardUntil[NPC->s.number] > level.time && s_noGuardUntil[NPC->s.number] - level.time < 5000 )
+	{//following through on the last swing of a phrase: the blade isn't back yet (the opening)
+		return;
+	}
+	if ( NPC->health <= 0 || WP_SaberOpenTime( NPC ) > 0 || PM_InKnockDown( ps ) || ps->saberLockTime > level.time
+		|| (ps->forcePowersActive&((1<<FP_GRIP)|(1<<FP_LIGHTNING)|(1<<FP_DRAIN))) )
+	{//off balance, down, locked, or hands busy with a Force power: can't bring it up
+		return;
+	}
+	if ( !ps->SaberActive() )
+	{
+		ps->SaberActivate();
+	}
+	//held well past the last swing: the next swing of the same exchange (a chain off a bounce comes
+	//out quicker than a first swing) meets a guard that is still up, not a fresh reaction delay
+	ps->saberBlockingTime = level.time + 1200;
+}
+
 /*
 -------------------------
 Jedi_EvasionSaber
@@ -4156,6 +4382,11 @@ static void Jedi_EvasionSaber( vec3_t enemy_movedir, float enemy_dist, vec3_t en
 
 	if ( NPCInfo->guardBreakTime > level.time )
 	{//guard-broken — too staggered to evade or set up a block
+		return;
+	}
+	if ( !TIMER_Done( NPC, "parryStaggered" )
+		|| ( NPC->enemy && WP_RiposteOpenOn( NPC->enemy, NPC ) ) )
+	{//JKEnhanced: knocked off balance by a perfect parry, or the player's riposte is already coming
 		return;
 	}
 	if ( !NPC->enemy->client )
@@ -4192,6 +4423,15 @@ static void Jedi_EvasionSaber( vec3_t enemy_movedir, float enemy_dist, vec3_t en
 		}
 	}
 
+	if ( WP_SaberRules() && NPC->client->ps.weapon == WP_SABER
+		&& NPC->enemy->client->ps.weapon == WP_SABER && !NPC->enemy->client->ps.saberInFlight
+		&& !(NPC->enemy->client->ps.forcePowersActive&(1<<FP_LIGHTNING)) )
+	{//JKEnhanced saber rules: a saber in the enemy's hand is answered with the guard, by reaction time
+	 //(Jedi_GuardReact, run from NPC_BSJedi_Default every think): no misread or dodge rolls, no
+	 //pre-placed parries, no hops. Thrown sabers and lightning keep the logic below.
+		return;
+	}
+
 	if ( NPC->enemy->client->ps.weaponTime && NPC->enemy->client->ps.weaponstate == WEAPON_FIRING )
 	{
 		// Read the swing once, when it starts: what kind of attack it is decides the answer,
@@ -4207,11 +4447,13 @@ static void Jedi_EvasionSaber( vec3_t enemy_movedir, float enemy_dist, vec3_t en
 		if ( s_readMove[n] != eps->saberMove || level.time - s_readTime[n] > 1500 )
 		{
 			const int		skill = AI_JediBlockSkill( NPC );
+			extern qboolean WP_IsHeavyAttack( const gentity_t *ent );
 			const qboolean	heavy = (qboolean)( eps->saberAnimLevel == SS_STRONG || eps->saberAnimLevel == SS_DESANN
-										|| PM_SaberInSpecialAttack( eps->torsoAnim ) );
+										|| PM_SaberInSpecialAttack( eps->torsoAnim )
+										|| WP_IsHeavyAttack( NPC->enemy ) );//a telegraphed heavy, in any style
 			s_readMove[n] = eps->saberMove;
 			s_readTime[n] = level.time;
-			s_misread[n] = (qboolean)( Q_irand( 0, 9 ) >= 6 + skill + g_spskill->integer );
+			s_misread[n] = (qboolean)( Q_irand( 0, 9 ) >= 6 + skill + G_DifficultyLevel() );//(Jedi Master counts as 3)
 			s_dodge[n] = (qboolean)( heavy && skill >= 3 && Q_irand( 0, 4 ) < skill - 1 );
 		}
 		if ( s_misread[n] )
@@ -5247,8 +5489,9 @@ static void Jedi_CombatIdle( int enemy_dist )
 	{
 		return;
 	}
-	if ( NPCInfo->duelRole != JT_NONE && NPCInfo->duelRole != JT_TAUNT )
-	{//the taunt is a tactic now (AI_JediBrain.cpp), not a random roll every idle think
+	if ( NPCInfo->duelRole != JT_NONE )
+	{//the taunt is a tactic now (AI_JediBrain.cpp, JT_TAUNT in Jedi_TacticMove), not a random roll every
+	 //idle think (letting JT_TAUNT through here as well taunted twice, and could switch the saber off)
 		return;
 	}
 	if ( NPC->client->ps.saberInFlight )
@@ -5321,6 +5564,122 @@ static void Jedi_CombatIdle( int enemy_dist )
 }
 
 extern qboolean PM_SaberInParry( int move );
+/*
+Jedi_PhraseThink (JKEnhanced saber rules, g_saberRules)
+
+An NPC's attacks come as phrases: fixed strings of 1-4 swings from its style sheet
+(ext_data/saberanims.cfg), used in turn so they can be learned. The fight has a beat: phrase,
+follow-through, guard, phrase.
+- A phrase starts when the gap since the last one is up, the tactic allows an attack and the enemy
+  isn't swinging (it guards rather than trades). Better fighters leave shorter gaps.
+- It also starts as an answer: once its guard has stopped enough swings in a row (blockSkill 1-5:
+  3 / 3 / 2 / 2 / 1) it attacks as the enemy's blade comes off. A master answers every stopped swing.
+- During the follow-through of the last swing its guard can't come up (the style's "recover",
+  longer for worse fighters): that is the opening.
+Pmove takes the swing named in g_saberPhraseNext when it picks this NPC's attack.
+Returns qtrue while attacking.
+*/
+static qboolean Jedi_PhraseThink( qboolean tacticAllows, qboolean inRange )
+{
+	static const int answerAfter[5] = { 3, 3, 2, 2, 1 };
+	const int n = NPC->s.number;
+	playerState_t *ps = &NPC->client->ps;
+	const saberStyleSheet_t *sheet = WP_SaberStyleSheet( ps->saberAnimLevel );
+	if ( sheet->numPhrases <= 0 )
+	{//no phrases for this style: the stock attack choice
+		if ( tacticAllows && inRange )
+		{
+			WeaponThink( qtrue );
+		}
+		return (qboolean)( (ucmd.buttons&BUTTON_ATTACK) != 0 );
+	}
+	const int		skill = Q_max( 1, Q_min( 5, AI_JediBlockSkill( NPC ) ) );
+	const qboolean	inAttack = PM_SaberInAttack( ps->saberMove );
+
+	if ( s_phraseLen[n]
+		&& ( level.time < s_phraseStart[n] || level.time - s_phraseStart[n] > 5000
+			|| WP_SaberOpenTime( NPC ) > 0 || PM_InKnockDown( ps ) ) )
+	{//stale (a load), stuck, or knocked out of it
+		s_phraseLen[n] = 0;
+	}
+	if ( s_phraseLen[n] )
+	{
+		if ( inAttack && ps->saberMove != s_phraseLastMove[n] )
+		{//a new swing has begun
+			s_phraseDone[n]++;
+		}
+		s_phraseLastMove[n] = inAttack ? ps->saberMove : LS_NONE;
+		if ( s_phraseDone[n] >= s_phraseLen[n] )
+		{//the last swing is under way: let it finish and follow through
+			const int left = Q_max( 0, ps->torsoAnimTimer );
+			const int recover = sheet->recover * ( 13 - skill ) / 10;
+			s_noGuardUntil[n] = level.time + left + recover;
+			//the opening, made visible: hold the end of this swing, blade out wide, before it comes back
+			WP_SaberFollowThrough( NPC, left, recover );
+			s_followHold[n] = recover;
+			s_phraseGap[n] = s_noGuardUntil[n] + 1200 - 150 * skill + ( TIMER_Done( NPC, "woundArm" ) ? 0 : 300 );
+			s_phraseLen[n] = 0;
+			g_saberPhraseNext[n] = LS_NONE;
+			return inAttack;
+		}
+		ucmd.buttons |= BUTTON_ATTACK;
+		g_saberPhraseNext[n] = sheet->phrase[s_phraseIdx[n]][s_phraseDone[n]];
+		g_saberPhraseNextTime[n] = level.time;
+		return qtrue;
+	}
+
+	//no phrase under way: start one?
+	if ( !inRange || !TIMER_Done( NPC, "attackDelay" ) || WP_SaberOpenTime( NPC ) > 0 || PM_InKnockDown( ps ) )
+	{
+		return qfalse;
+	}
+	gentity_t		*enemy = NPC->enemy;
+	const qboolean	enemySaber = (qboolean)( enemy->client->ps.weapon == WP_SABER && !enemy->client->ps.saberInFlight );
+	//(an enemy who is Open gets attacked at once, whatever the beat)
+	const qboolean	answer = (qboolean)( WP_SaberOpenTime( enemy ) > 0
+		|| ( enemySaber && WP_SaberStopsTaken( NPC ) >= answerAfter[skill - 1]
+			&& !PM_SaberInAttack( enemy->client->ps.saberMove ) && !PM_SaberInStart( enemy->client->ps.saberMove ) ) );
+	if ( !answer )
+	{
+		if ( !tacticAllows )
+		{
+			return qfalse;
+		}
+		if ( s_phraseGap[n] > level.time && s_phraseGap[n] - level.time < 10000 )
+		{//still guarding between phrases
+			return qfalse;
+		}
+		if ( enemySaber && WP_SaberSwingRunTime( enemy ) >= 0 )
+		{//they're swinging: guard it, don't trade
+			return qfalse;
+		}
+	}
+	if ( answer && ( PM_SaberInParry( ps->saberMove ) || PM_SaberInKnockaway( ps->saberMove ) )
+		&& ps->saberBlocked != BLOCKED_PARRY_BROKEN )
+	{//an answer comes straight off the parry, with no wind-up to hit them in: the count of stopped
+	 //swings is the tell, and blocking (which drops your bounce at once) is the reply
+		ps->weaponTime = 0;
+		ps->saberBlocked = BLOCKED_NONE;
+	}
+	s_phraseIdx[n] = ( s_phraseIdx[n] + 1 ) % sheet->numPhrases;
+	s_phraseLen[n] = sheet->phraseLen[s_phraseIdx[n]];
+	s_phraseDone[n] = 0;
+	s_phraseStart[n] = level.time;
+	s_phraseLastMove[n] = LS_NONE;
+	WP_SaberStopsClear( NPC );
+	ucmd.buttons |= BUTTON_ATTACK;
+	g_saberPhraseNext[n] = sheet->phrase[s_phraseIdx[n]][0];
+	g_saberPhraseNextTime[n] = level.time;
+#ifndef FINAL_BUILD
+	if ( d_saberCombat->integer )
+	{
+		gi.Printf( S_COLOR_YELLOW"%s: phrase %d (%d swings)%s\n", NPC->NPC_type, s_phraseIdx[n], s_phraseLen[n],
+			answer ? ", answering stopped swings" : "" );
+	}
+#endif
+	return qtrue;
+}
+
 static qboolean Jedi_AttackDecide( int enemy_dist )
 {
 	if ( !TIMER_Done( NPC, "allyJediDelay" ) )
@@ -5391,6 +5750,17 @@ static qboolean Jedi_AttackDecide( int enemy_dist )
 			WeaponThink( qtrue );
 			return qtrue;
 		}
+	}
+
+	if ( WP_SaberRules() && NPC->client->ps.weapon == WP_SABER && !NPC->client->ps.saberInFlight
+		&& NPC->enemy->client )
+	{//JKEnhanced saber rules: attacks come as phrases, on a beat, or as an answer to stopped swings
+	 //(no follow-up style switches, no attack rolls). A phrase under way finishes even if they step back.
+		if ( (NPCInfo->scriptFlags&SCF_DONT_FIRE) )
+		{//not allowed to attack
+			return qfalse;
+		}
+		return Jedi_PhraseThink( Jedi_TacticAllowsAttack( enemy_dist ), enemy_in_striking_range );
 	}
 
 	if ( NPC->client->NPC_class == CLASS_TAVION ||
@@ -5931,25 +6301,24 @@ static void Jedi_TacticMove( int tactic, float enemy_dist )
 		}
 		break;
 	case JT_PRESS:
-		if ( enemy_dist > 24 && !AI_JediEnemyOpen( NPC ) && TIMER_Done( NPC, "noRetreat" ) )
-		{
-			Jedi_Advance();
-		}
-		else if ( enemy_dist > 0 )
+		//close to striking range and stay there; when they're open (staggered, recovering), step
+		//right in. (Both branches used to advance whatever the distance - into the enemy.)
+		if ( enemy_dist > 48 || ( enemy_dist > 16 && AI_JediEnemyOpen( NPC ) ) )
 		{
 			Jedi_Advance();
 		}
 		break;
 	case JT_FORCE_OPENER:
 		if ( TIMER_Done( NPC, "jediOpenerDebounce" ) )
-		{
-			TIMER_Set( NPC, "jediOpenerDebounce", Q_irand( 6000, 10000 ) );
+		{//(the cooldown only starts if something actually fired - the moment can pass between scoring and here)
 			if ( AI_JediEnemyOpen( NPC ) && enemy_dist < 200 && WP_ForcePowerUsable( NPC, FP_PUSH, 0 ) )
 			{//shove them while they're staggered
+				TIMER_Set( NPC, "jediOpenerDebounce", Q_irand( 6000, 10000 ) );
 				ForceThrow( NPC, qfalse );
 			}
 			else if ( enemy_dist > 160 && WP_ForcePowerUsable( NPC, FP_PULL, 0 ) )
 			{//drag them into reach
+				TIMER_Set( NPC, "jediOpenerDebounce", Q_irand( 6000, 10000 ) );
 				ForceThrow( NPC, qtrue );
 			}
 		}
@@ -5960,7 +6329,7 @@ static void Jedi_TacticMove( int tactic, float enemy_dist )
 			&& !NPC->client->ps.saberInFlight && !(NPC->client->ps.saberEventFlags&SEF_INWATER) )
 		{
 			ucmd.buttons |= BUTTON_SABERTHROW;
-			TIMER_Set( NPC, "saberThrowDebounce", Q_irand( 6000, 10000 ) );
+			TIMER_Set( NPC, "saberThrowDebounce", Q_irand( 8000, 14000 ) );//JKEnhanced: was 6-10 s
 		}
 		AI_JediTacticDone( NPC );
 		break;
@@ -5970,6 +6339,7 @@ static void Jedi_TacticMove( int tactic, float enemy_dist )
 			TIMER_Set( NPC, "jediTauntDebounce", Q_irand( 15000, 25000 ) );
 			Jedi_BattleTaunt();
 		}
+		AI_JediTacticDone( NPC );//a one-shot, like the opener and the throw
 		break;
 	default:
 		break;
@@ -5988,6 +6358,69 @@ static qboolean Jedi_TacticAllowsAttack( float enemy_dist )
 		return AI_JediEnemyOpen( NPC );
 	default:
 		return qtrue;
+	}
+}
+
+/*
+Jedi_DuelBand (JKEnhanced saber rules, g_saberRules)
+
+Inside an exchange (both sabers in hand, on the same level, close) the NPC holds its ground:
+it walks in if the enemy is out of reach, steps back if they crowd it, and otherwise stands or
+side-steps slowly. No hops, rolls or sudden back-offs. The tactics that break away for a
+reason the player can see (JT_RECOVER: hurt or out of Force; JT_KEEP_DISTANCE: waiting its turn
+in a group) keep their own spacing. Runs last, so it has the final say on this think's movement.
+enemy_dist is measured from the blade's reach: 0 is the edge of striking range.
+*/
+static void Jedi_DuelBand( int tactic, float enemy_dist )
+{
+	if ( !WP_SaberRules() || !NPC->enemy || !NPC->enemy->client )
+	{
+		return;
+	}
+	playerState_t		*ps = &NPC->client->ps;
+	const playerState_t	*eps = &NPC->enemy->client->ps;
+	if ( ps->weapon != WP_SABER || ps->saberInFlight || eps->weapon != WP_SABER || eps->saberInFlight )
+	{
+		return;
+	}
+	if ( tactic == JT_KEEP_DISTANCE || tactic == JT_RECOVER )
+	{
+		return;
+	}
+	if ( enemy_dist > 96.0f || NPC_Jumping() || ps->groundEntityNum == ENTITYNUM_NONE
+		|| fabs( NPC->enemy->currentOrigin[2] - NPC->currentOrigin[2] ) > 48.0f
+		|| (ps->forcePowersActive&((1<<FP_GRIP)|(1<<FP_LIGHTNING)|(1<<FP_DRAIN))) )
+	{//not in an exchange
+		return;
+	}
+	ucmd.upmove = 0;
+	ucmd.rightmove = 0;
+	ucmd.forwardmove = 0;
+	VectorClear( ps->moveDir );
+	ucmd.buttons |= BUTTON_WALKING;
+	if ( enemy_dist > 16.0f )
+	{//out of reach: walk in (unless a designer has told them to hold their spot)
+		if ( (NPCInfo->scriptFlags&SCF_CHASE_ENEMIES) )
+		{
+			ucmd.forwardmove = 127;
+		}
+	}
+	else if ( enemy_dist < -24.0f )
+	{//crowded
+		ucmd.forwardmove = -127;
+	}
+	else if ( !PM_SaberInAttack( ps->saberMove ) && !PM_SaberInStart( ps->saberMove )
+		&& WP_SaberSwingRunTime( NPC->enemy ) < 0 && WP_SaberOpenTime( NPC ) <= 0 )
+	{//between exchanges: a slow side-step one way, a pause, then the other
+		const int beat = ( level.time + NPC->s.number * 700 ) % 5000;
+		if ( beat < 1200 )
+		{
+			ucmd.rightmove = -127;
+		}
+		else if ( beat >= 2500 && beat < 3700 )
+		{
+			ucmd.rightmove = 127;
+		}
 	}
 }
 
@@ -6155,6 +6588,8 @@ static void Jedi_Combat( void )
 
 	//apply strafing/walking timers, etc.
 	Jedi_TimersApply();
+	//JKEnhanced saber rules: in an exchange, hold the distance band (no hops or back-offs)
+	Jedi_DuelBand( jediTactic, enemy_dist );
 
 	if ( TIMER_Done( NPC, "allyJediDelay" ) )
 	{
@@ -6733,6 +7168,71 @@ void NPC_BSJedi_FollowLeader( void )
 
 }
 
+/*
+Jedi_CheckRepulse (JKEnhanced)
+
+NPCs that know Repulse (bosses at spawn, others through their .npc) use it to clear space: when two
+or more enemies are within reach, or the duel brain is trying to recover and the enemy is in its
+face. Charge (blast size) goes up with difficulty; an 8-12 s cooldown keeps it rare.
+*/
+extern qboolean G_NPCRepulse( gentity_t *npc, int chargeMs );
+static qboolean Jedi_CheckRepulse( void )
+{
+	if ( NPC->client->ps.forcePowerLevel[FP_REPULSE] <= FORCE_LEVEL_0
+		|| !NPC->enemy
+		|| !TIMER_Done( NPC, "repulseCD" )
+		|| NPC->client->ps.groundEntityNum == ENTITYNUM_NONE
+		|| PM_SaberInAttack( NPC->client->ps.saberMove )
+		|| PM_InKnockDown( &NPC->client->ps ) )
+	{
+		return qfalse;
+	}
+	const float	range = 160.0f;
+	gentity_t	*radiusEnts[128];
+	vec3_t		mins, maxs;
+	for ( int i = 0; i < 3; i++ )
+	{
+		mins[i] = NPC->currentOrigin[i] - range;
+		maxs[i] = NPC->currentOrigin[i] + range;
+	}
+	const int numEnts = gi.EntitiesInBox( mins, maxs, radiusEnts, 128 );
+	int crowd = 0;
+	for ( int i = 0; i < numEnts; i++ )
+	{
+		gentity_t *ent = radiusEnts[i];
+		if ( !ent || ent == NPC || !ent->inuse || !ent->client || ent->health <= 0
+			|| ent->client->playerTeam == NPC->client->playerTeam
+			|| ent->client->playerTeam == TEAM_NEUTRAL
+			|| (ent->flags&FL_NOTARGET) )
+		{
+			continue;
+		}
+		if ( DistanceSquared( ent->currentOrigin, NPC->currentOrigin ) <= range*range )
+		{
+			crowd++;
+		}
+	}
+	const qboolean crowded = (qboolean)( crowd >= 2 );
+	const qboolean recovering = (qboolean)( NPCInfo->duelRole == JT_RECOVER
+		&& DistanceSquared( NPC->enemy->currentOrigin, NPC->currentOrigin ) <= 96.0f*96.0f );
+	if ( !crowded && !recovering )
+	{
+		return qfalse;
+	}
+	extern int WP_RepulseFullCharge( const gentity_t *self );
+	const int charge = WP_RepulseFullCharge( NPC ) * Q_min( 5, 3 + G_DifficultyLevel() ) / 5;//JKEnhanced 4B.4: 60 / 80 / 100% strength by skill (Master too)
+	if ( !G_NPCRepulse( NPC, charge ) )
+	{
+		return qfalse;
+	}
+	TIMER_Set( NPC, "repulseCD", Q_irand( 8000, 12000 ) );
+	if ( d_saberCombat->integer )
+	{
+		gi.Printf( S_COLOR_CYAN"%s: REPULSE (%s, %d enemies close, %d ms charge)\n", NPC->NPC_type, crowded ? "crowded" : "recovering", crowd, charge );
+	}
+	return qtrue;
+}
+
 qboolean Jedi_CheckHeavyAttack( void )
 {
 	if ( NPC->client->ps.saberAnimLevel == SS_STRONG
@@ -6749,13 +7249,22 @@ qboolean Jedi_CheckHeavyAttack( void )
 					{//on the ground
 						if ( ucmd.upmove <= 0 && NPC->client->ps.forceJumpCharge <= 0 )
 						{//not going to try to jump
-							if ( Q_irand( 0, g_spskill->integer+1 ) //50% chance on easy, 66% on medium, 75% on hard
-								&& !Q_irand( 0, 4 ) )//20% chance overall -- paced primarily by its own cooldown, not this roll
+							//JKEnhanced: picked by the duel brain at a good moment (enemy open, low on Force,
+							//committed to a swing...; not into a ready guard) instead of a random roll
+							extern cvar_t *g_heavyAttackThreshold;
+							const float heavyScore = AI_JediBrain_HeavyAttackScore( NPC );
+							if ( heavyScore >= g_heavyAttackThreshold->value )
 							{
+#ifndef FINAL_BUILD
+								if ( d_saberCombat->integer )
+								{
+									gi.Printf( S_COLOR_YELLOW"%s: heavy attack (score %.2f)\n", NPC->NPC_type, heavyScore );
+								}
+#endif
 								ucmd.upmove = 0;
 								VectorClear( NPC->client->ps.moveDir );
 								NPC->client->ps.heavyAttackPending = qtrue;
-								NPC->client->ps.heavyAttackDebounce = level.time + g_heavyAttackCooldown->integer;
+								NPC->client->ps.heavyAttackDebounce = level.time + (int)( g_heavyAttackCooldown->integer * G_Difficulty()->heavyCooldownScale );
 								return qtrue;
 							}
 						}
@@ -6768,7 +7277,8 @@ qboolean Jedi_CheckHeavyAttack( void )
 }
 
 qboolean Jedi_CheckKataAttack( void )
-{
+{//JKEnhanced: rolled each think while attacking, now with a "kataCD" cooldown and the heavy-attack sound as a tell
+
 	if ( NPCInfo->rank >= RANK_LT_COMM )
 	{//only top-level guys and bosses do this
 		if ( (ucmd.buttons&BUTTON_ATTACK) )
@@ -6792,9 +7302,16 @@ qboolean Jedi_CheckKataAttack( void )
 						}
 						*/
 
-						if ( Q_irand( 0, g_spskill->integer+1 ) //50% chance on easy, 66% on medium, 75% on hard
+						if ( TIMER_Done( NPC, "kataCD" )//JKEnhanced 3E: was rolled every think with no cooldown
+							&& Q_irand( 0, g_spskill->integer+1 ) //50% chance on easy, 66% on medium, 75% on hard
 							&& !Q_irand( 0, 9 ) )//10% chance overall
 						{//base on skill level
+							TIMER_Set( NPC, "kataCD", Q_irand( 6000, 10000 ) - G_DifficultyLevel() * 1000 );//(Jedi Master: 3-7 s)
+							extern cvar_t *g_heavyAttackSound;
+							if ( g_heavyAttackSound && g_heavyAttackSound->string[0] )
+							{//JKEnhanced 3E: same tell as a heavy attack - a kata is perfect-parry-only too
+								G_SoundOnEnt( NPC, CHAN_AUTO, g_heavyAttackSound->string );
+							}
 							ucmd.upmove = 0;
 							VectorClear( NPC->client->ps.moveDir );
 							if ( g_saberNewControlScheme->integer )
@@ -6858,7 +7375,16 @@ static void Jedi_Attack( void )
 	{
 		//FIXME: maybe kick out of saberlock?
 		//maybe if I'm losing I should try to force-push out of it?  Very rarely, though...
-		if ( NPC->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_2
+		if ( WP_SaberRules() )
+		{//JKEnhanced saber rules: push at a steady rate set by skill (blockSkill 1-5: every 350 / 300 /
+		 //250 / 200 / 150 ms). No rolls: how hard a push lands is the style's weight, and each costs Force.
+			if ( TIMER_Done( NPC, "lockTap" ) && !(NPC->client->ps.pm_flags&PMF_ATTACK_HELD) )
+			{
+				ucmd.buttons |= BUTTON_ATTACK;
+				TIMER_Set( NPC, "lockTap", 400 - 50 * Q_max( 1, Q_min( 5, AI_JediBlockSkill( NPC ) ) ) );
+			}
+		}
+		else if ( NPC->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_2
 			&& NPC->client->ps.saberLockTime < level.time + 5000
 			&& !Q_irand( 0, 10 ))
 		{
@@ -7125,19 +7651,22 @@ static void Jedi_Attack( void )
 			&& NPC->client->NPC_class == CLASS_REBORN
 			&& NPC->s.weapon == WP_SABER
 			&& !(NPC->client->ps.forcePowersActive&(1<<FP_HEAL))
-			&& NPC->client->ps.groundEntityNum != ENTITYNUM_NONE
-			&& TIMER_Done( NPC, "slowApproach" ) )
+			&& NPC->client->ps.groundEntityNum != ENTITYNUM_NONE )
 		{
 			float distSq = DistanceSquared( NPC->currentOrigin, NPC->enemy->currentOrigin );
 			if ( distSq > 150.0f*150.0f )
-			{
+			{//walk every think (the timer only spaces out re-aiming the goal): moving only on the think
+			 //the timer came due made them twitch forward one frame a second instead of walking
+				if ( TIMER_Done( NPC, "slowApproach" ) || NPCInfo->goalEntity != NPC->enemy )
+				{
+					NPCInfo->goalEntity = NPC->enemy;
+					NPCInfo->goalRadius = 80.0f;
+					TIMER_Set( NPC, "slowApproach", Q_irand( 600, 1200 ) );
+				}
 				NPCInfo->combatMove = qtrue;
-				NPCInfo->goalEntity = NPC->enemy;
-				NPCInfo->goalRadius = 80.0f;
 				NPC->client->ps.speed = NPCInfo->stats.walkSpeed;
 				ucmd.buttons |= BUTTON_WALKING;
 				NPC_MoveToGoal( qtrue );
-				TIMER_Set( NPC, "slowApproach", Q_irand( 600, 1200 ) );
 			}
 		}
 	}
@@ -7198,7 +7727,10 @@ static void Jedi_Attack( void )
 
 	//Check for trying a heavy attack, then a kata move
 	//FIXME: what about force-pull attacks?
-	if ( Jedi_CheckHeavyAttack() )
+	if ( Jedi_CheckRepulse() )
+	{//clearing space
+	}
+	else if ( Jedi_CheckHeavyAttack() )
 	{//doing a heavy attack
 	}
 	else if ( Jedi_CheckKataAttack() )
@@ -7605,6 +8137,16 @@ qboolean Jedi_InSpecialMove( void )
 		}
 		return qtrue;
 	}
+	else if ( ( NPC->client->ps.torsoAnim == BOTH_SCEPTER_STOP || NPC->client->ps.torsoAnim == BOTH_TAVION_SCEPTERGROUND )
+		&& NPC->client->ps.torsoAnimTimer <= 0 )
+	{//JKEnhanced: the scepter anim is over but nothing replaced it (saberMove left on a return), so the
+	 //branches below caught her every think forever - Tavion stood frozen. Back to ready, normal AI.
+		NPC->client->ps.saberMove = NPC->client->ps.saberBounceMove = LS_READY;
+		NPC->client->ps.saberBlocked = BLOCKED_NONE;
+		NPC->client->ps.legsAnimTimer = 0;
+		NPC_SetAnim( NPC, SETANIM_BOTH, BOTH_STAND1, SETANIM_FLAG_OVERRIDE );
+		NPC->count = 0;
+	}
 	else if ( NPC->client->ps.torsoAnim == BOTH_SCEPTER_STOP )
 	{
 		if ( NPC->enemy )
@@ -7867,21 +8409,43 @@ void NPC_BSJedi_Default( void )
 {
 	// Saber guard: bosses effectively fight in guard phases, so their guard fully refills once a
 	// break window ends. Generic fighters get no such freebie -- breaking their guard should
-	// actually matter, so once broken they only trickle it back the slow way below, and slower
-	// than a boss would.
-	if ( NPCInfo->guardMax > 0 )
+	// actually matter -- but they do get 40% back, or the next blocked hit of any size broke it
+	// again straight away (a stun-lock); after that they trickle it back slower than a boss would.
+	if ( WP_SaberRules() )
+	{//JKEnhanced saber rules: Force is the guard. A guard that ran out of Force left them Open (long);
+	 //when that ends they get some back - a boss all of it, anyone else 40% - or the next stop of any
+	 //size would empty it again straight away.
+		if ( NPCInfo->guardBreakTime && NPCInfo->guardBreakTime <= level.time )
+		{
+			extern qboolean G_IsSaberBoss( const gentity_t *ent, qboolean includeElites );
+			playerState_t *ps = &NPC->client->ps;
+			if ( ps->forcePowerMax > 0 )
+			{
+				ps->forcePower = G_IsSaberBoss( NPC, qtrue ) ? ps->forcePowerMax : Q_max( ps->forcePower, ps->forcePowerMax * 4 / 10 );
+			}
+			NPCInfo->guardBreakTime = 0;
+		}
+		//raise the guard by reaction time. Here, at the top of every think, so nothing further down
+		//(a Force power being weighed, a tactic, an early return) can leave a free fighter with it down
+		if ( NPC->enemy && NPC->enemy->client && NPC->client->ps.weapon == WP_SABER )
+		{
+			Jedi_GuardReact( Distance( NPC->currentOrigin, NPC->enemy->currentOrigin ) - 78.0f );
+		}
+	}
+	else if ( NPCInfo->guardMax > 0 )
 	{
-		const qboolean guardBoss = (qboolean)( (NPCInfo->aiFlags&NPCAI_BOSS_CHARACTER)
-			|| NPC->client->NPC_class == CLASS_DESANN
-			|| NPC->client->NPC_class == CLASS_TAVION
-			|| NPC->client->NPC_class == CLASS_ALORA
-			|| NPC->client->NPC_class == CLASS_KYLE
-			|| NPC->client->NPC_class == CLASS_SHADOWTROOPER );
+		//same boss test as G_DamageGuard / NPC_stats (includes the by-name bosses: tavion_scepter, alora_dual)
+		extern qboolean G_IsSaberBoss( const gentity_t *ent, qboolean includeElites );
+		const qboolean guardBoss = G_IsSaberBoss( NPC, qtrue );
 		if ( NPCInfo->guardBreakTime && NPCInfo->guardBreakTime <= level.time )
 		{//break window over
 			if ( guardBoss )
 			{
 				NPCInfo->guard = NPCInfo->guardMax;
+			}
+			else
+			{
+				NPCInfo->guard = Q_max( NPCInfo->guard, NPCInfo->guardMax * 4 / 10 );
 			}
 			NPCInfo->guardBreakTime = 0;
 		}

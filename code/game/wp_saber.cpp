@@ -30,6 +30,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../qcommon/tri_coll_test.h"
 #include "../cgame/cg_local.h"
 #include "AI_BobaFett.h"
+#include "g_difficulty.h"
+#include "g_force.h"
 
 #define JK2_RAGDOLL_GRIPNOHEALTH
 
@@ -148,6 +150,9 @@ extern qboolean Rosh_BeingHealed( gentity_t *self );
 extern qboolean G_OkayToLean( playerState_t *ps, usercmd_t *cmd, qboolean interruptOkay );
 
 int WP_AbsorbConversion(gentity_t *attacked, int atdAbsLevel, gentity_t *attacker, int atPower, int atPowerLevel, int atForceSpent);
+static const char *WP_ForceDebugWho( const gentity_t *ent );	//JKEnhanced g_debugForce (with WP_ForcePowerDrain)
+const char *WP_ForcePowerName( int power );
+extern cvar_t *g_debugForce;
 void WP_ForcePowerStart( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
 void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower );
 qboolean WP_ForcePowerUsable( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
@@ -159,6 +164,8 @@ void WP_SaberReturn( gentity_t *self, gentity_t *saber );
 void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlock );
 qboolean WP_ForcePowerAvailable( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
 void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
+qboolean WP_NPCForceFree( const gentity_t *self, int forcePower );	//JKEnhanced 4B: NPC pays nothing for this power
+static const char *WP_NPCForceFreeReason( const gentity_t *self, int forcePower );
 void WP_DeactivateSaber( gentity_t *self, qboolean clearLength = qfalse );
 qboolean FP_ForceDrainGrippableEnt( gentity_t *victim );
 
@@ -196,6 +203,7 @@ int forcePowerDarkLight[NUM_FORCE_POWERS] = //0 == neutral
 	0,//FP_SEE,//duration
 	FORCE_DARKSIDE,//FP_INSANITY
 	FORCE_LIGHTSIDE,//FP_STASIS
+	0,//FP_REPULSE (JKEnhanced, restored)
 	//NUM_FORCE_POWERS
 };
 
@@ -220,6 +228,7 @@ int forcePowerNeeded[NUM_FORCE_POWERS] =
 	20,//FP_SEE,//duration - detect/see hidden enemies
 	50,//FP_INSANITY
 	35,//FP_STASIS
+	20,//FP_REPULSE (JKEnhanced, restored)
 	//NUM_FORCE_POWERS
 };
 
@@ -1594,6 +1603,1439 @@ extern void G_FlagNPCAsKilled( gentity_t *self, gentity_t *attacker );
 void WP_DropWeapon( gentity_t *dropper, vec3_t velocity );
 extern cvar_t *g_saberMaxPlayerHitPct;
 extern cvar_t *g_debugDamage;
+extern cvar_t *g_debugBlock;
+extern qboolean G_InCinematicSaberAnim( gentity_t *self );
+qboolean WP_IsHeavyAttack( const gentity_t *ent );
+
+/*
+g_debugBlock (JKEnhanced)
+
+Why a saber hit got through the player's block. Branches that refuse or break a block record a
+reason with WP_NoteBlockFail; when a saber hit then damages the player while block is held or
+active, WP_ReportBlockFail prints one line: the recorded reason (if recent), plus the state that
+decides blocking at that moment - block button / active flag, Force, which block box was up (the
+wide box needs block active, Force > 0 and no weaponTime; otherwise only the blade itself
+blocks), the player's saber move, staggers, and where the attacker was.
+*/
+static const char	*s_blockFailNote = NULL;
+static int			s_blockFailNoteTime = -1000;
+
+void WP_NoteBlockFail( const gentity_t *defender, const char *reason )
+{
+	if ( defender && defender->s.number == 0 && g_debugBlock && g_debugBlock->integer )
+	{
+		s_blockFailNote = reason;
+		s_blockFailNoteTime = level.time;
+	}
+}
+
+/*
+==========================================================================
+Saber rules: "a blade in the way" (JKEnhanced, g_saberRules 1)
+
+Plans and Handoff\Saber_System_Concept.md. Stage 1: Guard is a state.
+
+A saber fighter's Guard is up or it isn't, and you can see which. A raised Guard stops every
+in-hand swing from the front, wherever the two blades happen to be; each stop costs the
+blocker Force, by the attacker's style (ext_data/saberanims.cfg). Guard fails in three ways only:
+the blocker is Open (off balance), has no Force, or the swing comes from behind the guard arc.
+The player's Guard is the block button. NPCs raise theirs a reaction time after the enemy's
+wind-up starts (Jedi_GuardReact, AI_Jedi.cpp). With no Guard up, a blade that reaches the body
+cuts: a saber held at ready no longer intercepts swings.
+
+Open is the one off-balance state (the "parryStaggered" timer): no guard, no attack, one
+animation per style. A guard out of Force, a perfect-parried attacker and everything that
+drained the old NPC guard meter (G_DamageGuard) all end there.
+==========================================================================
+*/
+extern cvar_t	*g_saberRules;
+extern cvar_t	*g_saberOpenShort;
+extern cvar_t	*g_saberOpenMedium;
+extern cvar_t	*g_saberOpenLong;
+extern cvar_t	*g_saberGuardRegenPause;
+extern cvar_t	*g_saberHeavyStopCost;
+extern cvar_t	*g_npcForcePool;
+extern cvar_t	*g_guardBreakSound;
+extern qboolean G_IsSaberBoss( const gentity_t *ent, qboolean includeElites );
+static void WP_SaberCamKick( float intensity, int duration );	//(defined with the hit-stop, further down)
+
+qboolean WP_SaberRules( void )
+{
+	return (qboolean)( g_saberRules && g_saberRules->integer );
+}
+
+// one row per style; ext_data/saberanims.cfg overrides any of it
+// (guard pose -1 = the style's own saber stance; Neutral is hands at the sides)
+#define PH( a, b, c, d )	{ LS_A_##a, LS_A_##b, LS_A_##c, LS_A_##d }
+static const saberStyleSheet_t s_defaultStyleSheet[SS_NUM_SABER_STYLES] =
+{
+	//	stop	arc		guard	Open pose		Neutral			windup	recover	weight	phrases
+	{	20,		200,	-1,		-1,				BOTH_STAND1,	300,	500,	2,		0 },	// SS_NONE
+	{	12,		200,	-1,		BOTH_H1_S1_TR,	BOTH_STAND1,	200,	350,	1,		4, { 4, 3, 4, 3 },	// SS_FAST: long, light strings
+		{ PH( L2R, R2L, L2R, T2B ), PH( TR2BL, BL2TR, R2L, T2B ), PH( BR2TL, TL2BR, R2L, L2R ), PH( T2B, R2L, L2R, T2B ) } },
+	{	20,		200,	-1,		BOTH_H1_S1_T_,	BOTH_STAND1,	300,	500,	2,		4, { 3, 2, 3, 2 },	// SS_MEDIUM
+		{ PH( TL2BR, R2L, T2B, T2B ), PH( L2R, R2L, T2B, T2B ), PH( TR2BL, BL2TR, T2B, T2B ), PH( BR2TL, TL2BR, T2B, T2B ) } },
+	{	32,		200,	-1,		BOTH_H1_S1_BL,	BOTH_STAND1,	450,	750,	3,		4, { 1, 2, 1, 2 },	// SS_STRONG: one or two big swings
+		{ PH( T2B, T2B, T2B, T2B ), PH( TL2BR, TR2BL, T2B, T2B ), PH( R2L, T2B, T2B, T2B ), PH( BL2TR, T2B, T2B, T2B ) } },
+	{	40,		200,	-1,		BOTH_H1_S1_BR,	BOTH_STAND1,	450,	800,	3,		3, { 2, 1, 2 },		// SS_DESANN
+		{ PH( T2B, R2L, T2B, T2B ), PH( TR2BL, T2B, T2B, T2B ), PH( L2R, T2B, T2B, T2B ) } },
+	{	24,		200,	-1,		BOTH_H1_S1_TL,	BOTH_STAND1,	200,	450,	2,		3, { 3, 2, 4 },		// SS_TAVION
+		{ PH( TL2BR, R2L, TL2BR, T2B ), PH( R2L, T2B, T2B, T2B ), PH( TR2BL, BL2TR, R2L, T2B ) } },
+	{	20,		200,	-1,		BOTH_H1_S1_T_,	BOTH_STAND1,	300,	500,	2,		2, { 3, 2 },		// SS_KATARN
+		{ PH( TL2BR, R2L, T2B, T2B ), PH( L2R, R2L, T2B, T2B ) } },
+	{	16,		260,	-1,		BOTH_H6_S6_T_,	BOTH_STAND1,	250,	450,	2,		3, { 4, 3, 3 },		// SS_DUAL: many light hits
+		{ PH( L2R, R2L, L2R, R2L ), PH( TL2BR, TR2BL, T2B, T2B ), PH( BR2TL, BL2TR, R2L, T2B ) } },
+	{	18,		280,	-1,		BOTH_H7_S7_T_,	BOTH_STAND1,	300,	500,	2,		3, { 3, 4, 2 },		// SS_STAFF
+		{ PH( R2L, L2R, T2B, T2B ), PH( TL2BR, BR2TL, TR2BL, BL2TR ), PH( T2B, R2L, T2B, T2B ) } },
+};
+#undef PH
+static saberStyleSheet_t	s_styleSheet[SS_NUM_SABER_STYLES];
+static qboolean				s_styleSheetLoaded = qfalse;
+
+const saberStyleSheet_t *WP_SaberStyleSheet( int saberAnimLevel )
+{
+	if ( saberAnimLevel < SS_NONE || saberAnimLevel >= SS_NUM_SABER_STYLES )
+	{
+		saberAnimLevel = SS_MEDIUM;
+	}
+	return s_styleSheetLoaded ? &s_styleSheet[saberAnimLevel] : &s_defaultStyleSheet[saberAnimLevel];
+}
+
+static void WP_ParseSaberStyleBlock( const char **p, saberStyleSheet_t *sheet )
+{
+	qboolean ownPhrases = qfalse;
+	const char *token = COM_ParseExt( p, qtrue );
+	if ( Q_stricmp( token, "{" ) )
+	{
+		Com_Printf( S_COLOR_YELLOW"saberanims.cfg: expected { after style NAME\n" );
+		return;
+	}
+	while ( 1 )
+	{
+		token = COM_ParseExt( p, qtrue );
+		if ( !token[0] || !Q_stricmp( token, "}" ) )
+		{
+			return;
+		}
+		int n = 0;
+		if ( !Q_stricmp( token, "stopCost" ) )		{ if ( !COM_ParseInt( p, &n ) ) sheet->stopCost = n; }
+		else if ( !Q_stricmp( token, "guardArc" ) )	{ if ( !COM_ParseInt( p, &n ) ) sheet->guardArc = n; }
+		else if ( !Q_stricmp( token, "windup" ) )	{ if ( !COM_ParseInt( p, &n ) ) sheet->windup = n; }
+		else if ( !Q_stricmp( token, "recover" ) )	{ if ( !COM_ParseInt( p, &n ) ) sheet->recover = n; }
+		else if ( !Q_stricmp( token, "weight" ) )	{ if ( !COM_ParseInt( p, &n ) ) sheet->weight = n; }
+		else if ( !Q_stricmp( token, "phrase" ) )
+		{//phrase TL2BR R2L T2B: up to 4 swings on one line; a style's first phrase line replaces the built-in set
+			static const char *swingNames[7] = { "TL2BR", "L2R", "BL2TR", "BR2TL", "R2L", "TR2BL", "T2B" };
+			if ( !ownPhrases )
+			{
+				ownPhrases = qtrue;
+				sheet->numPhrases = 0;
+			}
+			int len = 0;
+			int swings[SABER_PHRASE_SWINGS];
+			while ( 1 )
+			{
+				token = COM_ParseExt( p, qfalse );
+				if ( !token[0] )
+				{
+					break;
+				}
+				int s;
+				for ( s = 0; s < 7; s++ )
+				{
+					if ( !Q_stricmp( token, swingNames[s] ) )
+					{
+						break;
+					}
+				}
+				if ( s == 7 )
+				{
+					Com_Printf( S_COLOR_YELLOW"saberanims.cfg: unknown swing '%s' (TL2BR L2R BL2TR BR2TL R2L TR2BL T2B)\n", token );
+				}
+				else if ( len < SABER_PHRASE_SWINGS )
+				{
+					swings[len++] = LS_A_TL2BR + s;
+				}
+			}
+			if ( len > 0 && sheet->numPhrases < SABER_STYLE_PHRASES )
+			{
+				sheet->phraseLen[sheet->numPhrases] = len;
+				memcpy( sheet->phrase[sheet->numPhrases], swings, sizeof( int ) * len );
+				sheet->numPhrases++;
+			}
+		}
+		else if ( !Q_stricmp( token, "guardAnim" ) || !Q_stricmp( token, "openAnim" ) || !Q_stricmp( token, "neutralAnim" ) )
+		{//an animation name from anims.h, or "none" for the stock pose
+			int *dest = !Q_stricmp( token, "guardAnim" ) ? &sheet->guardAnim
+				: ( !Q_stricmp( token, "openAnim" ) ? &sheet->openAnim : &sheet->neutralAnim );
+			token = COM_ParseExt( p, qfalse );
+			if ( !Q_stricmp( token, "none" ) )
+			{
+				*dest = -1;
+			}
+			else
+			{
+				const int anim = GetIDForString( animTable, token );
+				if ( anim < 0 )
+				{
+					Com_Printf( S_COLOR_YELLOW"saberanims.cfg: unknown animation '%s'\n", token );
+				}
+				else
+				{
+					*dest = anim;
+				}
+			}
+		}
+		else
+		{
+			Com_Printf( S_COLOR_YELLOW"saberanims.cfg: unknown key '%s'\n", token );
+			SkipRestOfLine( p );
+		}
+	}
+}
+
+void WP_LoadSaberStyleSheet( void )
+{
+	static const char *styleNames[SS_NUM_SABER_STYLES] = { "none", "fast", "medium", "strong", "desann", "tavion", "katarn", "dual", "staff" };
+	memcpy( s_styleSheet, s_defaultStyleSheet, sizeof( s_styleSheet ) );
+	s_styleSheetLoaded = qtrue;
+
+	char *buffer = NULL;
+	const int len = gi.FS_ReadFile( "ext_data/saberanims.cfg", (void **)&buffer );
+	if ( len <= 0 || !buffer )
+	{
+		Com_Printf( S_COLOR_YELLOW"WP_LoadSaberStyleSheet: no ext_data/saberanims.cfg, using built-in values\n" );
+		return;
+	}
+	COM_BeginParseSession( "saberanims.cfg" );
+	const char *p = buffer;
+	while ( 1 )
+	{
+		const char *token = COM_ParseExt( &p, qtrue );
+		if ( !token[0] )
+		{
+			break;
+		}
+		if ( Q_stricmp( token, "style" ) )
+		{
+			Com_Printf( S_COLOR_YELLOW"saberanims.cfg: expected 'style NAME', got '%s'\n", token );
+			SkipRestOfLine( &p );
+			continue;
+		}
+		token = COM_ParseExt( &p, qfalse );
+		int style = -1;
+		for ( int i = SS_FAST; i < SS_NUM_SABER_STYLES; i++ )
+		{
+			if ( !Q_stricmp( token, styleNames[i] ) )
+			{
+				style = i;
+				break;
+			}
+		}
+		if ( style == -1 )
+		{
+			Com_Printf( S_COLOR_YELLOW"saberanims.cfg: unknown style '%s'\n", token );
+			break;
+		}
+		WP_ParseSaberStyleBlock( &p, &s_styleSheet[style] );
+	}
+	COM_EndParseSession();
+	gi.FS_FreeFile( buffer );
+}
+
+//ms of Open left (0 = not Open)
+int WP_SaberOpenTime( gentity_t *ent )
+{
+	if ( !ent || !ent->client )
+	{
+		return 0;
+	}
+	int left = TIMER_Done( ent, "parryStaggered" ) ? 0 : TIMER_Get( ent, "parryStaggered" ) - level.time;
+	if ( ent->NPC && ent->NPC->guardBreakTime - level.time > left )
+	{
+		left = ent->NPC->guardBreakTime - level.time;
+	}
+	return Q_max( 0, left );
+}
+
+/*
+WP_SaberSetOpen
+
+Knocks a fighter Open for ms: guard down, no parry (WP_SaberParry), no attack or block
+(ClientThink_real for the player, "attackDelay" for NPCs). Pmove plays the style's Open pose for
+as long as it lasts (PM_WeaponLightsaber, BLOCKED_PARRY_BROKEN). Never shortens one already running.
+*/
+void WP_SaberSetOpen( gentity_t *ent, int ms )
+{
+	if ( !ent || !ent->client || ent->health <= 0 || ms <= 0 )
+	{
+		return;
+	}
+	if ( TIMER_Done( ent, "parryStaggered" ) || TIMER_Get( ent, "parryStaggered" ) < level.time + ms )
+	{
+		TIMER_Set( ent, "parryStaggered", ms );
+	}
+	if ( ent->NPC && ( TIMER_Done( ent, "attackDelay" ) || TIMER_Get( ent, "attackDelay" ) < level.time + ms ) )
+	{
+		TIMER_Set( ent, "attackDelay", ms );
+	}
+	playerState_t *ps = &ent->client->ps;
+	ps->saberBlockingTime = 0;
+	if ( ps->weapon == WP_SABER && !ps->saberInFlight && !PM_InKnockDown( ps ) && ps->saberLockTime < level.time )
+	{
+		ps->saberBlocked = BLOCKED_PARRY_BROKEN;
+		ps->saberBounceMove = LS_NONE;
+	}
+}
+
+typedef enum
+{
+	GUARD_UP = 0,
+	GUARD_DOWN,		//not guarding: Neutral, or committed to a swing
+	GUARD_OPEN,		//off balance
+	GUARD_NO_FORCE,
+	GUARD_BEHIND,	//the attacker is outside the guard arc
+} guardState_t;
+
+static qboolean WP_SaberSwinging( const playerState_t *ps )
+{
+	//(a transition between two strikes is part of the swing: the blade is on its way to the next one)
+	return (qboolean)( PM_SaberInStart( ps->saberMove ) || PM_SaberInAttack( ps->saberMove )
+		|| PM_SaberInTransition( ps->saberMove ) || PM_SaberInSpecialAttack( ps->torsoAnim ) );
+}
+
+//attacker NULL: is the Guard up at all (no arc test)
+static guardState_t WP_GuardState( gentity_t *ent, const gentity_t *attacker )
+{
+	if ( !ent || !ent->client || ent->health <= 0 )
+	{
+		return GUARD_DOWN;
+	}
+	playerState_t *ps = &ent->client->ps;
+	if ( ps->weapon != WP_SABER || !ps->SaberActive()
+		|| ( ps->saberInFlight && !( ps->dualSabers && ps->saber[1].Active() ) ) )
+	{
+		return GUARD_DOWN;
+	}
+	if ( WP_SaberOpenTime( ent ) > 0 || PM_InKnockDown( ps ) || PM_SaberInBrokenParry( ps->saberMove ) )
+	{
+		return GUARD_OPEN;
+	}
+	if ( ps->saberBlockingTime <= level.time || WP_SaberSwinging( ps ) )
+	{
+		return GUARD_DOWN;
+	}
+	if ( ps->forcePowerMax > 0 && ps->forcePower <= 0 )
+	{
+		return GUARD_NO_FORCE;
+	}
+	if ( attacker )
+	{
+		vec3_t fwd, toAtt;
+		const vec3_t yawOnly = { 0, ps->viewangles[YAW], 0 };
+		AngleVectors( yawOnly, fwd, NULL, NULL );
+		VectorSubtract( attacker->currentOrigin, ent->currentOrigin, toAtt );
+		toAtt[2] = 0;
+		if ( VectorNormalize( toAtt ) > 0.0f )
+		{
+			const float halfArc = WP_SaberStyleSheet( ps->saberAnimLevel )->guardArc * 0.5f;
+			if ( RAD2DEG( acos( Com_Clamp( -1.0f, 1.0f, DotProduct( fwd, toAtt ) ) ) ) > halfArc )
+			{
+				return GUARD_BEHIND;
+			}
+		}
+	}
+	return GUARD_UP;
+}
+
+qboolean WP_SaberGuardUp( gentity_t *ent )
+{
+	return (qboolean)( WP_GuardState( ent, NULL ) == GUARD_UP );
+}
+
+//when each fighter's current run of swings began (wind-up, strike or the transition between two
+//strikes); an NPC's guard reaction time counts from here. Not saved: it restarts with the next swing.
+static int s_swingRunStart[MAX_GENTITIES];
+
+static void WP_SaberTrackSwingRun( gentity_t *self )
+{
+	const playerState_t *ps = &self->client->ps;
+	const int n = self->s.number;
+	if ( ps->weapon == WP_SABER && !ps->saberInFlight && self->health > 0
+		&& ( WP_SaberSwinging( ps ) || PM_SaberInTransition( ps->saberMove ) ) )
+	{
+		if ( !s_swingRunStart[n] || s_swingRunStart[n] > level.time )
+		{
+			s_swingRunStart[n] = level.time;
+		}
+	}
+	else
+	{
+		s_swingRunStart[n] = 0;
+	}
+}
+
+//ms since ent's run of swings began, -1 if it isn't swinging
+int WP_SaberSwingRunTime( const gentity_t *ent )
+{
+	if ( !ent || !ent->client || ent->s.number < 0 || ent->s.number >= MAX_GENTITIES )
+	{
+		return -1;
+	}
+	const int start = s_swingRunStart[ent->s.number];
+	return ( start && start <= level.time ) ? level.time - start : -1;
+}
+
+//swings in a row a fighter's guard has stopped (lapses after 3 s without one). An NPC that has
+//taken enough answers with an attack of its own; that replaces the old "they read you" knockaway.
+static int s_stopsTaken[MAX_GENTITIES];
+static int s_stopsTime[MAX_GENTITIES];
+
+int WP_SaberStopsTaken( gentity_t *ent )
+{
+	if ( !ent || ent->s.number < 0 || ent->s.number >= MAX_GENTITIES )
+	{
+		return 0;
+	}
+	const int n = ent->s.number;
+	return ( level.time >= s_stopsTime[n] && level.time - s_stopsTime[n] <= 3000 ) ? s_stopsTaken[n] : 0;
+}
+
+void WP_SaberStopsClear( gentity_t *ent )
+{
+	if ( ent && ent->s.number >= 0 && ent->s.number < MAX_GENTITIES )
+	{
+		s_stopsTaken[ent->s.number] = 0;
+	}
+}
+
+/*
+WP_SaberFollowThrough (saber rules)
+
+The opening after an NPC's attack phrase, made visible: the last swing's end pose is held for
+holdMs (the anim stops on its last frame, blade out wide) before the blade comes back. For that
+time the blade is spent (WP_SaberDamageTrace does nothing) and, still being in the swing, the
+fighter has no guard. left = ms of the swing still to play.
+*/
+static int s_followFrom[MAX_GENTITIES];
+static int s_followUntil[MAX_GENTITIES];
+
+void WP_SaberFollowThrough( gentity_t *ent, int left, int holdMs )
+{
+	if ( !ent || !ent->client || ent->s.number < 0 || ent->s.number >= MAX_GENTITIES || holdMs <= 0 )
+	{
+		return;
+	}
+	playerState_t *ps = &ent->client->ps;
+	const int n = ent->s.number;
+	s_followFrom[n] = level.time + left;
+	s_followUntil[n] = level.time + left + holdMs;
+	if ( ps->legsAnim == ps->torsoAnim && ps->legsAnimTimer > 0 )
+	{
+		ps->legsAnimTimer += holdMs;
+	}
+	if ( ps->torsoAnimTimer > 0 )
+	{
+		ps->torsoAnimTimer += holdMs;
+	}
+	if ( ps->weaponTime > 0 )
+	{
+		ps->weaponTime += holdMs;
+	}
+}
+void WP_SaberFollowThroughClear( gentity_t *ent )
+{//the swing was dropped: no hold, no opening
+	if ( ent && ent->s.number >= 0 && ent->s.number < MAX_GENTITIES )
+	{
+		s_followFrom[ent->s.number] = s_followUntil[ent->s.number] = 0;
+	}
+}
+
+
+qboolean WP_SaberInFollowThrough( const gentity_t *ent )
+{
+	if ( !ent || ent->s.number < 0 || ent->s.number >= MAX_GENTITIES )
+	{
+		return qfalse;
+	}
+	const int n = ent->s.number;
+	return (qboolean)( level.time >= s_followFrom[n] && level.time < s_followUntil[n]
+		&& s_followUntil[n] - level.time < 5000 );
+}
+
+//g_debugBlock: why a guard didn't stop a swing. The player's own failures go into the BLOCK FAILED
+//line (WP_ReportBlockFail); an NPC's are printed here, once per swing, when the player is the one swinging.
+extern const char *Jedi_GuardDownReason( gentity_t *npc, gentity_t *attacker );
+static void WP_NoteGuardFail( gentity_t *defender, gentity_t *attacker, guardState_t gs )
+{
+	if ( defender && defender->NPC && attacker && attacker->s.number == 0 && attacker->client
+		&& g_debugBlock && g_debugBlock->integer )
+	{
+		static int s_move[MAX_GENTITIES];
+		static int s_time[MAX_GENTITIES];
+		const int d = defender->s.number;
+		if ( s_move[d] != attacker->client->ps.saberMove || level.time < s_time[d] || level.time - s_time[d] > 600 )
+		{
+			s_move[d] = attacker->client->ps.saberMove;
+			s_time[d] = level.time;
+			gi.Printf( S_COLOR_CYAN "GUARD DOWN" S_COLOR_WHITE " %s (Force %d): %s\n",
+				defender->NPC_type ? defender->NPC_type : "?", defender->client->ps.forcePower,
+				gs == GUARD_UP ? "his guard was UP and facing you - the cut reached the body anyway (a bug)"
+				: gs == GUARD_OPEN ? "OPEN (off balance)"
+				: gs == GUARD_NO_FORCE ? "NO FORCE left"
+				: gs == GUARD_BEHIND ? "your swing came from BEHIND his guard"
+				: Jedi_GuardDownReason( defender, attacker ) );
+		}
+		return;
+	}
+	switch ( gs )
+	{
+	case GUARD_OPEN:
+		WP_NoteBlockFail( defender, "guard failed: you were OPEN (off balance)" );
+		break;
+	case GUARD_NO_FORCE:
+		WP_NoteBlockFail( defender, "guard failed: NO FORCE left" );
+		break;
+	case GUARD_BEHIND:
+		WP_NoteBlockFail( defender, "guard failed: the swing came from BEHIND your guard" );
+		break;
+	case GUARD_DOWN:
+		WP_NoteBlockFail( defender, "guard not up (block not held, or you were mid-swing)" );
+		break;
+	default:
+		break;
+	}
+}
+
+/*
+WP_SaberGuardPay
+
+Takes Force off a guard. At 0 the guard collapses: Open (long), with the bark and the clang.
+The stop that emptied it still held. NPCs with no Force pool (or g_npcForcePool 0) pay nothing.
+*/
+static void WP_SaberGuardPay( gentity_t *ent, gentity_t *attacker, int cost )
+{
+	if ( !ent || !ent->client || ent->health <= 0 || cost <= 0 )
+	{
+		return;
+	}
+	playerState_t *ps = &ent->client->ps;
+	if ( ps->forcePowerMax <= 0 || ( ent->NPC && ( !g_npcForcePool || !g_npcForcePool->integer ) ) )
+	{
+		return;
+	}
+	if ( WP_SaberOpenTime( ent ) > 0 )
+	{//already Open: nothing left to wear down
+		return;
+	}
+	ps->forcePower = Q_max( 0, ps->forcePower - cost );
+	const int pause = level.time + ( g_saberGuardRegenPause ? g_saberGuardRegenPause->integer : 1000 );
+	if ( ps->forcePowerRegenDebounceTime < pause )
+	{
+		ps->forcePowerRegenDebounceTime = pause;
+	}
+	if ( ( ent->s.number == 0 && g_debugBlock && g_debugBlock->integer ) || d_saberCombat->integer )
+	{
+		gi.Printf( "guard: %s pays %d Force (%d left)\n", ent->NPC_type ? ent->NPC_type : "player", cost, ps->forcePower );
+	}
+	if ( ps->forcePower > 0 )
+	{
+		return;
+	}
+	const int openMs = g_saberOpenLong ? g_saberOpenLong->integer : 1500;
+	WP_SaberSetOpen( ent, openMs );
+	if ( ent->NPC )
+	{//boss stages and the target bar read this as "guard broken"; the Force comes back when it ends (NPC_BSJedi_Default)
+		ent->NPC->guardBreakTime = level.time + openMs;
+	}
+	G_AddVoiceEvent( ent, Q_irand( EV_PUSHED1, EV_PUSHED3 ), 500 );
+	if ( g_guardBreakSound && g_guardBreakSound->string[0] )
+	{
+		G_SoundOnEnt( ent, CHAN_AUTO, g_guardBreakSound->string );
+	}
+	if ( ent->s.number == 0 || ( attacker && attacker->s.number == 0 ) )
+	{
+		WP_SaberCamKick( 0.6f, 200 );
+	}
+	if ( ( g_debugBlock && g_debugBlock->integer ) || d_saberCombat->integer )
+	{
+		gi.Printf( S_COLOR_RED "GUARD COLLAPSED:" S_COLOR_WHITE " %s is out of Force, Open for %d ms\n",
+			ent->NPC_type ? ent->NPC_type : "player", openMs );
+	}
+}
+
+//for callers outside this file (kicks): what a raised guard pays to take a hit that isn't a swing
+void WP_SaberGuardCost( gentity_t *ent, gentity_t *attacker, int cost )
+{
+	WP_SaberGuardPay( ent, attacker, cost );
+}
+
+/*
+WP_SaberLockPush (saber rules)
+
+One tap in a saber lock. Costs g_saberLockTapCost Force and pushes the lock by the style's
+weight (ext_data/saberanims.cfg); with too little Force left the tap does nothing, so a
+fighter who runs dry gets pushed out. Returns how far this tap pushes.
+*/
+extern cvar_t *g_saberLockTapCost;
+int WP_SaberLockPush( gentity_t *ent )
+{
+	playerState_t *ps = &ent->client->ps;
+	const int cost = g_saberLockTapCost ? g_saberLockTapCost->integer : 0;
+	if ( cost > 0 && ps->forcePowerMax > 0 && !( ent->NPC && ( !g_npcForcePool || !g_npcForcePool->integer ) ) )
+	{
+		if ( ps->forcePower < cost )
+		{
+			return 0;
+		}
+		ps->forcePower -= cost;
+		if ( ps->forcePowerRegenDebounceTime < level.time + 500 )
+		{
+			ps->forcePowerRegenDebounceTime = level.time + 500;
+		}
+	}
+	return Q_max( 1, WP_SaberStyleSheet( ps->saberAnimLevel )->weight );
+}
+
+/*
+WP_SaberGuardStop
+
+A raised Guard stops an in-hand swing. Returns qtrue if the swing glanced off (deflection sound).
+- A perfect parry (the player's timed tap) is free and
+  leaves the attacker Open: short, or medium if the swing was a heavy attack or kata.
+- Anything else costs the blocker Force once per swing: the attacker's style stopCost
+  (g_saberHeavyStopCost for a heavy), x0.85 / x0.7 at Saber Defense 2 / 3.
+*/
+qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, int bladeNum );
+qboolean WP_InPerfectParryWindowVs( const gentity_t *self, const gentity_t *attacker, qboolean missile );
+extern qboolean WP_NPCPerfectParry( gentity_t *self );
+void WP_PerfectParryReward( gentity_t *defender, gentity_t *attacker, qboolean heavy, qboolean ranged );
+void WP_PerfectParrySuccess( gentity_t *self, vec3_t impactPoint, vec3_t normal );
+static qboolean WP_SaberGuardStop( gentity_t *attacker, gentity_t *defender, int saberNum, int bladeNum, qboolean heavy, int attackPower )
+{
+	static int	s_stopBy[MAX_GENTITIES];
+	static int	s_stopMove[MAX_GENTITIES];
+	static int	s_stopTime[MAX_GENTITIES];
+	playerState_t	*aps = &attacker->client->ps;
+	playerState_t	*dps = &defender->client->ps;
+	const int		d = defender->s.number;
+	const qboolean	perfect = (qboolean)( WP_InPerfectParryWindowVs( defender, attacker, qfalse ) );
+	qboolean		deflected = qfalse;
+
+	if ( !perfect && attackPower < FORCE_LEVEL_3 )
+	{//lighter swings can glance off at an angle
+		deflected = WP_GetSaberDeflectionAngle( attacker, defender );
+	}
+	aps->saberEventFlags |= SEF_BLOCKED;
+	WP_SaberParry( defender, attacker, saberNum, bladeNum );
+
+	if ( perfect )
+	{
+		dps->saberBounceMove = PM_KnockawayForParry( dps->saberBlocked );
+		WP_PerfectParryReward( defender, attacker, heavy, qfalse );
+		WP_PerfectParrySuccess( defender, saberHitLocation, saberHitNormal );
+		if ( defender->s.number == 0 || attacker->s.number == 0 )
+		{
+			WP_SaberCamKick( 0.3f, 100 );
+		}
+		return qfalse;
+	}
+
+	//once per swing: the blade stays in contact for several frames
+	if ( s_stopBy[d] == attacker->s.number + 1 && s_stopMove[d] == aps->saberMove
+		&& level.time >= s_stopTime[d] && level.time - s_stopTime[d] < 1000 )
+	{
+		return deflected;
+	}
+	s_stopBy[d] = attacker->s.number + 1;
+	s_stopMove[d] = aps->saberMove;
+	s_stopTime[d] = level.time;
+	//how many swings in a row this guard has stopped: an NPC answers after enough (Jedi_PhraseThink)
+	s_stopsTaken[d] = ( level.time < s_stopsTime[d] || level.time - s_stopsTime[d] > 3000 ) ? 1 : s_stopsTaken[d] + 1;
+	s_stopsTime[d] = level.time;
+
+	int cost = heavy ? ( g_saberHeavyStopCost ? g_saberHeavyStopCost->integer : 50 )
+		: WP_SaberStyleSheet( aps->saberAnimLevel )->stopCost;
+	const int defLevel = dps->forcePowerLevel[FP_SABER_DEFENSE];
+	if ( defLevel >= FORCE_LEVEL_3 )
+	{
+		cost = cost * 7 / 10;
+	}
+	else if ( defLevel >= FORCE_LEVEL_2 )
+	{
+		cost = cost * 85 / 100;
+	}
+	WP_SaberGuardPay( defender, attacker, Q_max( 1, cost ) );
+	if ( defender->s.number == 0 )
+	{//attack right off a block and the parry recovery is skipped (G_CheckClampUcmd)
+		TIMER_Set( defender, "riposteWindow", 300 );
+	}
+	return deflected;
+}
+
+/*
+Cuts (saber rules, Stage 2)
+
+A real swing that reaches a saber fighter's body is a cut, and what it does comes from how much
+blade went through and where - not from a health number.
+- depth: the distance the blade's points travelled inside the model, added up over the swing's
+  frames (contact damage / the swing's base damage). Under g_saberCutDepth (half that on a limb)
+  it's a graze.
+- graze, anywhere: a wound.
+- solid cut on a limb: a wound plus what that limb costs them (WP_SaberCutEffects). Never a kill
+  on its own: the engine's "went through the limb" test says yes to every limb hit with
+  g_saberMoreRealistic 2+, so it can't be trusted to mean a severed arm. The wound that finishes
+  them (the third) takes the limb off.
+- solid cut on the torso or head: a kill.
+A wound is a third of max health, so three finish anyone. A staged boss loses a third of a stage
+to a wound and the whole stage to a kill-grade cut (G_BossStageClamp holds them at the floor).
+The player is never maimed: graze 12%, limb 30%, torso/head by difficulty (coreCutToPlayer).
+One swing is one cut: later frames of the same swing only count if they make it worse.
+Thrown sabers, finishers and ordinary troopers keep the older damage rules.
+*/
+typedef enum
+{
+	CUT_NONE = 0,
+	CUT_GRAZE,
+	CUT_LIMB,
+	CUT_KILL,
+} saberCut_t;
+
+extern cvar_t	*g_saberCutDepth;
+extern cvar_t	*g_saberPlayerDamageScale;
+extern int G_BossStageSize( const gentity_t *ent );
+
+static qboolean WP_HitLocIsLimb( int hl )
+{
+	switch ( hl )
+	{
+	case HL_FOOT_RT:
+	case HL_FOOT_LT:
+	case HL_LEG_RT:
+	case HL_LEG_LT:
+	case HL_ARM_RT:
+	case HL_ARM_LT:
+	case HL_HAND_RT:
+	case HL_HAND_LT:
+		return qtrue;
+	}
+	return qfalse;
+}
+
+//returns the cut this frame made it (CUT_NONE = nothing worse than the swing has already done)
+//and the health to take for it
+static saberCut_t WP_SaberCutResolve( gentity_t *attacker, gentity_t *victim, float depth, int hitLoc, qboolean through, int *damage )
+{
+	static int		s_by[MAX_GENTITIES];
+	static int		s_move[MAX_GENTITIES];
+	static int		s_time[MAX_GENTITIES];
+	static int		s_level[MAX_GENTITIES];
+	static int		s_dealt[MAX_GENTITIES];
+	static float	s_depth[MAX_GENTITIES];
+	const int v = victim->s.number;
+	const int move = attacker->client->ps.saberMove;
+	if ( s_by[v] != attacker->s.number + 1 || s_move[v] != move
+		|| level.time < s_time[v] || level.time - s_time[v] > 600 )
+	{//a new swing
+		s_by[v] = attacker->s.number + 1;
+		s_move[v] = move;
+		s_level[v] = CUT_NONE;
+		s_dealt[v] = 0;
+		s_depth[v] = 0.0f;
+	}
+	s_time[v] = level.time;
+	s_depth[v] += depth;
+
+	const qboolean	isPlayer = (qboolean)( victim->s.number < MAX_CLIENTS );
+	const qboolean	limb = WP_HitLocIsLimb( hitLoc );
+	const float		need = ( g_saberCutDepth ? g_saberCutDepth->value : 10.0f ) * ( limb ? 0.5f : 1.0f );
+	saberCut_t		cut;
+	if ( s_depth[v] < need )
+	{
+		cut = CUT_GRAZE;
+	}
+	else if ( limb )
+	{
+		cut = CUT_LIMB;
+	}
+	else
+	{
+		cut = CUT_KILL;
+	}
+	if ( g_debugDamage->integer )
+	{
+		gi.Printf( "cut: %s on %d, depth %.1f (solid at %.1f), hitloc %d%s%s -> %s%s\n",
+			attacker->NPC_type ? attacker->NPC_type : "player", v, s_depth[v], need, hitLoc,
+			limb ? " limb" : " core", through ? " through" : "",
+			cut == CUT_GRAZE ? "GRAZE" : ( cut == CUT_LIMB ? "LIMB" : "KILL" ),
+			cut <= s_level[v] ? " (no worse than this swing has done)" : "" );
+	}
+	if ( cut <= s_level[v] )
+	{
+		return CUT_NONE;
+	}
+
+	int take;
+	if ( isPlayer )
+	{
+		const float frac = cut == CUT_GRAZE ? 0.12f : ( cut == CUT_LIMB ? 0.3f : G_Difficulty()->coreCutToPlayer );
+		const float scale = g_saberPlayerDamageScale ? g_saberPlayerDamageScale->value : 1.0f;
+		//(the real max, not the 999 the undying cheat sets)
+		int maxHealth = victim->client->ps.stats[STAT_MAX_HEALTH] > 0 ? victim->client->ps.stats[STAT_MAX_HEALTH] : victim->max_health;
+		if ( (victim->flags&FL_UNDYING) && maxHealth > 100 )
+		{//the undying cheat sets max health to 999, which made every cut read ten times too big
+			maxHealth = 100;
+		}
+		take = (int)ceil( maxHealth * frac * scale ) - s_dealt[v];
+	}
+	else if ( cut == CUT_KILL )
+	{//(a staged boss is held at its stage floor by G_BossStageClamp)
+		take = victim->health;
+	}
+	else
+	{
+		const int stage = G_BossStageSize( victim );
+		take = (int)ceil( ( stage ? stage : victim->max_health ) / 3.0f ) - s_dealt[v];
+	}
+	take = Q_max( 1, take );
+	s_level[v] = cut;
+	s_dealt[v] += take;
+	*damage = take;
+	return cut;
+}
+
+#define SABER_WOUND_TIME	0x3FFFFFFF	//"woundArm" / "woundLeg" timers: for good
+
+/*
+WP_SaberCutEffects
+
+After a cut on a saber fighter who lived through it.
+- One opening, one cut: if they were Open, the cut ends it (they can guard the next swing).
+  If they weren't, an NPC flinches: Open (short). The player doesn't (it cost them the guard for the
+  rest of the enemy's phrase).
+- A solid limb cut on an NPC costs them that limb's use: an arm slows their guard and the gap
+  after their attacks ("woundArm", read by the Jedi AI); a hand drops the saber; a leg slows
+  them and stops flips and rolls ("woundLeg").
+*/
+static void WP_SaberCutEffects( gentity_t *attacker, gentity_t *victim, saberCut_t cut, int hitLoc, qboolean wasOpen )
+{
+	playerState_t *ps = &victim->client->ps;
+	if ( wasOpen )
+	{
+		TIMER_Remove( victim, "parryStaggered" );
+		if ( victim->NPC )
+		{
+			TIMER_Remove( victim, "attackDelay" );
+			if ( victim->NPC->guardBreakTime > level.time )
+			{//(NPC_BSJedi_Default gives the Force back when this lapses)
+				victim->NPC->guardBreakTime = level.time;
+			}
+		}
+		if ( ps->weapon == WP_SABER && !PM_InKnockDown( ps ) )
+		{
+			ps->saberMove = ps->saberMoveNext = LS_READY;
+			ps->saberBounceMove = LS_NONE;
+			ps->saberBlocked = BLOCKED_NONE;
+			ps->weaponTime = 0;
+			ps->torsoAnimTimer = 0;
+		}
+	}
+	//(not the player: a flinch took their guard away for the rest of the phrase - every other hit of a
+	//string re-staggered them - so a cut costs them health and nothing else)
+	else if ( victim->s.number != 0 && TIMER_Done( victim, "bossStageRecover" ) )
+	{
+		WP_SaberSetOpen( victim, g_saberOpenShort ? g_saberOpenShort->integer : 400 );
+	}
+	if ( cut != CUT_LIMB || !victim->NPC )
+	{
+		return;
+	}
+	const char *what = "arm";
+	switch ( hitLoc )
+	{
+	case HL_HAND_RT:
+	case HL_HAND_LT:
+		if ( ps->weapon == WP_SABER && !ps->saberInFlight
+			&& !(ps->saber[0].saberFlags&SFL_NOT_DISARMABLE) && !G_IsSaberBoss( victim, qfalse ) )
+		{
+			vec3_t throwDir;
+			PM_VelocityForSaberMove( &attacker->client->ps, throwDir );
+			WP_SaberLose( victim, throwDir );
+			what = "hand: disarmed";
+			break;
+		}
+		//fall through: a boss keeps hold of it, the arm is still hurt
+	case HL_ARM_RT:
+	case HL_ARM_LT:
+		TIMER_Set( victim, "woundArm", SABER_WOUND_TIME );
+		break;
+	default:
+		if ( TIMER_Done( victim, "woundLeg" ) )
+		{
+			victim->NPC->stats.runSpeed = (int)( victim->NPC->stats.runSpeed * 0.7f );
+			victim->NPC->stats.walkSpeed = (int)( victim->NPC->stats.walkSpeed * 0.85f );
+		}
+		TIMER_Set( victim, "woundLeg", SABER_WOUND_TIME );
+		what = "leg";
+		break;
+	}
+	if ( g_debugDamage->integer || d_saberCombat->integer )
+	{
+		gi.Printf( "cut: %s wounded in the %s\n", victim->NPC_type ? victim->NPC_type : "?", what );
+	}
+}
+
+/*
+WP_BlockReleaseGraceParry (JKEnhanced)
+
+The player let go of block to attack (the keybind can't block and attack at once) and a hit lands
+within g_blockReleaseGrace ms (block is still "active": bg_pmove keeps saberBlockingTime up that
+long after release). If they're only starting the attack - ready, wind-up, transition, return -
+not already in the live strike, and the hit comes from in front, the attack is cancelled into a
+normal parry (Force/guard rules as usual; not a perfect parry). Broken parries, bounces,
+knockdowns and staggers get no grace: being knocked away is the punish for a parried swing.
+Returns qtrue if the hit was parried (the caller skips the damage).
+*/
+qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, int bladeNum );
+extern cvar_t *g_blockReleaseGrace;
+static qboolean WP_BlockReleaseGraceParry( gentity_t *player, gentity_t *attacker, vec3_t hitSpot, int saberNum, int bladeNum )
+{
+	if ( !g_blockReleaseGrace || g_blockReleaseGrace->integer <= 0 || g_saberAutoBlocking->integer
+		|| !player || player->s.number != 0 || !player->client || !attacker || !attacker->client )
+	{
+		return qfalse;
+	}
+	if ( WP_SaberRules() )
+	{//saber rules: a swing you've started is a swing, not a guard
+		return qfalse;
+	}
+	playerState_t *ps = &player->client->ps;
+	if ( ps->weapon != WP_SABER || !ps->SaberActive() || ps->saberInFlight
+		|| ( player->client->usercmd.buttons & BUTTON_SABERBLOCK )	//holding block: the normal rules already ran
+		|| ps->saberBlockingTime <= level.time )						//grace over
+	{
+		return qfalse;
+	}
+	if ( PM_SaberInBrokenParry( ps->saberMove ) || PM_SaberInBounce( ps->saberMove ) || PM_InKnockDown( ps )
+		|| !TIMER_Done( player, "parryStaggered" ) )
+	{//no grace when you've been knocked off balance
+		return qfalse;
+	}
+	if ( PM_SaberInAttack( ps->saberMove ) )
+	{//already in the live part of the strike: committed
+		return qfalse;
+	}
+	vec3_t fwd, toAtt;
+	const vec3_t yawOnly = { 0, ps->viewangles[YAW], 0 };
+	AngleVectors( yawOnly, fwd, NULL, NULL );
+	VectorSubtract( attacker->currentOrigin, player->currentOrigin, toAtt );
+	toAtt[2] = 0;
+	VectorNormalize( toAtt );
+	if ( DotProduct( fwd, toAtt ) < 0.0f )
+	{//from behind
+		return qfalse;
+	}
+	//cancel the wind-up and parry
+	ps->weaponTime = 0;
+	ps->saberMove = ps->saberMoveNext = LS_READY;
+	ps->saberBounceMove = LS_NONE;
+	if ( !WP_SaberParry( player, attacker, saberNum, bladeNum ) )
+	{
+		return qfalse;
+	}
+	WP_SaberBlockNonRandom( player, hitSpot, qfalse );
+	attacker->client->ps.saberEventFlags |= SEF_BLOCKED;
+	if ( g_debugBlock && g_debugBlock->integer )
+	{
+		gi.Printf( S_COLOR_GREEN "BLOCKED (release grace)" S_COLOR_WHITE " vs %s: block released %d ms ago, attack cancelled into a parry\n",
+			attacker->NPC_type ? attacker->NPC_type : "?", level.time - ( ps->saberBlockingTime - g_blockReleaseGrace->integer ) );
+	}
+	return qtrue;
+}
+
+/*
+WP_ClashBlock (JKEnhanced, g_saberClashBlock)
+
+The player is mid-swing and an enemy's swing lands on them: instead of trading hits, the player's
+swing becomes a block (from any direction in front) and the enemy's swing bounces. Not against a
+telegraphed heavy attack or kata (perfect parry only), not from behind, not out of a broken parry,
+bounce, knockdown or stagger. Normal block rules otherwise (Force cost). Returns qtrue if blocked.
+*/
+/*
+WP_NPCSaberHitOnPlayer (JKEnhanced, Step 3C)
+
+What one NPC saber hit that gets through can do to the player, by who's swinging: peon saberists
+take ~4-5 hits to kill, trained Jedi/Reborn ~3, masters 2-3, bosses 2 (blockSkill 1-5, bosses by
+G_IsSaberBoss). A telegraphed heavy attack x1.5; Easy x0.75, Hard x1.25; g_saberPlayerDamageScale on
+top. Never more than 85% of max health in one hit, so only finishers (lock loss, stab-down) one-shot.
+The same in realistic mode and not: realistic is lethal to NPCs, not to the player.
+*/
+extern cvar_t	*g_saberPlayerDamageScale;
+extern int		AI_JediBlockSkill( const gentity_t *npc );
+qboolean		G_IsSaberBoss( const gentity_t *ent, qboolean includeElites );
+static float WP_NPCSaberHitOnPlayer( const gentity_t *attacker, const gentity_t *player )
+{
+	static const float tierDamage[6] = { 25.0f, 20.0f, 25.0f, 35.0f, 40.0f, 45.0f };	//by blockSkill 1-5
+	const int skill = Q_max( 1, Q_min( 5, AI_JediBlockSkill( attacker ) ) );
+	float dmg = G_IsSaberBoss( attacker, qfalse ) ? 55.0f : tierDamage[skill];
+	if ( WP_IsHeavyAttack( attacker ) )
+	{
+		dmg *= 1.5f;
+	}
+	dmg *= G_Difficulty()->saberDamageToPlayer;	//ext_data/difficulty.cfg
+	if ( g_saberPlayerDamageScale )
+	{
+		dmg *= g_saberPlayerDamageScale->value;
+	}
+	return Q_min( dmg, player->max_health * 0.85f );
+}
+
+/*
+WP_PlayerFeint (JKEnhanced)
+
+The player pulled back their own wind-up or the start of a strike with block (bg_pmove block
+cancel). Every saber enemy within reach in front of them that was reacting to it - in a parry or
+block, holding its defensive stance, or standing ready in reach - bites: ~400 ms where it can't
+parry or attack ("parryStaggered" + "attackDelay"), and the player's next swing comes out at once
+("riposteWindow"). Enemies adapt: one that bit is wary of feints for 4 s ("feintWary"), and
+blockSkill 5 masters see through about half. Returns qtrue if anyone bit.
+*/
+qboolean WP_PlayerFeint( gentity_t *player )
+{
+	if ( !player || player->s.number != 0 || !player->client )
+	{
+		return qfalse;
+	}
+	if ( WP_SaberRules() )
+	{//saber rules: no feint bite - it knocked an NPC Open with nothing to show for it
+		return qfalse;
+	}
+	extern cvar_t *g_debugBlock;
+	const float	reach = 160.0f;
+	const int	openTime = 400;
+	vec3_t		fwd, mins, maxs;
+	const vec3_t yawOnly = { 0, player->client->ps.viewangles[YAW], 0 };
+	AngleVectors( yawOnly, fwd, NULL, NULL );
+	for ( int k = 0; k < 3; k++ )
+	{
+		mins[k] = player->currentOrigin[k] - reach;
+		maxs[k] = player->currentOrigin[k] + reach;
+	}
+	gentity_t	*list[MAX_GENTITIES];
+	const int	n = gi.EntitiesInBox( mins, maxs, list, MAX_GENTITIES );
+	qboolean	bit = qfalse;
+	for ( int i = 0; i < n; i++ )
+	{
+		gentity_t *npc = list[i];
+		if ( !npc || !npc->NPC || !npc->client || npc->health <= 0 || npc->enemy != player
+			|| npc->client->ps.weapon != WP_SABER || !npc->client->ps.SaberActive()
+			|| !TIMER_Done( npc, "parryStaggered" ) || PM_InKnockDown( &npc->client->ps ) )
+		{
+			continue;
+		}
+		vec3_t toNpc;
+		VectorSubtract( npc->currentOrigin, player->currentOrigin, toNpc );
+		const float dist = VectorNormalize( toNpc );
+		if ( dist > reach || DotProduct( fwd, toNpc ) < 0.5f )
+		{//out of reach or not in front of the swing
+			continue;
+		}
+		const playerState_t *nps = &npc->client->ps;
+		const qboolean reacting = (qboolean)( PM_SaberInParry( nps->saberMove ) || nps->saberBlocked != BLOCKED_NONE
+			|| npc->NPC->duelRole == JT_DEFEND || ( nps->saberMove == LS_READY && dist < 128.0f ) );
+		if ( !reacting )
+		{
+			continue;
+		}
+		const char *name = npc->NPC_type ? npc->NPC_type : "?";
+		if ( !TIMER_Done( npc, "feintWary" ) )
+		{
+			if ( g_debugBlock && g_debugBlock->integer )
+			{
+				gi.Printf( S_COLOR_YELLOW "FEINT: %s is wary (fooled them recently)\n", name );
+			}
+			continue;
+		}
+		TIMER_Set( npc, "feintWary", 4000 );
+		if ( AI_JediBlockSkill( npc ) >= 5 && Q_irand( 0, 1 ) )
+		{
+			if ( g_debugBlock && g_debugBlock->integer )
+			{
+				gi.Printf( S_COLOR_YELLOW "FEINT: %s saw through it\n", name );
+			}
+			continue;
+		}
+		TIMER_Set( npc, "parryStaggered", openTime );
+		TIMER_Set( npc, "attackDelay", openTime );
+		bit = qtrue;
+		if ( g_debugBlock && g_debugBlock->integer )
+		{
+			gi.Printf( S_COLOR_GREEN "FEINT: %s bit - open for %d ms\n", name, openTime );
+		}
+	}
+	if ( bit )
+	{
+		TIMER_Set( player, "riposteWindow", openTime );
+	}
+	return bit;
+}
+
+extern cvar_t *g_saberClashBlock;
+extern cvar_t *g_saberClashWeight;
+void G_DamageGuard( gentity_t *victim, gentity_t *attacker, int amount );
+static int s_riposteTarget = ENTITYNUM_NONE;	//WP_PerfectParryReward: who the player's riposte is open on
+qboolean WP_RiposteOpenOn( const gentity_t *attacker, const gentity_t *victim );
+//JKEnhanced: how much a style's swing weighs in a clash (WP_ClashBlock): Strong beats Medium-class beats Fast
+static int WP_ClashWeight( const playerState_t *ps )
+{
+	switch ( ps->saberAnimLevel )
+	{
+	case SS_FAST:	return 1;
+	case SS_STRONG:
+	case SS_DESANN:	return 3;
+	default:		return 2;	//Medium, Tavion, Katarn, Dual, Staff
+	}
+}
+static qboolean WP_ClashBlock( gentity_t *player, gentity_t *attacker, vec3_t hitSpot, int saberNum, int bladeNum )
+{
+	if ( WP_SaberRules() )
+	{//saber rules: a swing is not a guard. Two fighters swinging at each other both risk the cut;
+	 //whichever blade gets there first lands, and the flinch stops the other swing.
+		return qfalse;
+	}
+	if ( !g_saberClashBlock || !g_saberClashBlock->integer
+		|| !player || player->s.number != 0 || !player->client || !attacker || !attacker->client )
+	{
+		return qfalse;
+	}
+	playerState_t *ps = &player->client->ps;
+	if ( ps->weapon != WP_SABER || !ps->SaberActive() || ps->saberInFlight )
+	{
+		return qfalse;
+	}
+	const qboolean swinging = (qboolean)( PM_SaberInStart( ps->saberMove ) || PM_SaberInAttack( ps->saberMove )
+		|| PM_SaberInTransitionAny( ps->saberMove ) || PM_SaberInSpecialAttack( ps->torsoAnim ) );
+	if ( !swinging || PM_SaberInBrokenParry( ps->saberMove ) || PM_SaberInBounce( ps->saberMove )
+		|| PM_InKnockDown( ps ) || !TIMER_Done( player, "parryStaggered" ) )
+	{
+		return qfalse;
+	}
+	const playerState_t *aps = &attacker->client->ps;
+	if ( aps->weapon != WP_SABER
+		|| !( PM_SaberInAttack( aps->saberMove ) || PM_SaberInSpecialAttack( aps->torsoAnim ) )
+		|| WP_IsHeavyAttack( attacker ) )
+	{//they have to be swinging too, and not a heavy attack
+		return qfalse;
+	}
+	vec3_t fwd, toAtt;
+	const vec3_t yawOnly = { 0, ps->viewangles[YAW], 0 };
+	AngleVectors( yawOnly, fwd, NULL, NULL );
+	VectorSubtract( attacker->currentOrigin, player->currentOrigin, toAtt );
+	toAtt[2] = 0;
+	VectorNormalize( toAtt );
+	if ( DotProduct( fwd, toAtt ) < 0.0f )
+	{
+		return qfalse;
+	}
+	if ( g_saberClashWeight && g_saberClashWeight->integer
+		&& WP_ClashWeight( ps ) > WP_ClashWeight( aps ) )
+	{//the heavier swing wins: theirs bounces off, yours carries on (windup included - Strong's commitment)
+		playerState_t *atps = &attacker->client->ps;
+		if ( atps->saberBlocked == BLOCKED_ATK_BOUNCE )
+		{//already won this one on an earlier frame of contact (their bounce starts in their next pmove):
+		 //don't hit their guard and play the clang again every frame
+			return qtrue;
+		}
+		atps->saberBounceMove = PM_SaberBounceForAttack( atps->saberMove );
+		atps->saberBlocked = BLOCKED_ATK_BOUNCE;
+		atps->saberEventFlags |= SEF_BLOCKED;
+		if ( attacker->NPC && attacker->NPC->guardMax > 0 )
+		{
+			G_DamageGuard( attacker, player, 8 * ( WP_ClashWeight( ps ) - WP_ClashWeight( aps ) ) );
+		}
+		WP_SaberBlockSound( player, attacker, saberNum, bladeNum );
+		if ( g_debugBlock && g_debugBlock->integer )
+		{
+			gi.Printf( S_COLOR_GREEN "CLASH WON" S_COLOR_WHITE " vs %s: your style %d outweighs their %d - they bounced, your swing carries on\n",
+				attacker->NPC_type ? attacker->NPC_type : "?", ps->saberAnimLevel, aps->saberAnimLevel );
+		}
+		return qtrue;
+	}
+	//the player's swing becomes the block
+	ps->weaponTime = 0;
+	ps->saberMove = ps->saberMoveNext = LS_READY;
+	ps->saberBounceMove = LS_NONE;
+	if ( ps->saberBlockingTime < level.time + 100 )
+	{
+		ps->saberBlockingTime = level.time + 100;
+	}
+	if ( !WP_SaberParry( player, attacker, saberNum, bladeNum ) )
+	{
+		return qfalse;
+	}
+	WP_SaberBlockNonRandom( player, hitSpot, qfalse );
+	attacker->client->ps.saberEventFlags |= SEF_BLOCKED;
+	if ( g_debugBlock && g_debugBlock->integer )
+	{
+		gi.Printf( S_COLOR_GREEN "BLOCKED (clash)" S_COLOR_WHITE " vs %s: you were both swinging - your swing blocked theirs\n",
+			attacker->NPC_type ? attacker->NPC_type : "?" );
+	}
+	return qtrue;
+}
+
+/*
+Hit-stop and camera kick (JKEnhanced saber rules, Stage 5)
+
+WP_SaberHitStop: a cut catches for a moment. The fighter is frozen on the contact frame for
+g_saberHitStop ms: each bone's anim is held where it was and resumed from the same frame, so
+the anim timers just get the freeze's length added. If something else changes their animation
+meanwhile (a pain flinch, a death) the freeze lets go of that part. While frozen they don't
+move, the saber code is paused (PM_WeaponLightsaber) and the blade deals no damage; a fresh
+attack or block press from the player ends it early.
+WP_SaberCamKick: a short camera shake for the moments that matter to the player - their guard
+collapsing or collapsing someone's, a perfect parry, a cut given or taken (g_saberCamKick scales
+it, 0 = off).
+*/
+extern cvar_t *g_saberHitStop;
+extern cvar_t *g_saberCamKick;
+extern void CGCam_Shake( float intensity, int duration );
+typedef struct
+{
+	int		model, bone;	//bone < 0 = not frozen
+	int		start, end, flags;
+	float	current, speed;
+} hitStopBone_t;
+#define HITSTOP_BONES 6
+static struct
+{
+	int				until;					//0 = not frozen
+	int				torsoAnim, legsAnim;	//-1 = that part wasn't frozen
+	hitStopBone_t	bones[HITSTOP_BONES];
+} s_hitStop[MAX_GENTITIES];
+
+qboolean WP_SaberHitStopped( const gentity_t *ent )
+{
+	if ( !ent || ent->s.number < 0 || ent->s.number >= MAX_GENTITIES )
+	{
+		return qfalse;
+	}
+	const int until = s_hitStop[ent->s.number].until;
+	return (qboolean)( until > level.time && until <= level.time + 1000 );
+}
+
+static void WP_HitStopFreezeBone( gentity_t *ent, int model, int bone, hitStopBone_t *b )
+{
+	b->bone = -1;
+	if ( model < 0 || bone < 0 )
+	{
+		return;
+	}
+	const int t = cg.time ? cg.time : level.time;
+	if ( !gi.G2API_GetBoneAnimIndex( &ent->ghoul2[model], bone, t, &b->current, &b->start, &b->end, &b->flags, &b->speed, NULL ) )
+	{
+		return;
+	}
+	b->model = model;
+	b->bone = bone;
+	const int frame = (int)b->current;
+	gi.G2API_SetBoneAnimIndex( &ent->ghoul2[model], bone, frame, frame+1, BONE_ANIM_OVERRIDE_FREEZE, 1, t, b->current, 0 );
+}
+
+static void WP_HitStopResumeBone( gentity_t *ent, hitStopBone_t *b )
+{
+	if ( b->bone < 0 )
+	{
+		return;
+	}
+	const int t = cg.time ? cg.time : level.time;
+	gi.G2API_SetBoneAnimIndex( &ent->ghoul2[b->model], b->bone, b->start, b->end, b->flags&~BONE_ANIM_BLEND, b->speed, t, b->current, 0 );
+	b->bone = -1;
+}
+
+static void WP_SaberHitStopRelease( gentity_t *ent )
+{
+	const int n = ent->s.number;
+	if ( !s_hitStop[n].until )
+	{
+		return;
+	}
+	s_hitStop[n].until = 0;
+	if ( !ent->client || !gi.G2API_HaveWeGhoul2Models( ent->ghoul2 ) )
+	{
+		return;
+	}
+	//only resume a part that's still on the anim we froze (a pain or knockdown anim already replaced it)
+	const qboolean torso = (qboolean)( s_hitStop[n].torsoAnim != -1 && ent->client->ps.torsoAnim == s_hitStop[n].torsoAnim );
+	const qboolean legs = (qboolean)( s_hitStop[n].legsAnim != -1 && ent->client->ps.legsAnim == s_hitStop[n].legsAnim );
+	for ( int i = 0; i < HITSTOP_BONES; i++ )
+	{
+		if ( ( i < 4 && torso ) || ( i >= 4 && legs ) )
+		{
+			WP_HitStopResumeBone( ent, &s_hitStop[n].bones[i] );
+		}
+		s_hitStop[n].bones[i].bone = -1;
+	}
+}
+
+static void WP_SaberHitStop( gentity_t *ent )
+{
+	if ( !g_saberHitStop || g_saberHitStop->integer <= 0 || in_camera
+		|| !ent || !ent->client || ent->health <= 0 || ent->s.number >= MAX_GENTITIES
+		|| ent->client->NPC_class == CLASS_SABER_DROID || ent->lowerLumbarBone == -1
+		|| !gi.G2API_HaveWeGhoul2Models( ent->ghoul2 )
+		|| ent->client->ps.saberLockTime > level.time || PM_InKnockDown( &ent->client->ps ) )
+	{
+		return;
+	}
+	const int		n = ent->s.number;
+	const int		ms = Q_min( 200, g_saberHitStop->integer );
+	playerState_t	*ps = &ent->client->ps;
+	if ( s_hitStop[n].until > level.time + 1000 )
+	{//left over from another map / an older save
+		s_hitStop[n].until = 0;
+	}
+	if ( WP_SaberHitStopped( ent ) )
+	{
+		return;
+	}
+	const qboolean	legs = (qboolean)( ps->legsAnim == ps->torsoAnim );	//a full-body swing: hold the legs too
+	WP_HitStopFreezeBone( ent, ent->playerModel, ent->lowerLumbarBone, &s_hitStop[n].bones[0] );
+	WP_HitStopFreezeBone( ent, ent->playerModel, ent->motionBone, &s_hitStop[n].bones[1] );
+	WP_HitStopFreezeBone( ent, ent->headModel > 0 ? ent->headModel : -1, ent->headLowerLumbarBone, &s_hitStop[n].bones[2] );
+	WP_HitStopFreezeBone( ent, ent->headModel > 0 ? ent->headModel : -1, ent->headMotionBone, &s_hitStop[n].bones[3] );
+	s_hitStop[n].bones[4].bone = s_hitStop[n].bones[5].bone = -1;
+	if ( legs )
+	{
+		WP_HitStopFreezeBone( ent, ent->playerModel, ent->rootBone, &s_hitStop[n].bones[4] );
+		WP_HitStopFreezeBone( ent, ent->headModel > 0 ? ent->headModel : -1, ent->headRootBone, &s_hitStop[n].bones[5] );
+	}
+	s_hitStop[n].torsoAnim = ps->torsoAnim;
+	s_hitStop[n].legsAnim = legs ? ps->legsAnim : -1;
+	if ( ps->torsoAnimTimer > 0 )
+	{
+		ps->torsoAnimTimer += ms;
+	}
+	if ( legs && ps->legsAnimTimer > 0 )
+	{
+		ps->legsAnimTimer += ms;
+	}
+	if ( ps->weaponTime > 0 )
+	{
+		ps->weaponTime += ms;
+	}
+	VectorClear( ps->velocity );
+	s_hitStop[n].until = level.time + ms;
+}
+
+//every client think (g_active, before Pmove): hold a frozen fighter still, let go when it's over
+void WP_SaberHitStopThink( gentity_t *ent, usercmd_t *ucmd )
+{
+	if ( !ent || !ent->client || ent->s.number >= MAX_GENTITIES || !s_hitStop[ent->s.number].until )
+	{
+		return;
+	}
+	const int n = ent->s.number;
+	if ( !WP_SaberHitStopped( ent ) || ent->health <= 0
+		|| ent->client->ps.torsoAnim != s_hitStop[n].torsoAnim || PM_InKnockDown( &ent->client->ps )
+		|| ( n == 0 && ( ucmd->buttons & ~ent->client->buttons & ( BUTTON_ATTACK|BUTTON_SABERBLOCK ) ) ) )
+	{
+		WP_SaberHitStopRelease( ent );
+		return;
+	}
+	ucmd->forwardmove = ucmd->rightmove = ucmd->upmove = 0;
+	VectorClear( ent->client->ps.velocity );
+}
+
+static void WP_SaberCamKick( float intensity, int duration )
+{
+	if ( g_saberCamKick && g_saberCamKick->value > 0.0f && !in_camera )
+	{
+		CGCam_Shake( intensity * g_saberCamKick->value, duration );
+	}
+}
+
+static void WP_ReportBlockFail( gentity_t *player, gentity_t *attacker, int damage, int hitLoc )
+{
+	if ( !player || !player->client || !g_debugBlock || !g_debugBlock->integer )
+	{
+		return;
+	}
+	playerState_t	*ps = &player->client->ps;
+	const qboolean	held = (qboolean)( ( player->client->usercmd.buttons & BUTTON_SABERBLOCK ) != 0 );
+	const qboolean	active = (qboolean)( ps->saberBlockingTime > level.time );
+	static int lastPrint = -1;
+	if ( lastPrint == level.time )
+	{
+		return;
+	}
+	lastPrint = level.time;
+
+	//which block box was up (WP_SaberUpdate: the wide box covers the body in front of you)
+	const char *box;
+	if ( ps->saberBlocking != BLK_WIDE && ps->saberBlocking != BLK_TIGHT )
+	{
+		box = "NONE (not blocking)";
+	}
+	else if ( ps->saberBlocking == BLK_WIDE && active && ps->forcePower > 0 && ps->weaponTime <= 0 && !G_InCinematicSaberAnim( player ) )
+	{
+		box = "wide";
+	}
+	else if ( !active )
+	{
+		box = "blade only (block not active)";
+	}
+	else if ( ps->forcePower <= 0 )
+	{
+		box = "blade only (no Force)";
+	}
+	else if ( ps->weaponTime > 0 )
+	{
+		box = va( "blade only (mid-anim, weaponTime %d)", ps->weaponTime );
+	}
+	else
+	{
+		box = "blade only (tight)";
+	}
+
+	//the player's own saber move
+	const char *moveState =
+		PM_SaberInBrokenParry( ps->saberMove ) ? " BROKEN-PARRY" :
+		PM_SaberInKnockaway( ps->saberMove ) ? " knockaway" :
+		PM_SaberInParry( ps->saberMove ) ? " parry" :
+		PM_SaberInBounce( ps->saberMove ) ? " BOUNCE" :
+		PM_SaberInAttack( ps->saberMove ) ? " ATTACKING" :
+		PM_SaberInTransitionAny( ps->saberMove ) ? " TRANSITION" : "";
+
+	//where the attacker is, relative to where the player faces
+	vec3_t fwd, toAtt;
+	const vec3_t yawOnly = { 0, ps->viewangles[YAW], 0 };
+	AngleVectors( yawOnly, fwd, NULL, NULL );
+	float angle = 0.0f;
+	if ( attacker )
+	{
+		VectorSubtract( attacker->currentOrigin, player->currentOrigin, toAtt );
+		toAtt[2] = 0;
+		VectorNormalize( toAtt );
+		angle = RAD2DEG( acos( Com_Clamp( -1.0f, 1.0f, DotProduct( fwd, toAtt ) ) ) );
+	}
+
+	const qboolean recentNote = (qboolean)( s_blockFailNote && level.time - s_blockFailNoteTime <= 300 );
+	//(saber rules: block can read as "active" for a moment after it's released, but a swing has no guard)
+	const qboolean midSwing = (qboolean)( WP_SaberRules() && WP_SaberSwinging( ps ) );
+	gi.Printf( "%s" S_COLOR_WHITE " vs %s (style %d%s): %d dmg, hitloc %d | %s | block %s%s, Force %d, box %s | move %s%s%s | attacker at %.0f deg%s\n",
+		( ( held || active ) && !midSwing ) ? S_COLOR_RED "BLOCK FAILED" : S_COLOR_YELLOW "HIT (not blocking)",
+		attacker && attacker->NPC_type ? attacker->NPC_type : "?",
+		attacker && attacker->client ? attacker->client->ps.saberAnimLevel : 0,
+		attacker && WP_IsHeavyAttack( attacker ) ? ", HEAVY" : "",
+		damage, hitLoc,
+		recentNote ? s_blockFailNote : ( midSwing ? "you were mid-swing (wind-up, strike or transition): a swing is not a guard"
+			: ( ( held || active ) ? "blade reached you without hitting your saber (angle/reach/box)" : "block button not held" ) ),
+		held ? "held" : "released", active ? "+active" : " but NOT active",
+		ps->forcePower, box,
+		ps->saberMove >= 0 && ps->saberMove < LS_MOVE_MAX ? saberMoveData[ps->saberMove].name : "?", moveState,
+		!TIMER_Done( player, "parryStaggered" ) ? " STAGGERED" : "",
+		angle, angle > 100.0f ? " (BEHIND)" : ( angle > 60.0f ? " (side)" : "" ) );
+}
 qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 							 qboolean brokenParry, int saberNum, int bladeNum, qboolean thrownSaber )
 {
@@ -1649,6 +3091,14 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 						continue;
 					}
 				}
+				//JKEnhanced: a saber-lock win or a stab-down is only an uncapped finisher on someone actually
+				//in the lock-loss or knocked down; the same anim brushing anyone else is a normal hit
+				//Never against the player: a stab-down on a knocked-down player went uncapped AND skipped the
+				//one-hit-per-swing rule, so Tavion did 3635, 1155, ... 266185 every 50 ms. The player takes
+				//the normal tiered (capped) hit, once per swing.
+				const qboolean finisher = (qboolean)( victim->client && victim->s.number >= MAX_CLIENTS
+					&& ( ( PM_SuperBreakWinAnim( ent->client->ps.torsoAnim ) && PM_SuperBreakLoseAnim( victim->client->ps.torsoAnim ) )
+						|| ( PM_StabDownAnim( ent->client->ps.torsoAnim ) && PM_InKnockDown( &victim->client->ps ) ) ) );
 				if ( totalDmg[i] > 0 )
 				{//actually want to do *some* damage here
 					if ( victim->client
@@ -1656,9 +3106,13 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 						&& victim->activator == ent )
 					{
 					}
-					else if ( PM_SuperBreakWinAnim( ent->client->ps.torsoAnim )
-						|| PM_StabDownAnim( ent->client->ps.torsoAnim ) )
-					{//never cap the superbreak wins
+					else if ( finisher )
+					{//never cap the superbreak wins (JKEnhanced: and they finish - uncapped also skipped the 5
+					 //floor, so a stab-down's brief contact landed 0-2; boss stage floors still apply in G_Damage)
+						if ( totalDmg[i] < victim->health )
+						{
+							totalDmg[i] = victim->health;
+						}
 					}
 					else
 					{// Saber damage = continuous contact damage (blade depth/time inside the model) x
@@ -1694,6 +3148,18 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 								totalDmg[i] = 150;
 							}
 						}
+						else if ( victim->s.number == 0 && ent->NPC )
+						{//JKEnhanced 3C: an NPC's hit on the player is worth what that NPC's tier says
+							const float hitCap = WP_NPCSaberHitOnPlayer( ent, victim );
+							if ( totalDmg[i] > hitCap )
+							{
+								totalDmg[i] = hitCap;
+							}
+							else if ( totalDmg[i] < 5 )
+							{
+								totalDmg[i] = 5;
+							}
+						}
 						else
 						{//saber fighters, bosses and the player: clamp 5-100
 							if ( totalDmg[i] > 100 )
@@ -1714,8 +3180,8 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 						qboolean vicWasDismembered = qtrue;
 						qboolean vicWasAlive = (qboolean)(victim->health>0);
 
-						if ( baseDamage <= 0.1f )
-						{//just get their attention?
+						if ( baseDamage <= 0.1f && !finisher )
+						{//just get their attention? (not a finisher: the stab-down / lock win's anim is the attack)
 							dFlags |= DAMAGE_NO_DAMAGE;
 						}
 
@@ -1772,16 +3238,15 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 								}
 							}
 						}
-						if ( !PM_SuperBreakWinAnim( ent->client->ps.torsoAnim )
-							&& !PM_StabDownAnim( ent->client->ps.torsoAnim )
+						if ( !finisher
 							&& !g_saberRealisticCombat->integer
 							&& g_saberDamageCapping->integer )
 						{//never cap the superbreak wins
 						//One cap only: a single saber hit never takes more than g_saberMaxPlayerHitPct of the
 						//player's max health (no one-shots). The old per-difficulty caps (bosses 10-25, saber
 						//users 30-75, player 7-50) are gone; the guard/parry system carries saber difficulty.
-							if ( victim->s.number < MAX_CLIENTS && victim->client )
-							{
+							if ( victim->s.number < MAX_CLIENTS && victim->client && !ent->NPC )
+							{//(NPC hits on the player already use WP_NPCSaberHitOnPlayer)
 								const float playerCap = victim->max_health * g_saberMaxPlayerHitPct->value;
 								if ( playerCap > 0.0f && totalDmg[i] > playerCap )
 								{
@@ -1901,13 +3366,116 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 							damage = Q_min( victim->health - 1, Q_max( 1, (int)( victim->max_health * 0.3f ) ) );
 							dFlags &= ~DAMAGE_DISMEMBER;
 						}
+						if ( victim->s.number == 0 && damage > 0
+							&& WP_ClashBlock( victim, ent, dmgSpot[i], saberNum, bladeNum ) )
+						{//JKEnhanced: both swinging - the player's swing blocks theirs instead of trading hits
+							continue;
+						}
+						if ( victim->s.number == 0 && damage > 0
+							&& WP_BlockReleaseGraceParry( victim, ent, dmgSpot[i], saberNum, bladeNum ) )
+						{//JKEnhanced: let go of block to attack and got hit straight away: parried instead
+							continue;
+						}
+						//JKEnhanced saber rules: a real swing on a saber fighter is a cut - how much blade, and where
+						saberCut_t cut = CUT_NONE;
+						const qboolean cutWasOpen = (qboolean)( WP_SaberRules() && WP_SaberOpenTime( victim ) > 0 );
+						if ( WP_SaberRules() && saberFighter && !finisher && !thrownSaber && baseDamage >= 2.5f
+							&& victim->client && victim->health > 0 && damage > 0 )
+						{
+							cut = WP_SaberCutResolve( ent, victim, rawContactDmg / baseDamage, hitLoc[i],
+								(qboolean)( hitDismember[i] && WP_HitLocIsLimb( hitDismemberLoc[i] ) ), &damage );
+							if ( cut == CUT_NONE )
+							{//this frame added nothing to what the swing has already done
+								continue;
+							}
+							if ( victim->NPC && ent->s.number == 0 )
+							{//g_debugBlock: every cut the player lands says why the guard wasn't there (before the flinch changes it)
+								WP_NoteGuardFail( victim, ent, WP_GuardState( victim, ent ) );
+							}
+						}
+						if ( saberFighter && !finisher && damage > 0 && cut == CUT_NONE )
+						{//JKEnhanced: one damaging hit per swing. The blade stays in contact for several
+						 //frames and each frame used to deal a full capped hit (2-5 x 100 from one swing).
+						 //A thrown saber counts as its own "swing" (key -1): once out, once on the way back.
+						 //Not saved: a stale entry after a load just expires.
+							static int s_swingHitBy[MAX_GENTITIES];
+							static int s_swingHitMove[MAX_GENTITIES];
+							static int s_swingHitTime[MAX_GENTITIES];
+							const int v = victim->s.number;
+							const int swingKey = thrownSaber ? -1 : ent->client->ps.saberMove;
+							if ( s_swingHitBy[v] == ent->s.number + 1
+								&& s_swingHitMove[v] == swingKey
+								&& level.time >= s_swingHitTime[v]
+								&& level.time - s_swingHitTime[v] < 600 )
+							{
+								continue;
+							}
+							s_swingHitBy[v] = ent->s.number + 1;
+							s_swingHitMove[v] = swingKey;
+							s_swingHitTime[v] = level.time;
+						}
+						if ( victim->s.number == 0 && damage > 0 )
+						{//g_debugBlock: if the player was blocking, say why this got through
+							WP_ReportBlockFail( victim, ent, damage, hitLoc[i] );
+							extern cvar_t *g_blockFailSound;
+							static int s_blockFailSoundTime = -1000;
+							if ( g_blockFailSound && g_blockFailSound->string[0]
+								&& ( ( victim->client->usercmd.buttons & BUTTON_SABERBLOCK ) || victim->client->ps.saberBlockingTime > level.time )
+								&& ( level.time - s_blockFailSoundTime > 300 || level.time < s_blockFailSoundTime ) )
+							{//JKEnhanced 3D: block was up and the hit still got through - say so
+								s_blockFailSoundTime = level.time;
+								G_SoundOnEnt( victim, CHAN_AUTO, g_blockFailSound->string );
+							}
+						}
+						if ( damage > 0 && WP_RiposteOpenOn( ent, victim ) )
+						{//JKEnhanced: the riposte after a perfect parry gets through once (no damage bonus)
+							TIMER_Remove( ent, "perfectRiposte" );
+						}
 						if ( g_debugDamage->integer )
 						{
 							gi.Printf( "saber: victim %d hitloc %d (x%.2f) contact %.1f -> %d dmg%s, dismemberLoc %d\n",
 								victim->s.number, hitLoc[i], g_saberRealisticCombat->integer ? 1.0f : saberLocationMod[hitLoc[i]],
-								rawContactDmg, damage, saberFighter ? "" : " (lethal-anywhere)", hitDismemberLoc[i] );
+								rawContactDmg, damage, (dFlags&DAMAGE_NO_DAMAGE) ? " (no-damage brush: not in an attack)" : saberFighter ? "" : " (lethal-anywhere)", hitDismemberLoc[i] );
 						}
 						G_Damage( victim, inflictor, ent, dmgDir[i], dmgSpot[i], damage, dFlags, MOD_SABER, hitDismemberLoc[i] );
+						if ( victim->s.number == 0 && victim->health > 0 && victim->client
+							&& ( PM_SaberInBrokenParry( victim->client->ps.saberMove ) || !TIMER_Done( victim, "parryStaggered" ) ) )
+						{//JKEnhanced 3C: a broken parry/stagger is punished once - the hit that lands ends it, so
+						 //you can block the next swing instead of eating a combo off one mistake
+							playerState_t *vps = &victim->client->ps;
+							vps->saberMove = vps->saberMoveNext = LS_READY;
+							vps->saberBounceMove = LS_NONE;
+							vps->saberBlocked = BLOCKED_NONE;
+							vps->weaponTime = 0;
+							vps->torsoAnimTimer = 0;
+							TIMER_Remove( victim, "parryStaggered" );
+							if ( g_debugBlock && g_debugBlock->integer )
+							{
+								gi.Printf( "punished: broken parry/stagger ended, block again\n" );
+							}
+						}
+						if ( cut != CUT_NONE && victim->health > 0 && victim->client )
+						{//JKEnhanced saber rules: the flinch (or the end of their opening), and what a hurt limb costs
+							WP_SaberCutEffects( ent, victim, cut, hitLoc[i], cutWasOpen );
+						}
+						if ( cut != CUT_NONE )
+						{//JKEnhanced saber rules: the blade catches for a moment, and the camera feels it when the player is in it
+						 //(the player isn't frozen when they are the one cut: on top of the flinch it read as a hitch)
+							WP_SaberHitStop( ent );
+							if ( victim->s.number != 0 )
+							{
+								WP_SaberHitStop( victim );
+							}
+							if ( victim->s.number == 0 )
+							{
+								WP_SaberCamKick( cut == CUT_GRAZE ? 0.25f : ( cut == CUT_LIMB ? 0.5f : 0.9f ),
+									cut == CUT_GRAZE ? 100 : ( cut == CUT_LIMB ? 150 : 220 ) );
+							}
+							else if ( ent->s.number == 0 && cut == CUT_KILL )
+							{
+								WP_SaberCamKick( 0.25f, 100 );
+							}
+						}
 						if ( severHand && victim->health > 0 )
 						{
 							// take them out of the fight first: G_Neutralize drops the gun as a real pickup
@@ -2451,6 +4019,12 @@ qboolean WP_SaberDamageEffects( trace_t *tr, const vec3_t start, float length, f
 
 			//FIXME: check material rather than team?
 			hitEnt = &g_entities[hitEntNum[numHitEnts]];
+			if ( dmg > 1.0f && hitEnt && !hitEnt->client && coll.mModelIndex == 0
+				&& hitEnt->count == BOTH_DISMEMBER_TORSO1 && !Q_stricmp( "limb", hitEnt->classname ) )
+			{//JKEnhanced: a real swing through the top half of someone cut in two takes off the head / arm it hit
+				extern qboolean G_TorsoLimbCut( gentity_t *limb, const char *surfName, const vec3_t point, const vec3_t dir );
+				G_TorsoLimbCut( hitEnt, gi.G2API_GetSurfaceName( &hitEnt->ghoul2[0], coll.mSurfaceIndex ), coll.mCollisionPosition, dmgDir );
+			}
 			if ( hitEnt
 				&& hitEnt->client
 				&& coll.mModelIndex > 0 )
@@ -2898,7 +4472,28 @@ qboolean WP_SaberDamageForTrace( int ignore, vec3_t start, vec3_t end, float dmg
 				}
 #endif//FINAL_BUILD
 			}
-			if ( sabersCrossed == -1 || sabersCrossed > sabersDist )
+			qboolean guardMiss = qfalse;	//no guard up: their saber only counts if the blades really meet
+			if ( WP_SaberRules() && owner && owner->client && attacker && attacker->client && owner != attacker
+				&& !attacker->client->ps.saberInFlight && !owner->client->ps.saberInFlight
+				&& !G_InCinematicSaberAnim( owner ) )
+			{//JKEnhanced "a blade in the way"
+				const guardState_t gs = WP_GuardState( owner, attacker );
+				if ( gs == GUARD_UP )
+				{//a raised guard stops it, wherever the two blades happen to be
+					sabersIntersect = qtrue;
+					sabersDist = 0;
+				}
+				else if ( owner->client->ps.saberLockTime < level.time )
+				{//no guard (standing, swinging, staggered, busy with a Force power): the saber still stops a
+				 //swing that actually runs into the blade - a blade is a blade - but nothing short of that
+					guardMiss = qtrue;
+					if ( owner->s.number == 0 && WP_SaberSwinging( &attacker->client->ps ) )
+					{
+						WP_NoteGuardFail( owner, attacker, gs );
+					}
+				}
+			}
+			if ( !guardMiss && ( sabersCrossed == -1 || sabersCrossed > sabersDist ) )
 			{
 				sabersCrossed = sabersDist;
 			}
@@ -2919,11 +4514,13 @@ qboolean WP_SaberDamageForTrace( int ignore, vec3_t start, vec3_t end, float dmg
 			}
 			}
 			if ( owner && owner->client && (attacker != NULL)
-				&& (sabersDist > collisionDist )//|| !InFront( attacker->currentOrigin, owner->currentOrigin, owner->client->ps.viewangles, 0.35f ))
-				&& !sabersIntersect )//was qtrue, but missed too much?
+				&& ( ( (sabersDist > ( guardMiss ? (float)SABER_COLLISION_DIST : collisionDist ) )//|| !InFront( attacker->currentOrigin, owner->currentOrigin, owner->client->ps.viewangles, 0.35f ))
+						&& !sabersIntersect )//was qtrue, but missed too much?
+					|| ( owner != attacker && PM_InKnockDown( &owner->client->ps ) ) ) )//JKEnhanced: a blade lying on the floor with its owner stops nothing
 			{//swing came from behind and/or was not stopped by a lightsaber
 				//re-try the trace without checking for lightsabers
-				gi.trace ( &tr, start, NULL, NULL, end2, ignore, mask&~CONTENTS_LIGHTSABER, G2_NOCOLLIDE, 10 );
+				//(JKEnhanced saber rules: no guard in the way - against the model, so the cut lands where the blade is)
+				gi.trace ( &tr, start, NULL, NULL, end2, ignore, mask&~CONTENTS_LIGHTSABER, ( guardMiss && !noGhoul ) ? G2_COLLIDE : G2_NOCOLLIDE, 10 );
 				if ( tr.entityNum == ENTITYNUM_WORLD )
 				{
  					return qtrue;
@@ -3093,12 +4690,30 @@ qboolean WP_SaberDamageForTrace( int ignore, vec3_t start, vec3_t end, float dmg
 			}
 		}
 
-		if ( hitEnt && hitEnt->client && hitEnt != attacker && hitEnt->health > 0
+		const qboolean rulesSwing = (qboolean)( WP_SaberRules() && attacker && attacker->client
+			&& !attacker->client->ps.saberInFlight );
+		if ( rulesSwing && hitEnt && hitEnt->client && hitEnt != attacker
+			&& ( PM_SaberInAttack( attacker->client->ps.saberMove ) || PM_SaberInSpecialAttack( attacker->client->ps.torsoAnim ) )//a live strike, not a wind-up brushing them
+			&& WP_GuardState( hitEnt, attacker ) == GUARD_UP )
+		{//JKEnhanced saber rules: the blade got round the guard's box, but the guard is up and facing it -
+		 //stopped all the same (same cost and bounce as a hit on the box)
+			VectorCopy( tr.endpos, saberHitLocation );
+			WP_SaberGuardStop( attacker, hitEnt, saberNum, bladeNum, WP_IsHeavyAttack( attacker ),
+				PM_PowerLevelForSaberAnim( &attacker->client->ps, saberNum ) );
+			if ( attacker->client->ps.saberBlocked != BLOCKED_PARRY_BROKEN )
+			{
+				attacker->client->ps.saberBlocked = BLOCKED_ATK_BOUNCE;
+			}
+			return qfalse;	// Exit, but we didn't hit the wall.
+		}
+		if ( !rulesSwing//(saber rules: no guard up means no block, whatever pose they're in)
+			&& hitEnt && hitEnt->client && hitEnt != attacker && hitEnt->health > 0
 			&& hitEnt->client->ps.weapon == WP_SABER
 			&& !hitEnt->client->ps.saberInFlight
 			&& hitEnt->client->ps.saberLockTime < level.time
 			&& ( hitEnt->s.number != 0 || g_saberAutoBlocking->integer || hitEnt->client->ps.saberBlockingTime > level.time )//actually trying to block, not just standing in ready stance
-			&& ( PM_SaberInParry( hitEnt->client->ps.saberMove ) || hitEnt->client->ps.saberMove == LS_READY ) )
+			&& ( PM_SaberInParry( hitEnt->client->ps.saberMove ) || hitEnt->client->ps.saberMove == LS_READY )
+			&& !PM_InKnockDown( &hitEnt->client->ps ) && !G_IsDownedBody( hitEnt ) )//JKEnhanced: lying on the floor in LS_READY isn't a block pose (every hit on a downed NPC was "blocked")
 		{//the blade geometrically slipped past their saber (missed the CONTENTS_LIGHTSABER trace/re-trace
 		//above) even though they were actively holding a block/parry pose -- resolve it as a proper
 		//block (anim + force cost) via the same self-contained function used for missile/saber blocks
@@ -3114,7 +4729,8 @@ qboolean WP_SaberDamageForTrace( int ignore, vec3_t start, vec3_t end, float dmg
 			//else: couldn't actually block (e.g. out of force power) -- fall through to normal damage below
 		}
 
-		if ( hitEnt->takedamage )
+		if ( hitEnt->takedamage
+			|| ( !hitEnt->client && hitEnt->count == BOTH_DISMEMBER_TORSO1 && hitEnt->ghoul2.size() && !Q_stricmp( "limb", hitEnt->classname ) ) )//JKEnhanced: the top half of someone cut in two (G_TorsoLimbCut via WP_SaberDamageEffects; G_Damage ignores it)
 		{
 			//no team damage: if ( !hitEnt->client || attacker == NULL || !attacker->client || (hitEnt->client->playerTeam != attacker->client->playerTeam) )
 			{
@@ -3878,6 +5494,14 @@ qboolean WP_SabersCheckLock2( gentity_t *attacker, gentity_t *defender, sabersLo
 	}
 
 	//DONE!
+	{//JKEnhanced g_saberDeterministic: no new lock between these two for a while (WP_DetSaberLockGate)
+		extern cvar_t *g_saberDeterministic;
+		if ( g_saberDeterministic && g_saberDeterministic->integer )
+		{
+			TIMER_Set( attacker, "saberLockCD", 8000 );
+			TIMER_Set( defender, "saberLockCD", 8000 );
+		}
+	}
 
 	return qtrue;
 }
@@ -3917,6 +5541,10 @@ qboolean WP_SabersCheckLock( gentity_t *ent1, gentity_t *ent2 )
 	}
 	if ( ent1->painDebounceTime > level.time-1000 || ent2->painDebounceTime > level.time-1000 )
 	{//can't saberlock if you're not ready
+		return qfalse;
+	}
+	if ( ent1->client->ps.repulseChargeStart || ent2->client->ps.repulseChargeStart )
+	{//JKEnhanced: charging Repulse (a lock would cancel the charge)
 		return qfalse;
 	}
 	if ( fabs( ent1->currentOrigin[2]-ent2->currentOrigin[2]) > 18 )
@@ -4340,16 +5968,96 @@ qboolean WP_SabersCheckLock( gentity_t *ent1, gentity_t *ent2 )
 }
 
 extern cvar_t	*g_perfectParryWindow;
+extern cvar_t	*g_perfectParryHeavyScale;
+extern cvar_t	*g_perfectParryMissileScale;
+extern cvar_t	*g_debugParry;
 
 /*
-WP_InPerfectParryWindow
+WP_IsHeavyAttack (JKEnhanced)
 
-qtrue while the player (manual block mode) is inside the perfect-parry timing
-window: the first g_perfectParryWindow ms after PRESSING the block button
-(saberBlockStartTime is stamped on the press edge in PM_AdjustAttackStates,
-gated by the perfectParryDebounce cooldown).
+The attacker is in a telegraphed heavy attack (windup or strike) or a kata special.
 */
-qboolean WP_InPerfectParryWindow( const gentity_t *self )
+qboolean WP_IsHeavyAttack( const gentity_t *ent )
+{
+	if ( !ent || !ent->client )
+	{
+		return qfalse;
+	}
+	const playerState_t *ps = &ent->client->ps;
+	//only while actually in the telegraphed windup or its strike, not any later swing
+	return (qboolean)( ( ps->heavyAttackPhase == 1 && ps->heavyAttackMove != LS_NONE
+			&& ps->saberMove == LS_S_TL2BR + (ps->heavyAttackMove - LS_A_TL2BR) )
+		|| ( ps->heavyAttackMove != LS_NONE && ps->saberMove == ps->heavyAttackMove )
+		|| ps->torsoAnim == BOTH_A1_SPECIAL
+		|| ps->torsoAnim == BOTH_A2_SPECIAL
+		|| ps->torsoAnim == BOTH_A3_SPECIAL );
+}
+
+/*
+WP_PerfectParryWindowMs (JKEnhanced)
+
+How long after the parry tap a hit still counts as perfectly parried. Base g_perfectParryWindow,
+scaled by the attacker: slower, heavier styles give a wider window and fast flurries a narrower
+one; a faster-playing swing (animSpeedScale) narrows it; a telegraphed heavy attack or kata
+widens it (g_perfectParryHeavyScale). Blaster bolts use g_perfectParryMissileScale.
+Difficulty scales it too (difficulty.cfg parryWindowScale).
+*/
+static const float s_parryStyleScale[SS_NUM_SABER_STYLES] =
+{
+	1.0f,	//SS_NONE
+	0.75f,	//SS_FAST
+	1.0f,	//SS_MEDIUM
+	1.25f,	//SS_STRONG
+	1.25f,	//SS_DESANN
+	1.1f,	//SS_TAVION
+	1.0f,	//SS_KATARN
+	0.85f,	//SS_DUAL
+	0.85f,	//SS_STAFF
+};
+
+int WP_PerfectParryWindowMs( const gentity_t *defender, const gentity_t *attacker, qboolean missile )
+{
+	float window = g_perfectParryWindow->value * G_Difficulty()->parryWindowScale;	//ext_data/difficulty.cfg
+	if ( G_SpeedLevel( defender ) >= FORCE_LEVEL_3 )
+	{//JKEnhanced 4B.6: Speed 3 (Focus) - force.cfg speed.parryPct
+		window *= G_ForceTuning()->speedParryPct / 100.0f;
+	}
+	if ( missile )
+	{
+		return (int)( window * g_perfectParryMissileScale->value );
+	}
+	if ( attacker && attacker->client && attacker->client->ps.weapon == WP_SABER )
+	{
+		const int style = attacker->client->ps.saberAnimLevel;
+		if ( style >= 0 && style < SS_NUM_SABER_STYLES )
+		{
+			window *= s_parryStyleScale[style];
+		}
+		const float speed = attacker->client->ps.saber[0].animSpeedScale;
+		if ( speed > 0.01f )
+		{
+			float speedScale = 1.0f / speed;
+			if ( speedScale < 0.6f ) speedScale = 0.6f;
+			if ( speedScale > 1.5f ) speedScale = 1.5f;
+			window *= speedScale;
+		}
+		if ( WP_IsHeavyAttack( attacker ) )
+		{
+			window *= g_perfectParryHeavyScale->value;
+		}
+	}
+	return (int)window;
+}
+
+/*
+WP_InPerfectParryWindowVs
+
+qtrue while the player (manual block mode) is inside the perfect-parry timing window against
+this attacker: the window (WP_PerfectParryWindowMs) counts from the parry tap (tapping attack
+while holding block stamps saberBlockStartTime, gated by the perfectParryDebounce cooldown).
+g_debugParry 1 prints the timing (once per frame).
+*/
+qboolean WP_InPerfectParryWindowVs( const gentity_t *self, const gentity_t *attacker, qboolean missile )
 {
 	if ( !self || self->s.number != 0 || !self->client
 		|| g_saberAutoBlocking->integer
@@ -4358,7 +6066,28 @@ qboolean WP_InPerfectParryWindow( const gentity_t *self )
 	{
 		return qfalse;
 	}
-	return (qboolean)( level.time - self->client->ps.saberBlockStartTime < g_perfectParryWindow->integer );
+	const int since = level.time - self->client->ps.saberBlockStartTime;
+	const int window = WP_PerfectParryWindowMs( self, attacker, missile );
+	const qboolean in = (qboolean)( since < window );
+	if ( g_debugParry->integer && since <= window + 500 )
+	{//(only around the window: block can be held long after the tap)
+		static int lastPrint = -1;
+		if ( lastPrint != level.time )
+		{
+			lastPrint = level.time;
+			gi.Printf( "parry: tap %d ms before the hit, window %d ms (%s%s) -> %s\n", since, window,
+				missile ? "missile" : ( attacker && attacker->NPC_type ? attacker->NPC_type : "?" ),
+				( !missile && WP_IsHeavyAttack( attacker ) ) ? ", heavy" : "",
+				in ? S_COLOR_GREEN "PERFECT" : S_COLOR_YELLOW "too late" );
+		}
+	}
+	return in;
+}
+
+// (callers that don't know the attacker: their enemy is the usual source of the hit)
+qboolean WP_InPerfectParryWindow( const gentity_t *self )
+{
+	return WP_InPerfectParryWindowVs( self, self ? self->enemy : NULL, qfalse );
 }
 
 int g_perfectParryFlashTime = 0;	// read by CG_DrawCrosshair (same module) for the crosshair swirl flash
@@ -4392,8 +6121,41 @@ evade (WP_SaberParry / Jedi_EvasionSaber check guardBreakTime) and take bonus
 saber damage (G_Damage). Guard refills when the break window lapses, so bosses
 naturally fight in guard phases.
 */
+/*
+G_IsSaberBoss (JKEnhanced)
+
+Boss-tier saber fighters: anything flagged NPCAI_BOSS_CHARACTER, or Desann, Tavion, Alora, Kyle.
+includeElites also counts Shadowtroopers (bigger guard, shorter break windows) - they come in
+groups, so they don't get boss guard stages (g_combat.cpp G_BossStageClamp).
+*/
+qboolean G_IsSaberBoss( const gentity_t *ent, qboolean includeElites )
+{
+	if ( !ent || !ent->NPC || !ent->client )
+	{
+		return qfalse;
+	}
+	return (qboolean)( (ent->NPC->aiFlags&NPCAI_BOSS_CHARACTER)
+		//boss by name only (CLASS_REBORN in their .npc): NPC_SetMiscDefaultData flags them AFTER the
+		//.npc parse, so NPC_stats' guard + Repulse setup missed them without this
+		|| ( ent->NPC_type && ( !Q_stricmp( ent->NPC_type, "tavion_scepter" ) || !Q_stricmp( ent->NPC_type, "alora_dual" ) ) )
+		|| ent->client->NPC_class == CLASS_DESANN
+		|| ent->client->NPC_class == CLASS_TAVION
+		|| ent->client->NPC_class == CLASS_ALORA
+		|| ent->client->NPC_class == CLASS_KYLE
+		|| ( includeElites && ent->client->NPC_class == CLASS_SHADOWTROOPER ) );
+}
+
 void G_DamageGuard( gentity_t *victim, gentity_t *attacker, int amount )
 {
+	if ( WP_SaberRules() )
+	{//JKEnhanced "a blade in the way": Force is the guard - kicks, resisted pushes, lightning and the
+	 //rest wear down a saber NPC's Force instead of a separate meter
+		if ( victim && victim->NPC && victim->client && victim->client->ps.weapon == WP_SABER )
+		{
+			WP_SaberGuardPay( victim, attacker, amount );
+		}
+		return;
+	}
 	if ( !victim || !victim->NPC || !victim->client || victim->NPC->guardMax <= 0 )
 	{
 		return;
@@ -4409,18 +6171,18 @@ void G_DamageGuard( gentity_t *victim, gentity_t *attacker, int amount )
 	if ( victim->NPC->guard <= 0 )
 	{//guard break — stagger open
 		victim->NPC->guard = 0;
-		const qboolean guardBoss = (qboolean)( (victim->NPC->aiFlags&NPCAI_BOSS_CHARACTER)
-			|| victim->client->NPC_class == CLASS_DESANN
-			|| victim->client->NPC_class == CLASS_TAVION
-			|| victim->client->NPC_class == CLASS_ALORA
-			|| victim->client->NPC_class == CLASS_KYLE
-			|| victim->client->NPC_class == CLASS_SHADOWTROOPER );
+		const qboolean guardBoss = G_IsSaberBoss( victim, qtrue );
 		victim->NPC->guardBreakTime = level.time + ( guardBoss ? Q_irand( 900, 1300 ) : Q_irand( 1600, 2400 ) );
 		//same stagger the engine uses for an overwhelmed parry (pmove picks the anim)
 		victim->client->ps.saberBlocked = BLOCKED_PARRY_BROKEN;
 		victim->client->ps.saberBounceMove = LS_NONE;
 		//audible tell — stumble bark
 		G_AddVoiceEvent( victim, Q_irand( EV_PUSHED1, EV_PUSHED3 ), 500 );
+		extern cvar_t *g_guardBreakSound;
+		if ( g_guardBreakSound && g_guardBreakSound->string[0] )
+		{//JKEnhanced 3D: a distinct clang so a guard break reads even without the bar
+			G_SoundOnEnt( victim, CHAN_AUTO, g_guardBreakSound->string );
+		}
 #ifndef FINAL_BUILD
 		if ( d_saberCombat->integer )
 		{
@@ -4428,6 +6190,125 @@ void G_DamageGuard( gentity_t *victim, gentity_t *attacker, int amount )
 		}
 #endif
 	}
+}
+
+extern cvar_t	*g_perfectRiposteTime;
+extern cvar_t	*g_perfectParryGuardDamage;
+extern cvar_t	*g_perfectParryStagger;
+extern cvar_t	*g_perfectParryForceGain;
+extern cvar_t	*g_heavyBlockStagger;
+extern cvar_t	*g_heavyBlockDamage;
+extern cvar_t	*g_heavyBlockForceCost;
+
+/*
+WP_PerfectParryReward (JKEnhanced)
+
+What a landed perfect parry earns the defender (player or NPC; WP_PerfectParrySuccess is the
+cue). The attacker loses guard (a parried heavy attack or kata breaks it outright) and is
+staggered: "parryStaggered" stops their parries (WP_SaberParry) and, for a player, their attack
+and block buttons (ClientThink_real); NPCs also get "attackDelay". The defender gains Force
+(double vs a heavy attack). A player defender gets a riposte: the next swing comes out at once
+("riposteWindow") and the first hit gets through the target's parry/evade ("perfectRiposte"; no
+damage bonus). A kata perfectly parried is cancelled on the spot into the stagger.
+ranged: a thrown saber - no stagger (out of reach), Force and riposte only.
+*/
+static qboolean WP_InKata( const playerState_t *ps )
+{
+	return (qboolean)( ps->saberMove == LS_A1_SPECIAL || ps->saberMove == LS_A2_SPECIAL || ps->saberMove == LS_A3_SPECIAL
+		|| ps->saberMove == LS_DUAL_SPIN_PROTECT || ps->saberMove == LS_STAFF_SOULCAL
+		|| ( ps->saber[0].kataMove > LS_NONE && ps->saberMove == ps->saber[0].kataMove )
+		|| ( ps->dualSabers && ps->saber[1].kataMove > LS_NONE && ps->saberMove == ps->saber[1].kataMove ) );
+}
+
+void WP_PerfectParryReward( gentity_t *defender, gentity_t *attacker, qboolean heavy, qboolean ranged )
+{
+	if ( !defender || !defender->client )
+	{
+		return;
+	}
+	if ( attacker && attacker->client && !ranged )
+	{
+		playerState_t *aps = &attacker->client->ps;
+		if ( WP_InKata( aps ) )
+		{//JKEnhanced: the kata stops here - drop the full-body anim and go straight into the stagger
+			aps->saberMove = aps->saberMoveNext = LS_READY;
+			aps->saberBounceMove = LS_NONE;
+			aps->weaponTime = 0;
+			aps->torsoAnimTimer = 0;
+			aps->legsAnimTimer = 0;
+			aps->saberAttackChainCount = 0;
+			aps->saberBlocked = BLOCKED_PARRY_BROKEN;
+			if ( g_debugParry && g_debugParry->integer )
+			{
+				gi.Printf( "perfect parry: %s's kata CANCELLED\n", attacker->NPC_type ? attacker->NPC_type : "player" );
+			}
+		}
+		if ( WP_SaberRules() )
+		{//the attacker is Open: short, or medium off a heavy attack or kata
+			WP_SaberSetOpen( attacker, heavy ? g_saberOpenMedium->integer : g_saberOpenShort->integer );
+		}
+		else
+		{
+			if ( attacker->NPC && attacker->NPC->guardMax > 0 )
+			{
+				G_DamageGuard( attacker, defender, heavy ? attacker->NPC->guard + 1 : g_perfectParryGuardDamage->integer );
+			}
+			TIMER_Set( attacker, "parryStaggered", g_perfectParryStagger->integer );
+			if ( attacker->NPC )
+			{
+				TIMER_Set( attacker, "attackDelay", g_perfectParryStagger->integer + 300 );
+			}
+		}
+	}
+	if ( defender->client->ps.forcePowerMax > 0 )
+	{
+		defender->client->ps.forcePower += g_perfectParryForceGain->integer * ( heavy ? 2 : 1 );
+		if ( defender->client->ps.forcePower > defender->client->ps.forcePowerMax )
+		{
+			defender->client->ps.forcePower = defender->client->ps.forcePowerMax;
+		}
+	}
+	if ( defender->s.number == 0 )
+	{
+		TIMER_Set( defender, "riposteWindow", g_perfectRiposteTime->integer );
+		TIMER_Set( defender, "perfectRiposte", g_perfectRiposteTime->integer );
+		s_riposteTarget = attacker ? attacker->s.number : ENTITYNUM_NONE;
+	}
+}
+
+//the player's riposte after a perfect parry only gets through to the one they parried
+//(not saved: after a load the timer may still run, but no target matches, so nothing opens)
+qboolean WP_RiposteOpenOn( const gentity_t *attacker, const gentity_t *victim )
+{
+	return (qboolean)( !WP_SaberRules()//(saber rules: a perfect parry leaves the attacker Open instead - visible, and the same for everyone)
+		&& attacker && victim && attacker->s.number == 0 && victim->NPC
+		&& victim->s.number == s_riposteTarget && !TIMER_Done( (gentity_t *)attacker, "perfectRiposte" ) );
+}
+
+/*
+g_saberDeterministic (JKEnhanced, default 1)
+
+Saber clashes resolve from things the player did or can see, not hidden dice:
+- a held, active block against a normal swing holds (no "parry broken" power roll); what wears
+  a blocker down is Force (block cost scales with the attacker's swing power) - at 0 Force the
+  block breaks;
+- heavy attacks / katas: only a perfect parry stops them cleanly (the heavy-attack branch);
+- knockaways come from a perfect parry (player timing, or an NPC reading a predictable attack:
+  WP_NPCPerfectParry), or Saber Defense 3 vs a Fast swing (blocking in a Strong stance no longer does);
+- a swing pushes through a clash only at power 3 (no 50/50 at power 2);
+- saber locks: only when both swings are heavy (power 3), at most once per 8 s per pair.
+0 = the stock rolls.
+*/
+extern cvar_t *g_saberDeterministic;
+extern cvar_t *g_debugSaberLock;
+static qboolean WP_DetSaberLockGate( gentity_t *a, gentity_t *b, int aPow, int bPow, qboolean forceLock )
+{
+	if ( g_debugSaberLock->integer || forceLock )
+	{
+		return qtrue;
+	}
+	return (qboolean)( aPow >= FORCE_LEVEL_3 && bPow >= FORCE_LEVEL_3
+		&& TIMER_Done( a, "saberLockCD" ) && TIMER_Done( b, "saberLockCD" ) );
 }
 
 int WP_SaberBlockForceCost( gentity_t *self, qboolean missileBlock );
@@ -4438,14 +6319,66 @@ qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, in
 	{
 		return qfalse;
 	}
+	if ( WP_SaberRules() && attacker->client && !attacker->client->ps.saberInFlight )
+	{//JKEnhanced "a blade in the way": an in-hand swing is stopped by a raised guard and by nothing else
+	 //(the Force cost is WP_SaberGuardStop's; thrown sabers keep the rules below)
+		if ( Rosh_BeingHealed( victim ) || G_InCinematicSaberAnim( victim )
+			|| PM_SuperBreakLoseAnim( victim->client->ps.torsoAnim ) || PM_SuperBreakWinAnim( victim->client->ps.torsoAnim ) )
+		{
+			return qfalse;
+		}
+		const guardState_t gs = WP_GuardState( victim, attacker );
+		if ( gs != GUARD_UP )
+		{
+			WP_NoteGuardFail( victim, attacker, gs );
+			return qfalse;
+		}
+		if ( victim->s.number == 0 && g_debugBlock && g_debugBlock->integer )
+		{
+			static int lastStopPrint = -1;
+			if ( lastStopPrint != level.time )
+			{
+				lastStopPrint = level.time;
+				gi.Printf( S_COLOR_GREEN "BLOCKED" S_COLOR_WHITE " vs %s (style %d%s), Force %d\n",
+					attacker->NPC_type ? attacker->NPC_type : "?", attacker->client->ps.saberAnimLevel,
+					WP_IsHeavyAttack( attacker ) ? ", HEAVY" : "", victim->client->ps.forcePower );
+			}
+		}
+		if ( !PM_SaberInTransitionAny( victim->client->ps.saberMove )
+			&& !PM_SaberInBounce( victim->client->ps.saberMove )
+			&& !PM_SaberInKnockaway( victim->client->ps.saberMove ) )
+		{//bring the blade to where the hit landed
+			WP_SaberBlockNonRandom( victim, saberHitLocation, qfalse );
+		}
+		victim->client->ps.saberEventFlags |= SEF_PARRIED;
+		//since it was stopped, take away any damage done
+		WP_SaberClearDamageForEntNum( attacker, victim->s.number, saberNum, bladeNum );
+		if ( victim->enemy != attacker && victim->client->playerTeam != attacker->client->playerTeam )
+		{//they're not mad at me and they're not on my team
+			G_ClearEnemy( victim );
+			G_SetEnemy( victim, attacker );
+		}
+		return qtrue;
+	}
 	if ( victim->NPC && victim->NPC->guardBreakTime > level.time )
 	{//guard-broken — defenseless until the window lapses
 		return qfalse;
 	}
-	// Saber NPCs play by the player's rules: blocking a swing costs Force, and with none left
-	// the block doesn't hold (their guard is still their stagger meter on top of this)
+	if ( !TIMER_Done( victim, "parryStaggered" ) )
+	{//JKEnhanced: knocked off balance by a perfect parry / a broken block against a heavy attack
+		WP_NoteBlockFail( victim, "you were staggered (enemy perfect parry, or a broken block vs a heavy attack)" );
+		return qfalse;
+	}
+	if ( WP_RiposteOpenOn( attacker, victim ) )
+	{//JKEnhanced: the player's riposte after a perfect parry goes through
+		return qfalse;
+	}
+	// Saber NPCs could play by the player's rules: blocking a swing costs Force, and with none left
+	// the block doesn't hold. JKEnhanced 4B: off while blocks are free for NPCs (WP_NPCForceFree -
+	// the guard meter covers blocking), so a bar spent on powers never drops their guard.
 	const qboolean npcSaber = (qboolean)( victim->NPC && victim->s.number >= MAX_CLIENTS
-		&& victim->client->ps.weapon == WP_SABER && victim->client->ps.forcePowerMax > 0 );
+		&& victim->client->ps.weapon == WP_SABER && victim->client->ps.forcePowerMax > 0
+		&& !WP_NPCForceFree( victim, FP_SABER_DEFENSE ) );
 	if ( npcSaber && victim->client->ps.forcePower <= 0 )
 	{
 		return qfalse;
@@ -4454,21 +6387,45 @@ qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, in
 	{
 		return qfalse;
 	}
+	if ( PM_InKnockDown( &victim->client->ps ) )
+	{//JKEnhanced: on the ground or getting up - no parry (a stab-down on a downed Reborn was being
+	 //"parried": it ate their guard and did no damage)
+		WP_NoteBlockFail( victim, "knocked down / getting up" );
+		return qfalse;
+	}
 	if ( G_InCinematicSaberAnim( victim ) )
 	{
+		WP_NoteBlockFail( victim, "in a cinematic saber anim" );
 		return qfalse;
 	}
 	if ( PM_SuperBreakLoseAnim( victim->client->ps.torsoAnim )
 		|| PM_SuperBreakWinAnim( victim->client->ps.torsoAnim ) )
 	{
+		WP_NoteBlockFail( victim, "in a saber-lock super-break anim" );
 		return qfalse;
 	}
 	// Manual mode: holding block parries from any direction — timing (the perfect-parry
 	// window) is the skill test, and impact position picks the directional block anim.
 	qboolean canParry = (qboolean)(victim->s.number != 0 || g_saberAutoBlocking->integer || victim->client->ps.saberBlockingTime > level.time);
+	if ( !canParry )
+	{
+		WP_NoteBlockFail( victim, "block not active at impact (button released, or it lapsed for a frame)" );
+	}
 
 	if ( canParry )
 	{//either an NPC or a player who is blocking
+		if ( victim->s.number == 0 && g_debugBlock && g_debugBlock->integer )
+		{//g_debugBlock: successful blocks too, so a run shows the whole picture
+			static int lastBlockPrint = -1;
+			if ( lastBlockPrint != level.time )
+			{
+				lastBlockPrint = level.time;
+				gi.Printf( S_COLOR_GREEN "BLOCKED" S_COLOR_WHITE " vs %s (style %d%s), Force %d, move %s\n",
+					attacker->NPC_type ? attacker->NPC_type : "?", attacker->client ? attacker->client->ps.saberAnimLevel : 0,
+					WP_IsHeavyAttack( attacker ) ? ", HEAVY" : "", victim->client->ps.forcePower,
+					saberMoveData[victim->client->ps.saberMove].name );
+			}
+		}
 		if ( !PM_SaberInTransitionAny( victim->client->ps.saberMove )
 			&& !PM_SaberInBounce( victim->client->ps.saberMove )
 			&& !PM_SaberInKnockaway( victim->client->ps.saberMove ) )
@@ -4532,7 +6489,7 @@ qboolean WP_SaberParry( gentity_t *victim, gentity_t *attacker, int saberNum, in
 		}
 		// the player gets a riposte: attack right off a (non-perfect) block and the parry
 		// recovery is skipped (G_CheckClampUcmd)
-		if ( victim->s.number == 0 && !WP_InPerfectParryWindow( victim ) )
+		if ( victim->s.number == 0 && !WP_InPerfectParryWindowVs( victim, attacker, qfalse ) )
 		{
 			TIMER_Set( victim, "riposteWindow", 300 );
 		}
@@ -5003,6 +6960,15 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 
 	if ( !ent->client )
 	{
+		return;
+	}
+
+	if ( WP_SaberHitStopped( ent ) )
+	{//JKEnhanced: frozen for a hit-stop (a cut just landed) - the blade does nothing more until it ends
+		return;
+	}
+	if ( WP_SaberRules() && WP_SaberInFollowThrough( ent ) )
+	{//JKEnhanced saber rules: holding the end of a phrase's last swing (the opening) - the blade is spent
 		return;
 	}
 
@@ -5743,8 +7709,8 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 				}
 				else if ( entAttacking
 					&& hitOwnerAttacking
-					&& !Q_irand( 0, g_saberLockRandomNess->integer )
-					&& ( g_debugSaberLock->integer || forceLock
+					&& ( g_saberDeterministic->integer ? WP_DetSaberLockGate( ent, hitOwner, entPowerLevel, hitOwnerPowerLevel, forceLock ) : !Q_irand( 0, g_saberLockRandomNess->integer ) )
+					&& ( g_saberDeterministic->integer || g_debugSaberLock->integer || forceLock
 						|| entPowerLevel == hitOwnerPowerLevel
 						|| (entPowerLevel > FORCE_LEVEL_2 && hitOwnerPowerLevel > FORCE_LEVEL_2 )
 						|| (entPowerLevel < FORCE_LEVEL_3 && hitOwnerPowerLevel < FORCE_LEVEL_3 && hitOwner->client->ps.forcePowerLevel[FP_SABER_OFFENSE] > FORCE_LEVEL_2 && Q_irand( 0, 3 ))
@@ -5757,8 +7723,8 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 				}
 				else if ( hitOwnerAttacking
 					&& entDefending
-					&& !Q_irand( 0, g_saberLockRandomNess->integer*3 )
-					&& (g_debugSaberLock->integer || forceLock ||
+					&& ( g_saberDeterministic->integer ? WP_DetSaberLockGate( ent, hitOwner, entPowerLevel, hitOwnerPowerLevel, forceLock ) : !Q_irand( 0, g_saberLockRandomNess->integer*3 ) )
+					&& (g_saberDeterministic->integer || g_debugSaberLock->integer || forceLock ||
 						((ent->client->ps.saberMove != LS_READY || (hitOwnerPowerLevel-ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE]) < Q_irand( -6, 0 ) )
 							&& ((hitOwnerPowerLevel < FORCE_LEVEL_3 && ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_2 )||
 								(hitOwnerPowerLevel < FORCE_LEVEL_2 && ent->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_1 )||
@@ -5767,12 +7733,42 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 				{
 					collisionResolved = qtrue;
 				}
+				else if ( WP_SaberRules() && entAttacking && !hitOwnerAttacking && saberHitFraction < 1.0f
+					&& WP_GuardState( hitOwner, ent ) == GUARD_UP )
+				{//JKEnhanced "a blade in the way": their guard was up before contact, so the swing is stopped
+				 //(heavy attacks too: they cost the blocker more Force instead of going through)
+					deflected = WP_SaberGuardStop( ent, hitOwner, saberNum, bladeNum, heavyAttack, entPowerLevel );
+					collisionResolved = qtrue;
+				}
+				else if ( WP_SaberRules() && entAttacking && !hitOwnerAttacking && saberHitFraction < 1.0f )
+				{//JKEnhanced saber rules: no guard up, but their blade really was in the way
+				 //(WP_SaberDamageForTrace only counts an unguarded saber on true blade contact). The swing comes
+				 //off it. They did nothing: no parry, no Force cost, and it doesn't count towards an answer.
+					if ( entPowerLevel < FORCE_LEVEL_3 )
+					{
+						deflected = WP_GetSaberDeflectionAngle( ent, hitOwner );
+					}
+					ent->client->ps.saberEventFlags |= SEF_BLOCKED;
+					WP_SaberClearDamageForEntNum( ent, hitOwner->s.number, saberNum, bladeNum );
+					collisionResolved = qtrue;
+					if ( g_debugBlock && g_debugBlock->integer && ( ent->s.number == 0 || hitOwner->s.number == 0 ) )
+					{
+						static int lastContactPrint = -1000;
+						if ( level.time - lastContactPrint > 300 || level.time < lastContactPrint )
+						{
+							lastContactPrint = level.time;
+							gi.Printf( S_COLOR_CYAN "BLADE CONTACT" S_COLOR_WHITE " %s swing ran into %s blade (no guard up, the blades met)\n",
+								ent->s.number ? va( "%s's", ent->NPC_type ? ent->NPC_type : "?" ) : "your",
+								hitOwner->s.number ? va( "%s's", hitOwner->NPC_type ? hitOwner->NPC_type : "?" ) : "your" );
+						}
+					}
+				}
 				else if ( entAttacking && hitOwnerDefending )
 				{//I'm attacking hit, they're parrying
-					qboolean activeDefense = (qboolean)(hitOwner->s.number||g_saberAutoBlocking->integer||hitOwner->client->ps.saberBlockingTime > level.time);
-					if ( !Q_irand( 0, g_saberLockRandomNess->integer*3 )
+					qboolean activeDefense =(qboolean)(hitOwner->s.number||g_saberAutoBlocking->integer||hitOwner->client->ps.saberBlockingTime > level.time);
+					if ( ( g_saberDeterministic->integer ? WP_DetSaberLockGate( ent, hitOwner, entPowerLevel, hitOwnerPowerLevel, forceLock ) : !Q_irand( 0, g_saberLockRandomNess->integer*3 ) )
 						&& activeDefense
-						&& (g_debugSaberLock->integer || forceLock ||
+						&& (g_saberDeterministic->integer || g_debugSaberLock->integer || forceLock ||
 							((hitOwner->client->ps.saberMove != LS_READY || (entPowerLevel-hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]) < Q_irand( -6, 0 ) )
 								&& ( ( entPowerLevel < FORCE_LEVEL_3 && hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_2 )
 									|| ( entPowerLevel < FORCE_LEVEL_2 && hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_1 )
@@ -5788,8 +7784,8 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 						// instead of every single clash against a defending target bouncing the
 						// attacker's swing (which was breaking attack rhythm on nearly every hit).
 						qboolean skipDeflect = (qboolean)( entPowerLevel >= FORCE_LEVEL_3 );
-						if ( !skipDeflect && entPowerLevel >= FORCE_LEVEL_2 && !Q_irand( 0, 1 ) )
-						{//50/50 chance to push through at level 2
+						if ( !skipDeflect && entPowerLevel >= FORCE_LEVEL_2 && !g_saberDeterministic->integer && !Q_irand( 0, 1 ) )
+						{//50/50 chance to push through at level 2 (stock rolls only)
 							skipDeflect = qtrue;
 						}
 						if ( !skipDeflect && activeDefense )
@@ -5800,12 +7796,16 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 							ent->client->ps.saberEventFlags |= SEF_BLOCKED;
 						}
 						//base parry breaks on animation (saber attack level), not FP_SABER_OFFENSE
-						if ( WP_InPerfectParryWindow( hitOwner ) || WP_NPCPerfectParry( hitOwner )//timed perfect parry always knocks the attack away (NPCs: AI_JediBrain.cpp)
+						if ( WP_InPerfectParryWindowVs( hitOwner, ent, qfalse ) || WP_NPCPerfectParry( hitOwner )//timed perfect parry always knocks the attack away (NPCs: AI_JediBrain.cpp)
 							|| ( entPowerLevel < FORCE_LEVEL_3
 							//&& ent->client->ps.forcePowerLevel[FP_SABER_OFFENSE] < FORCE_LEVEL_3//if you have high saber offense, you cannot have your attack knocked away, regardless of what style you're using?
 							//&& hitOwner->client->ps.saberAnimLevel != FORCE_LEVEL_5
 							&& activeDefense
-							&& (hitOwnerPowerLevel > FORCE_LEVEL_2||(hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]>FORCE_LEVEL_2&&Q_irand(0,hitOwner->client->ps.forcePowerLevel[FP_SABER_OFFENSE]))) ) )
+							&& ( g_saberDeterministic->integer
+								//deterministic: no knockaway just for blocking in a Strong stance; Defense 3 knocks away Fast swings
+								? ( hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] > FORCE_LEVEL_2 && entPowerLevel <= FORCE_LEVEL_1 )
+								: ( hitOwnerPowerLevel > FORCE_LEVEL_2
+									|| ( hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]>FORCE_LEVEL_2&&Q_irand(0,hitOwner->client->ps.forcePowerLevel[FP_SABER_OFFENSE]) ) ) ) ) )
 						{//knockaways can make fast-attacker go into a broken parry anim if the ent is using fast or med (but not Tavion)
 							//make me parry
 							WP_SaberParry( hitOwner, ent, saberNum, bladeNum );
@@ -5814,9 +7814,19 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 							//make them go into a broken parry
 							ent->client->ps.saberBounceMove = PM_BrokenParryForAttack( ent->client->ps.saberMove );
 							ent->client->ps.saberBlocked = BLOCKED_PARRY_BROKEN;
-							if ( WP_InPerfectParryWindow( hitOwner ) || WP_NPCPerfectParry( hitOwner ) )
-							{//timed perfect parry — big composure hit + distinct feedback, and reset the tap cooldown
-								G_DamageGuard( ent, hitOwner, 25 );
+							if ( ent->s.number == 0 && g_debugBlock->integer )
+							{//g_debugBlock: why the player's swing got knocked away
+								gi.Printf( S_COLOR_YELLOW "your swing was KNOCKED AWAY by %s: %s\n",
+									hitOwner->NPC_type ? hitOwner->NPC_type : "?",
+									WP_NPCPerfectParry( hitOwner ) ? va( "they READ you (same direction x%d, flurry of %d)",
+										hitOwner->NPC ? hitOwner->NPC->sameBlockDirCount : 0, ent->client->ps.saberAttackChainCount )
+									: ( ( !g_saberDeterministic->integer && hitOwnerPowerLevel > FORCE_LEVEL_2 ) ? "blocking in a Strong-power stance"
+									: "their Saber Defense 3 vs your Fast swing" ) );
+							}
+							if ( WP_InPerfectParryWindowVs( hitOwner, ent, qfalse ) || WP_NPCPerfectParry( hitOwner ) )
+							{//timed perfect parry — guard hit (a parried heavy attack breaks guard), longer
+							//stagger, Force, a riposte window, distinct feedback, and reset the tap cooldown
+								WP_PerfectParryReward( hitOwner, ent, WP_IsHeavyAttack( ent ), qfalse );
 								WP_PerfectParrySuccess( hitOwner, saberHitLocation, saberHitNormal );
 							}
 							if ( saberNum == 0 )
@@ -5847,49 +7857,91 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 						}
 						else if ( heavyAttack && activeDefense )
 						{//telegraphed heavy attack (Strong/Tavion/Desann kata), blocked but not perfectly
-						//timed — guaranteed stagger with softened damage instead of the ordinary roll,
-						//rewarding the attempt to block even though the timing wasn't perfect
+						//timed. JKEnhanced: only a perfect parry stops it cleanly — a mistimed block is
+						//broken: a long stagger (no blocking or attacking), most of the damage, Force lost
+						//(NPC defenders lose half their guard instead of the stagger timer alone)
 							hitOwner->client->ps.saberBlocked = BLOCKED_PARRY_BROKEN;
 							hitOwner->client->ps.saberBounceMove = LS_NONE;
+							TIMER_Set( hitOwner, "parryStaggered", g_heavyBlockStagger->integer );
+							WP_NoteBlockFail( hitOwner, "heavy attack, block mistimed (only a perfect parry stops it)" );
+							if ( hitOwner->NPC )
+							{
+								TIMER_Set( hitOwner, "attackDelay", g_heavyBlockStagger->integer );
+								if ( hitOwner->NPC->guardMax > 0 )
+								{
+									G_DamageGuard( hitOwner, ent, hitOwner->NPC->guardMax / 2 );
+								}
+							}
+							if ( g_heavyBlockForceCost->integer > 0 && hitOwner->client->ps.forcePowerMax > 0 )
+							{
+								WP_ForcePowerDrain( hitOwner, FP_SABER_DEFENSE, g_heavyBlockForceCost->integer );
+							}
 							for ( int vi = 0; vi < numVictims; vi++ )
 							{
 								if ( victimEntityNum[vi] == hitOwner->s.number )
 								{
-									totalDmg[vi] *= 0.5f;
+									totalDmg[vi] *= g_heavyBlockDamage->value;
 									break;
 								}
+							}
+							if ( g_saberDeterministic->integer
+								&& !(hitOwner->client->ps.saber[0].saberFlags&SFL_NOT_DISARMABLE)
+								&& hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] < FORCE_LEVEL_2 )
+							{//deterministic: a telegraphed heavy attack disarms a Saber Defense 1 blocker who mistimes it
+							 //(the disarm below, in the broken-parry branch, only ever reached someone not blocking)
+								vec3_t	throwDir;
+								PM_VelocityForSaberMove( &ent->client->ps, throwDir );
+								WP_SaberLose( hitOwner, throwDir );
 							}
 #ifndef FINAL_BUILD
 							if ( d_saberCombat->integer )
 							{
-								gi.Printf( S_COLOR_RED"%s staggered by %s's heavy attack (mistimed block, softened damage)\n", hitOwner->targetname, ent->NPC_type );
+								gi.Printf( S_COLOR_RED"%s's block broken by %s's heavy attack (mistimed: %d ms stagger, x%.2f damage)\n", hitOwner->NPC_type ? hitOwner->NPC_type : "player", ent->NPC_type ? ent->NPC_type : "player", g_heavyBlockStagger->integer, g_heavyBlockDamage->value );
 							}
 #endif
 						}
 						else if ( !activeDefense//they're not defending
-							|| (!deflected && Q_irand( 0, Q_max(0, PM_PowerLevelForSaberAnim( &ent->client->ps, saberNum ) - hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE])/*PM_PowerLevelForSaberAnim( &hitOwner->client->ps )*/ ) > 0 ) )
+							|| ( g_saberDeterministic->integer
+								//deterministic: a held block holds; it breaks only when the blocker is out of Force
+								? ( hitOwner->client->ps.forcePowerMax > 0 && hitOwner->client->ps.forcePower <= 0 && !WP_NPCForceFree( hitOwner, FP_SABER_DEFENSE ) )//4B: NPC blocks are Force-free
+								: (!deflected && Q_irand( 0, Q_max(0, PM_PowerLevelForSaberAnim( &ent->client->ps, saberNum ) - hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE])/*PM_PowerLevelForSaberAnim( &hitOwner->client->ps )*/ ) > 0 ) ) )
 						{//broke their parry altogether
-							if ( entPowerLevel > FORCE_LEVEL_2 || Q_irand( 0, Q_max(0, ent->client->ps.forcePowerLevel[FP_SABER_OFFENSE] - hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]) ) )
+							if ( g_saberDeterministic->integer
+								//deterministic: not blocking at all, or a strong-power swing, carries on into them
+								? ( !activeDefense || entPowerLevel >= FORCE_LEVEL_2 )
+								: ( entPowerLevel > FORCE_LEVEL_2 || Q_irand( 0, Q_max(0, ent->client->ps.forcePowerLevel[FP_SABER_OFFENSE] - hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE]) ) ) )
 							{//chance of continuing with the attack (not bouncing back)
 								ent->client->ps.saberEventFlags &= ~SEF_BLOCKED;
 								ent->client->ps.saberBounceMove = LS_NONE;
 								brokenParry = qtrue;
 							}
+							if ( hitOwner->s.number == 0 && g_debugBlock->integer )
+							{//g_debugBlock: which of the two ways in, with the numbers behind the roll
+								static char note[160];
+								Com_sprintf( note, sizeof( note ), "their swing broke your parry: %s (swing power %d vs your Saber Defense %d)%s",
+									!activeDefense ? "you weren't actively blocking" : ( g_saberDeterministic->integer ? "out of Force, your block broke" : "power roll lost" ),
+									PM_PowerLevelForSaberAnim( &ent->client->ps, saberNum ), hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE],
+									brokenParry ? ", and the swing carried on into you" : "" );
+								WP_NoteBlockFail( hitOwner, note );
+							}
 							//do some time-consuming saber-knocked-aside broken parry anim
 							hitOwner->client->ps.saberBlocked = BLOCKED_PARRY_BROKEN;
 							hitOwner->client->ps.saberBounceMove = LS_NONE;
 							//FIXME: for now, you always disarm the right-hand saber
+							const qboolean detHeavy = (qboolean)( g_saberDeterministic->integer && WP_IsHeavyAttack( ent ) );
 							if ( !(hitOwner->client->ps.saber[0].saberFlags&SFL_NOT_DISARMABLE)
 								&& hitOwner->client->ps.forcePowerLevel[FP_SABER_DEFENSE] < FORCE_LEVEL_2
 								//&& (ent->s.number||g_saberRealisticCombat->integer)
-								&& Q_irand( 0, 2-ent->client->ps.SaberDisarmBonus( bladeNum ) ) <= 0 )
+								&& ( g_saberDeterministic->integer ? detHeavy//deterministic: only a telegraphed heavy attack disarms
+									: Q_irand( 0, 2-ent->client->ps.SaberDisarmBonus( bladeNum ) ) <= 0 ) )
 							{//knocked the saber right out of his hand!
 								//get the right velocity for my attack direction
 								vec3_t	throwDir;
 								PM_VelocityForSaberMove( &ent->client->ps, throwDir );
 								WP_SaberLose( hitOwner, throwDir );
-								if ( (ent->client->ps.saberAnimLevel == SS_STRONG && !Q_irand(0,3) )
-									|| ( ent->client->ps.saberAnimLevel==SS_DESANN&&!Q_irand(0,1) ) )
+								if ( g_saberDeterministic->integer ? detHeavy
+									: ( (ent->client->ps.saberAnimLevel == SS_STRONG && !Q_irand(0,3) )
+									|| ( ent->client->ps.saberAnimLevel==SS_DESANN&&!Q_irand(0,1) ) ) )
 								{// a strong attack
 									if ( WP_BrokenParryKnockDown( hitOwner ) )
 									{
@@ -5900,8 +7952,9 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 							}
 							else
 							{
-								if ( (ent->client->ps.saberAnimLevel == SS_STRONG && !Q_irand(0,5) )
-									|| ( ent->client->ps.saberAnimLevel==SS_DESANN&&!Q_irand(0,3) ) )
+								if ( g_saberDeterministic->integer ? detHeavy//deterministic: only a telegraphed heavy attack knocks down
+									: ( (ent->client->ps.saberAnimLevel == SS_STRONG && !Q_irand(0,5) )
+									|| ( ent->client->ps.saberAnimLevel==SS_DESANN&&!Q_irand(0,3) ) ) )
 								{// a strong attack
 									if ( WP_BrokenParryKnockDown( hitOwner ) )
 									{
@@ -5953,18 +8006,7 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 						if ( hitOwner->NPC && hitOwner->NPC->guardMax > 0 && hitOwner->client->ps.weapon == WP_SABER )
 						{
 							if ( hitOwner->NPC->guardBreakTime > level.time )
-							{
-								if ( ent->client->ps.saberAnimLevel == SS_STRONG || ent->client->ps.saberAnimLevel == SS_DESANN )
-								{//punish a guard-broken victim harder with a heavy follow-up hit
-									for ( int vi = 0; vi < numVictims; vi++ )
-									{
-										if ( victimEntityNum[vi] == hitOwner->s.number )
-										{
-											totalDmg[vi] = (int)(totalDmg[vi] * 1.5f);
-											break;
-										}
-									}
-								}
+							{//guard broken: no resistance (the old x1.5 heavy follow-up bonus is gone; g_guardBreakDamage)
 							}
 							else if ( hitOwner->NPC->guard > 0 )
 							{//guard intact -- the more of it remaining, the harder they are to actually hurt
@@ -6105,8 +8147,9 @@ void WP_SaberDamageTrace( gentity_t *ent, int saberNum, int bladeNum )
 					{//saber collided when not attacking, parry it
 						if ( !PM_SaberInBrokenParry( hitOwner->client->ps.saberMove ) )
 						{//not currently in a broken parry
-							if ( ent->client->ps.saberInFlight && ( WP_InPerfectParryWindow( hitOwner ) || WP_NPCPerfectParry( hitOwner ) ) )
+							if ( ent->client->ps.saberInFlight && ( WP_InPerfectParryWindowVs( hitOwner, ent, qfalse ) || WP_NPCPerfectParry( hitOwner ) ) )
 							{//a perfectly-timed block against a thrown saber disarms the thrower
+								WP_PerfectParryReward( hitOwner, ent, qfalse, qtrue );	//Force + riposte; no stagger (they're out of reach)
 								WP_PerfectParrySuccess( hitOwner, saberHitLocation, saberHitNormal );
 								vec3_t throwDir;
 								if ( !PM_VelocityForBlockedMove( &hitOwner->client->ps, throwDir ) )
@@ -6814,10 +8857,10 @@ void WP_SaberInFlightReflectCheck( gentity_t *self, usercmd_t *ucmd  )
 					if ( self->s.number == 0 || Q_irand( 0, 99 ) < 55 )
 					{
 						G_ReflectMissile( self, missile_list[x], forward );
+						//do an effect (only when it actually bounced - a failed roll lets the shot through)
+						VectorNormalize2( missile_list[x]->s.pos.trDelta, fx_dir );
+						G_PlayEffect( "blaster/deflect", missile_list[x]->currentOrigin, fx_dir );
 					}
-					//do an effect
-					VectorNormalize2( missile_list[x]->s.pos.trDelta, fx_dir );
-					G_PlayEffect( "blaster/deflect", missile_list[x]->currentOrigin, fx_dir );
 				}
 			}
 		}
@@ -7355,8 +9398,10 @@ qboolean WP_SaberLose( gentity_t *self, vec3_t throwDir )
 	if ( self->NPC )
 	{
 		self->NPC->last_ucmd.buttons &= ~BUTTON_ATTACK;
-		if ( self->health > 0 && (!self->client->ps.dualSabers || !self->client->ps.saber[1].Active()) )
+		if ( self->health > 0 && (!self->client->ps.dualSabers || !self->client->ps.saber[1].Active())
+			&& !G_IsSaberBoss( self, qtrue ) )
 		{//no backup saber left -- react immediately instead of waiting for an AI tick to notice
+		 //(bosses don't run: they stand and pull their saber back - the Jedi AI's rearm)
 			G_StartFlee( self, self->enemy, self->enemy ? self->enemy->currentOrigin : self->currentOrigin, AEL_DANGER_GREAT, 5000, 10000 );
 		}
 	}
@@ -7928,6 +9973,17 @@ int WP_SaberBlockForceCost( gentity_t *self, qboolean missileBlock )
 		}
 	}
 	else                cost = cost * 5;       // 5x for saber attack blocks -- non-perfect blocks should sting
+	if ( !missileBlock && g_saberDeterministic && g_saberDeterministic->integer
+		&& self->enemy && self->enemy->client && self->enemy->client->ps.weapon == WP_SABER )
+	{//JKEnhanced: harder swings cost more to block - blocks hold, Force is what wears you down
+		const int pow = PM_PowerLevelForSaberAnim( &self->enemy->client->ps, 0 );
+		float scale = pow >= FORCE_LEVEL_3 ? 1.35f : ( pow == FORCE_LEVEL_2 ? 1.0f : 0.75f );
+		if ( WP_IsHeavyAttack( self->enemy ) )
+		{
+			scale = 1.6f;
+		}
+		cost = (int)( cost * scale );
+	}
 	return cost;
 }
 
@@ -7973,6 +10029,33 @@ int WP_MissileBlockForBlock( int saberBlock )
 		break;
 	}
 	return saberBlock;
+}
+
+/*
+WP_PlayerBlockChargeNew (JKEnhanced)
+
+The player's saber-block cost is paid once per enemy swing. The block runs again on every frame of
+blade contact, and the Defense 2+ debounce (37-130 ms) is shorter than a frame at low fps, so one
+swing was billed two or three times. A new swing = a different attacker or a different saberMove,
+or 1 s since the last charge.
+*/
+static qboolean WP_PlayerBlockChargeNew( gentity_t *self )
+{
+	static int s_lastAttacker = ENTITYNUM_NONE;
+	static int s_lastMove = LS_NONE;
+	static int s_lastTime = 0;
+	const gentity_t *att = self->enemy;
+	const int attNum = att ? att->s.number : ENTITYNUM_NONE;
+	const int attMove = ( att && att->client ) ? att->client->ps.saberMove : LS_NONE;
+	if ( attNum == s_lastAttacker && attMove == s_lastMove
+		&& level.time >= s_lastTime && level.time - s_lastTime < 1000 )
+	{
+		return qfalse;
+	}
+	s_lastAttacker = attNum;
+	s_lastMove = attMove;
+	s_lastTime = level.time;
+	return qtrue;
 }
 
 void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlock )
@@ -8108,16 +10191,13 @@ void WP_SaberBlockNonRandom( gentity_t *self, vec3_t hitloc, qboolean missileBlo
 							//incoming bolt is still approaching -- charging here could bill an early,
 							//pre-timing-window frame even though the player goes on to land a perfect parry
 			&& self->s.number == 0 && !g_saberAutoBlocking->integer
-			&& self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time )
+			&& !WP_SaberRules()	//saber rules: WP_SaberGuardStop charges the stop
+			&& self->client->ps.forcePowerDebounce[FP_SABER_DEFENSE] < level.time
+			&& WP_PlayerBlockChargeNew( self ) )
 		{
-			if ( WP_InPerfectParryWindow( self ) )
-			{//perfect parries stay free, and refund half of what a sloppy block would have cost
-				//(not scaled down by the defender's own Defense level, so it stays noticeable)
-				self->client->ps.forcePower += WP_SaberPerfectParryRefund( self, missileBlock );
-				if ( self->client->ps.forcePower > self->client->ps.forcePowerMax )
-				{
-					self->client->ps.forcePower = self->client->ps.forcePowerMax;
-				}
+			if ( WP_InPerfectParryWindowVs( self, self->enemy, missileBlock ) )
+			{//perfect parries stay free (WP_PerfectParryReward gives the Force back - the old half-cost
+			 //refund here paid it twice)
 			}
 			else
 			{
@@ -8672,6 +10752,8 @@ void WP_SaberUpdate( gentity_t *self, usercmd_t *ucmd )
 		return;
 	}
 
+	WP_SaberTrackSwingRun( self );
+
 	if ( self->client->ps.saberEntityNum < 0 || self->client->ps.saberEntityNum >= ENTITYNUM_WORLD )
 	{//never got one
 		return;
@@ -8713,6 +10795,11 @@ void WP_SaberUpdate( gentity_t *self, usercmd_t *ucmd )
 		{
 			self->client->ps.saber[1].ActivateTrail( 150 );
 		}
+	}
+
+	if ( WP_SaberRules() && !self->client->ps.saberBlocking && WP_SaberGuardUp( self ) )
+	{//JKEnhanced: a raised guard always has its box, even in a saber move that has none
+		self->client->ps.saberBlocking = BLK_WIDE;
 	}
 
 	//is our saber in flight?
@@ -8790,9 +10877,13 @@ void WP_SaberUpdate( gentity_t *self, usercmd_t *ucmd )
 			|| self->client->ps.saberBlocking == BLK_WIDE )
 		{//FIXME: keep bbox in front of player, even when wide?
 			vec3_t	saberOrg;
+			//JKEnhanced saber rules: a raised guard covers the body whatever the saber anim is doing
+			//(a parry's recovery used to shrink this to the blade, so the next swing of a flurry got through)
+			const qboolean guardBox = (qboolean)( WP_SaberRules() && WP_SaberGuardUp( self ) );
 			if ( !forceBlock
-				&& ( (self->s.number&&!Jedi_SaberBusy(self)&&!g_saberRealisticCombat->integer) || (self->s.number == 0 && self->client->ps.saberBlocking == BLK_WIDE && (g_saberAutoBlocking->integer||(self->client->ps.saberBlockingTime>level.time&&self->client->ps.forcePower>0))) )
-				&& self->client->ps.weaponTime <= 0
+				&& ( guardBox
+					|| ( ( (self->s.number&&!Jedi_SaberBusy(self)&&!g_saberRealisticCombat->integer) || (self->s.number == 0 && self->client->ps.saberBlocking == BLK_WIDE && (g_saberAutoBlocking->integer||(self->client->ps.saberBlockingTime>level.time&&self->client->ps.forcePower>0))) )
+						&& self->client->ps.weaponTime <= 0 ) )
 				&& !G_InCinematicSaberAnim( self ) )
 			{//full-size blocking for non-attacking player with g_saberAutoBlocking on
 				vec3_t saberang={0,0,0}, fwd, sabermins={-8,-8,-8}, sabermaxs={8,8,8};
@@ -9047,6 +11138,7 @@ void WP_DropWeapon( gentity_t *dropper, vec3_t velocity )
 	{
 		return;
 	}
+	qboolean neutralize = qfalse;
 	if ( dropper->NPC && dropper->health > 0 )
 	{//losing your gun is a bad moment
 		AI_NerveEvent( dropper, NE_DISARMED, 1.0f, NULL );
@@ -9055,8 +11147,10 @@ void WP_DropWeapon( gentity_t *dropper, vec3_t velocity )
 			&& AI_NerveTier( dropper ) != NT_STEADY
 			&& dropper->s.weapon != WP_NONE && dropper->s.weapon != WP_MELEE && dropper->s.weapon != WP_SABER
 			&& G_CanNeutralize( dropper, NH_DISARM ) )
-		{//disarmed and already rattled: that's the end of their fight (shock, then hands up or run)
-			G_Neutralize( dropper, dropper->enemy, NH_DISARM );
+		{//disarmed and already rattled: that's the end of their fight (shock, then hands up or run).
+		 //Done below, after the toss: G_Neutralize drops the gun itself, which used to leave nothing
+		 //here to throw (a pulled gun didn't fly to you) and the weapon slot uncleared
+			neutralize = qtrue;
 		}
 	}
 	int	replaceWeap = WP_NONE;
@@ -9108,7 +11202,11 @@ void WP_DropWeapon( gentity_t *dropper, vec3_t velocity )
 		//FIXME: gets stuck inside it's former owner...
 		weapon->forcePushTime = level.time + 600; // let the push effect last for 600 ms
 	}
-	if ( dropper->NPC )
+	if ( neutralize )
+	{//(the flee below would override their shock / hands-up)
+		G_Neutralize( dropper, dropper->enemy, NH_DISARM );
+	}
+	else if ( dropper->NPC )
 	{
 		if ( replaceWeap == WP_NONE && dropper->health > 0 )
 		{//actually left unarmed (not the thermal->melee swap) -- react immediately instead of
@@ -9241,6 +11339,15 @@ void WP_ResistForcePush( gentity_t *self, gentity_t *pusher, qboolean noPenalty 
 		return;
 	}
 
+	if ( !noPenalty && WP_SaberRules() && self->client->ps.weapon == WP_SABER && self->client->ps.SaberActive()
+		&& !self->client->ps.saberInFlight && WP_SaberSwinging( &self->client->ps )
+		&& !PM_SaberInSpecialAttack( self->client->ps.torsoAnim ) && TIMER_Done( self, "bossStageRecover" ) )
+	{//JKEnhanced saber rules: a push or pull that catches a saber fighter mid-swing knocks them Open
+	 //(standing or guarding they hold, and it costs them Force below)
+		WP_SaberSetOpen( self, g_saberOpenMedium ? g_saberOpenMedium->integer : 800 );
+		return;
+	}
+
 	//NOTE: don't interrupt big anims with this!
 	if ( !PM_SaberCanInterruptMove( self->client->ps.saberMove, self->client->ps.torsoAnim ) )
 	{//can't interrupt my current torso anim/sabermove with this, so ignore it entirely!
@@ -9339,6 +11446,14 @@ void WP_ForceKnockdown( gentity_t *self, gentity_t *pusher, qboolean pull, qbool
 	}
 	else if ( Rosh_BeingHealed( self ) )
 	{
+		return;
+	}
+	else if ( self->health > 0 && G_SpeedLevel( self ) >= FORCE_LEVEL_2 )
+	{//JKEnhanced 4B.6: Speed 2+ (Flow) keeps its feet against Push / Pull / Repulse - thrown, not floored
+		if ( g_debugForce && g_debugForce->integer )
+		{
+			gi.Printf( "  SPEED %s Flow shrugged off a Force knockdown\n", WP_ForceDebugWho( self ) );
+		}
 		return;
 	}
 
@@ -10148,7 +12263,7 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 					powerLevel = self->client->ps.forcePowerLevel[FP_PUSH];
 					powerUse = FP_PUSH;
 				}
-				int modPowerLevel = WP_AbsorbConversion( push_list[x], push_list[x]->client->ps.forcePowerLevel[FP_ABSORB], self, powerUse, powerLevel, forcePowerNeeded[self->client->ps.forcePowerLevel[powerUse]] );
+				int modPowerLevel = WP_AbsorbConversion( push_list[x], push_list[x]->client->ps.forcePowerLevel[FP_ABSORB], self, powerUse, powerLevel, forcePowerNeeded[powerUse] );//JKEnhanced: was indexed by LEVEL (Absorb refunded e.g. Speed's 50)
 				if (push_list[x]->client->NPC_class==CLASS_ASSASSIN_DROID ||
 					push_list[x]->client->NPC_class==CLASS_HAZARD_TROOPER)
 				{
@@ -10815,56 +12930,19 @@ void ForceThrow( gentity_t *self, qboolean pull, qboolean fake )
 				}
 			}
 		}
+		//JKEnhanced 4B: hitting several costs the base + force.cfg multiTarget.extra per extra target,
+		//capped at multiTarget.cap (15/20/25/30 by default). Was base x targets, capped at 50 (L3)
+		//and base x targets / 1.5 (Push L2) - a single Push could cost a third of your bar.
+		const forceTuning_t *ft = G_ForceTuning();
+		const int multiCost = Q_max( cost, Q_min( ft->multiTargetCap, cost + ft->multiTargetExtra * ( ent_count - 1 ) ) );
 		if ( pull )
 		{
-			if ( self->client->ps.forcePowerLevel[FP_PULL] > FORCE_LEVEL_2 )
-			{//at level 3, can pull multiple, so it costs more
-				actualCost = forcePowerNeeded[FP_PULL]*ent_count;
-				if ( actualCost > 50 )
-				{
-					actualCost = 50;
-				}
-				else if ( actualCost < cost )
-				{
-					actualCost = cost;
-				}
-			}
-			else
-			{
-				actualCost = cost;
-			}
+			actualCost = ( self->client->ps.forcePowerLevel[FP_PULL] > FORCE_LEVEL_2 ) ? multiCost : cost;//L3 pulls several
 			WP_ForcePowerStart( self, FP_PULL, actualCost );
 		}
 		else
 		{
-			if ( self->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_2 )
-			{//at level 3, can push multiple, so costs more
-				actualCost = forcePowerNeeded[FP_PUSH]*ent_count;
-				if ( actualCost > 50 )
-				{
-					actualCost = 50;
-				}
-				else if ( actualCost < cost )
-				{
-					actualCost = cost;
-				}
-			}
-			else if ( self->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_1 )
-			{//at level 2, can push multiple, so costs more
-				actualCost = floor(forcePowerNeeded[FP_PUSH]*ent_count/1.5f);
-				if ( actualCost > 50 )
-				{
-					actualCost = 50;
-				}
-				else if ( actualCost < cost )
-				{
-					actualCost = cost;
-				}
-			}
-			else
-			{
-				actualCost = cost;
-			}
+			actualCost = ( self->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_1 ) ? multiCost : cost;//L2+ pushes several
 			WP_ForcePowerStart( self, FP_PUSH, actualCost );
 		}
 	}
@@ -10929,6 +13007,20 @@ void WP_DebounceForceDeactivateTime( gentity_t *self )
 			//FIXME: this should be shorter for force speed and rage (because of timescaling)
 			self->client->ps.forceAllowDeactivateTime = level.time + 1500;
 		}
+	}
+}
+
+//JKEnhanced 4B.3: casting an offensive power (Grip / Lightning / Drain / Repulse) drops Absorb and a
+//timed L1-2 Protect, as before; an L3 Protect toggle stays up
+void WP_StopShieldsForAttack( gentity_t *self )
+{
+	if ( ( self->client->ps.forcePowersActive & ( 1 << FP_PROTECT ) ) && !G_ForceShieldIsToggle( self, FP_PROTECT ) )
+	{
+		WP_ForcePowerStop( self, FP_PROTECT );
+	}
+	if ( ( self->client->ps.forcePowersActive & ( 1 << FP_ABSORB ) ) && !G_ForceShieldIsToggle( self, FP_ABSORB ) )
+	{
+		WP_ForcePowerStop( self, FP_ABSORB );
 	}
 }
 
@@ -11222,12 +13314,14 @@ void ForceTelepathy( gentity_t *self )
 		return;
 	}
 
-	AngleVectors( self->client->ps.viewangles, forward, NULL, NULL );
+	//JKEnhanced: along the crosshair ray (in third person that's the camera, not ps.viewangles)
+	vec3_t	aimOrg;
+	G_GetAimRay( self, aimOrg, forward );
 	VectorNormalize( forward );
-	VectorMA( self->client->renderInfo.eyePoint, 2048, forward, end );
+	VectorMA( aimOrg, 2048, forward, end );
 
 	//Cause a distraction if enemy is not fighting
-	gi.trace( &tr, self->client->renderInfo.eyePoint, vec3_origin, vec3_origin, end, self->s.number, MASK_OPAQUE|CONTENTS_BODY, (EG2_Collision)0, 0 );
+	gi.trace( &tr, aimOrg, vec3_origin, vec3_origin, end, self->s.number, MASK_OPAQUE|CONTENTS_BODY, (EG2_Collision)0, 0 );
 	if ( tr.entityNum == ENTITYNUM_NONE || tr.fraction == 1.0 || tr.allsolid || tr.startsolid )
 	{
 		return;
@@ -11291,6 +13385,27 @@ void ForceTelepathy( gentity_t *self )
 				if ( traceEnt->client->NPC_class == CLASS_GALAKMECH )
 				{
 					G_AddVoiceEvent( traceEnt, Q_irand( EV_CONFUSE1, EV_CONFUSE3 ), Q_irand( 3000, 5000 ) );
+				}
+			}
+			else if ( G_IsNeutralized( traceEnt ) && !G_IsDownedBody( traceEnt ) )
+			{//JKEnhanced: already gave up (hands up, running, maimed) - L3 puts them to sleep. They're already
+			 //counted as subdued and unarmed, so it's the plain cost, not the 75 of a fresh pacify
+				if ( self->client->ps.forcePowerLevel[FP_TELEPATHY] > FORCE_LEVEL_2 && g_mindTrickPacify->integer )
+				{
+					const int wasState = traceEnt->NPC->neutralState;
+					G_NeutralEnterState( traceEnt, NS_OUT_COLD );
+					if ( traceEnt->ghoul2.size() && traceEnt->headBolt != -1 )
+					{
+						G_PlayEffect( G_EffectIndex( "force/confusion" ), traceEnt->playerModel, traceEnt->headBolt, traceEnt->s.number, traceEnt->currentOrigin, 2000, qtrue );
+					}
+					if ( g_debugForce && g_debugForce->integer )
+					{
+						gi.Printf( "  MINDTRICK player -> %s: was %s, now out cold\n", traceEnt->NPC_type, G_NeutralStateName( wasState ) );
+					}
+				}
+				else
+				{
+					NPC_PlayConfusionSound( traceEnt );
 				}
 			}
 			else if ( self->client->ps.forcePowerLevel[FP_TELEPATHY] > FORCE_LEVEL_3 )
@@ -11386,7 +13501,7 @@ void ForceTelepathy( gentity_t *self )
 	}
 	else
 	{
-		if ( self->client->ps.forcePowerLevel[FP_TELEPATHY] > FORCE_LEVEL_1 && tr.fraction * 2048 > 64 )
+		if ( self->client->ps.forcePowerLevel[FP_TELEPATHY] > FORCE_LEVEL_1 && DistanceSquared( tr.endpos, self->currentOrigin ) > 64 * 64 )
 		{//don't create a diversion less than 64 from you of if at power level 1
 			//use distraction anim instead
 			G_PlayEffect( G_EffectIndex( "force/force_touch" ), tr.endpos, tr.plane.normal );
@@ -11409,6 +13524,332 @@ void ForceTelepathy( gentity_t *self )
 //rww - RAGDOLL_BEGIN
 //#define JK2_RAGDOLL_GRIPNOHEALTH
 //rww - RAGDOLL_END
+
+/*
+JKEnhanced 4B.5: the player's Grip also takes bodies, cut limbs, items and loose props. L2 lifts them,
+L3 carries them, and attacking while carrying throws whatever's held (G_GripThrow) - a thrown body hits
+like a pushed one (ClientImpacts), a thrown object hits the first person in its path
+(WP_GripThrownUpdate). Holding one costs a slow trickle, not the choke cost.
+*/
+#define GRIP_THROW_SPEED		900.0f
+#define GRIP_THROW_TRACK_MS		1500
+static qboolean	s_gripHeldObject[MAX_GENTITIES];	// [gripper]: what we hold is a body / object, not a live target
+static struct
+{
+	int		entNum;		// ENTITYNUM_NONE / 0 = nothing in flight
+	int		until;
+	vec3_t	lastPos;
+} s_gripThrown[MAX_CLIENTS];
+
+static qboolean WP_GripGrabbableObject( const gentity_t *ent )
+{
+	if ( !ent || !ent->inuse || ent->bmodel || ent->client
+		|| (ent->s.eFlags&EF_NODRAW) || (ent->svFlags&SVF_NOCLIENT) )
+	{
+		return qfalse;
+	}
+	return (qboolean)( ent->s.eType == ET_ITEM
+		|| !Q_stricmp( "limb", ent->classname )
+		|| ent->e_ThinkFunc == thinkF_G_RunObject );
+}
+
+//a corpse, or a knocked-out NPC (carried like one: no choke, no waking up)
+static qboolean WP_GripBody( const gentity_t *ent )
+{
+	return (qboolean)( ent && ent->inuse && ent->client && G_IsDownedBody( ent )
+		&& !(ent->s.eFlags&EF_NODRAW) && !(ent->s.eFlags&EF_DISINTEGRATION)
+		&& ent->client->NPC_class != CLASS_VEHICLE && ent->client->NPC_class != CLASS_ATST
+		&& ent->client->NPC_class != CLASS_RANCOR && ent->client->NPC_class != CLASS_WAMPA
+		&& ent->client->NPC_class != CLASS_SAND_CREATURE );
+}
+
+static qboolean WP_GripLivingTarget( const gentity_t *self, const gentity_t *ent )
+{
+	return (qboolean)( ent->client && ent->health > 0 && !G_IsDownedBody( ent )
+		&& !(ent->s.eFlags&EF_NODRAW) && !(ent->flags&FL_NOTARGET)
+		&& !( self->enemy && ent != self->enemy && ent->client->playerTeam == self->client->playerTeam ) );
+}
+
+//the best target near where the player aims: whatever is closest to the crosshair, not the last enemy
+//(that one could be off at the edge of the screen). The straight trace misses items, and fresh bodies
+//have no contents for a moment. Bodies / objects only count at Grip 2+.
+static gentity_t *WP_GripFindObject( gentity_t *self )
+{
+	const qboolean objects = (qboolean)( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 );
+	gentity_t	*list[MAX_GENTITIES];
+	vec3_t		mins, maxs, fwd, dir, center;
+	gentity_t	*best = NULL;
+	float		bestDot = 0.93f;
+	vec3_t		aimOrg, aimDir;
+
+	//pick along the crosshair ray (in third person that's the camera, not ps.viewangles - Push already
+	//aims this way); reach and line of sight are still from the body's eyes
+	G_GetAimRay( self, aimOrg, fwd );
+	for ( int i = 0; i < 3; i++ )
+	{
+		mins[i] = self->currentOrigin[i] - FORCE_GRIP_DIST;
+		maxs[i] = self->currentOrigin[i] + FORCE_GRIP_DIST;
+	}
+	const int num = gi.EntitiesInBox( mins, maxs, list, MAX_GENTITIES );
+	for ( int i = 0; i < num; i++ )
+	{
+		gentity_t *ent = list[i];
+		if ( ent == self
+			|| !( WP_GripLivingTarget( self, ent ) || ( objects && ( WP_GripGrabbableObject( ent ) || WP_GripBody( ent ) ) ) ) )
+		{
+			continue;
+		}
+		VectorAdd( ent->absmin, ent->absmax, center );
+		VectorScale( center, 0.5f, center );
+		VectorSubtract( center, self->client->renderInfo.eyePoint, dir );
+		if ( VectorNormalize( dir ) > FORCE_GRIP_DIST )
+		{
+			continue;
+		}
+		VectorSubtract( center, aimOrg, aimDir );
+		VectorNormalize( aimDir );
+		const float dot = DotProduct( aimDir, fwd );
+		if ( dot <= bestDot )
+		{
+			continue;
+		}
+		trace_t tr;
+		gi.trace( &tr, self->client->renderInfo.eyePoint, vec3_origin, vec3_origin, center, self->s.number, MASK_FORCE_PUSH, (EG2_Collision)0, 0 );
+		if ( tr.fraction < 1.0f && tr.entityNum != ent->s.number )
+		{
+			continue;
+		}
+		best = ent;
+		bestDot = dot;
+	}
+	return best;
+}
+
+//non-client objects run their own physics: hand them back to it
+static void WP_GripObjectPhysics( gentity_t *ent )
+{
+	if ( ent->s.eType == ET_ITEM )
+	{//G_RunFrame runs items itself
+		return;
+	}
+	ent->e_ThinkFunc = !Q_stricmp( "limb", ent->classname ) ? thinkF_LimbThink : thinkF_G_RunObject;
+	ent->nextthink = level.time + FRAMETIME;
+}
+
+//a held object is moved here, not by its own physics: re-basing a linear trajectory every frame never
+//moved it on the server (jitter), and a limb resting in the floor started every trace solid (stuck).
+//TR_INTERPOLATE makes the client lerp between frames; trDelta keeps the carry speed for the drop.
+static void WP_GripMoveObject( gentity_t *self, gentity_t *ent, const vec3_t gripOrg, qboolean carry )
+{
+	vec3_t	step, newOrg, oldOrg;
+	VectorCopy( ent->currentOrigin, oldOrg );
+	VectorSubtract( gripOrg, oldOrg, step );
+	VectorScale( step, carry ? 0.5f : 0.25f, step );//eases in instead of snapping
+	const float len = VectorLength( step );
+	if ( len > 64.0f )
+	{
+		VectorScale( step, 64.0f / len, step );
+	}
+	VectorAdd( oldOrg, step, newOrg );
+	const int mask = ent->clipmask ? ent->clipmask : MASK_SOLID;
+	trace_t tr;
+	gi.trace( &tr, oldOrg, ent->mins, ent->maxs, newOrg, ent->s.number, mask, (EG2_Collision)0, 0 );
+	if ( tr.startsolid || tr.allsolid )
+	{//embedded (a limb lying in the floor): take the move if where it's going is clear
+		gi.trace( &tr, newOrg, ent->mins, ent->maxs, newOrg, ent->s.number, mask, (EG2_Collision)0, 0 );
+		if ( !tr.startsolid && !tr.allsolid )
+		{
+			VectorCopy( newOrg, tr.endpos );
+		}
+		else
+		{//still stuck: lift it free of the floor
+			VectorCopy( oldOrg, tr.endpos );
+			tr.endpos[2] += 4.0f;
+		}
+	}
+	VectorCopy( tr.endpos, ent->currentOrigin );
+	VectorCopy( tr.endpos, ent->s.pos.trBase );
+	VectorSubtract( tr.endpos, oldOrg, ent->s.pos.trDelta );
+	VectorScale( ent->s.pos.trDelta, 1000.0f / FRAMETIME, ent->s.pos.trDelta );
+	ent->s.pos.trType = TR_INTERPOLATE;
+	ent->s.pos.trTime = level.time;
+	if ( ent->s.eType == ET_ITEM )
+	{//G_RunItem turns an item with no ground into a falling one
+		ent->s.groundEntityNum = ENTITYNUM_WORLD;
+	}
+	gi.linkentity( ent );
+	if ( ent->s.eType != ET_ITEM )
+	{//its own physics would bounce / stop it under us; WP_GripObjectPhysics hands it back on the drop
+	 //(this also clears a resting limb's removal timer)
+		ent->e_ThinkFunc = thinkF_NULL;
+		ent->nextthink = 0;
+	}
+}
+
+//JKEnhanced: weapon / Force cycling (the mouse wheel) while carrying something at Grip 3 moves it
+//closer or farther instead. Called from cgame (one DLL).
+static float s_gripCarryDist[MAX_CLIENTS];	// 0 = keep it where it was picked up
+
+/*
+WP_GripLoadReset (JKEnhanced)
+
+What Grip is holding (s_gripHeldObject / s_gripCarryDist) isn't saved, so after a load a carried body
+or knocked-out NPC was treated as a live target (choke anim, choke damage, the victim turning to face
+you). A load lets go of any grip in progress instead.
+*/
+void WP_GripLoadReset( gentity_t *self )
+{
+	if ( self && self->client && ( self->client->ps.forcePowersActive & ( 1 << FP_GRIP ) ) )
+	{
+		WP_ForcePowerStop( self, FP_GRIP );
+	}
+	memset( s_gripHeldObject, 0, sizeof( s_gripHeldObject ) );
+	memset( s_gripCarryDist, 0, sizeof( s_gripCarryDist ) );
+}
+#define GRIP_SCROLL_STEP		32.0f
+#define GRIP_SCROLL_MIN_DIST	64.0f
+#define GRIP_SCROLL_MAX_DIST	384.0f
+static int s_gripPickupTime[MAX_CLIENTS];	// when Grip last pulled an item in and picked it up
+#define GRIP_PICKUP_SCROLL_BLOCK	600
+qboolean WP_GripScroll( gentity_t *self, int dir )
+{
+	if ( self && self->s.number >= 0 && self->s.number < MAX_CLIENTS
+		&& s_gripPickupTime[self->s.number] <= level.time//(later = stale, from before a load)
+		&& level.time - s_gripPickupTime[self->s.number] < GRIP_PICKUP_SCROLL_BLOCK )
+	{//just reeled an item in with the wheel: the next few clicks don't switch weapons / powers
+		return qtrue;
+	}
+	if ( !self || !self->client || self->s.number >= MAX_CLIENTS || self->health <= 0
+		|| !(self->client->ps.forcePowersActive&(1<<FP_GRIP))
+		|| self->client->ps.forcePowerLevel[FP_GRIP] < FORCE_LEVEL_3
+		|| self->client->ps.forceGripEntityNum >= ENTITYNUM_WORLD )
+	{
+		return qfalse;
+	}
+	const gentity_t *held = &g_entities[self->client->ps.forceGripEntityNum];
+	if ( held->client && ( held->message || (held->flags&FL_NO_KNOCKBACK) ) )
+	{//only lifted in place, not carried
+		return qfalse;
+	}
+	float d = s_gripCarryDist[self->s.number];
+	if ( d <= 0.0f )
+	{
+		d = Q_min( FORCE_GRIP_3_MAX_DIST, Q_max( FORCE_GRIP_3_MIN_DIST, Distance( self->client->renderInfo.handLPoint, held->currentOrigin ) ) );
+	}
+	s_gripCarryDist[self->s.number] = Q_min( GRIP_SCROLL_MAX_DIST, Q_max( GRIP_SCROLL_MIN_DIST, d + dir * GRIP_SCROLL_STEP ) );
+	return qtrue;
+}
+
+static void G_GripThrow( gentity_t *self, gentity_t *ent )
+{
+	vec3_t	fwd, aimEnd, from, aimOrg;
+	//the crosshair ray (in third person the camera's, which isn't ps.viewangles)
+	G_GetAimRay( self, aimOrg, fwd );
+
+	WP_ForcePowerStop( self, FP_GRIP );	//lets go (and drops a body / object)
+	if ( !ent || !ent->inuse )
+	{
+		return;
+	}
+	//it flies at what the crosshair is on, not just parallel to the view (it's off to one side of it)
+	VectorMA( aimOrg, 4096.0f, fwd, aimEnd );
+	trace_t aimTr;
+	gi.trace( &aimTr, aimOrg, vec3_origin, vec3_origin, aimEnd, self->s.number, MASK_SHOT, (EG2_Collision)0, 0 );
+	VectorAdd( ent->absmin, ent->absmax, from );
+	VectorScale( from, 0.5f, from );
+	vec3_t toAim;
+	VectorSubtract( aimTr.endpos, from, toAim );
+	if ( aimTr.entityNum != ent->s.number//aiming right at it: straight ahead
+		&& VectorNormalize( toAim ) > 48.0f && DotProduct( toAim, fwd ) > 0.5f )
+	{
+		VectorCopy( toAim, fwd );
+	}
+	NPC_SetAnim( self, SETANIM_TORSO, BOTH_FORCEPUSH, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART );
+	G_Sound( self, G_SoundIndex( "sound/weapons/force/push.wav" ) );
+	if ( ent->client )
+	{
+		if ( ent->health > 0 && !G_IsDownedBody( ent ) )
+		{//goes flying in a knockdown (the knocked out just fly, limp)
+			G_Knockdown( ent, self, fwd, 300, qtrue );
+		}
+		VectorScale( fwd, GRIP_THROW_SPEED, ent->client->ps.velocity );
+		ent->client->ps.velocity[2] += 150.0f;
+		ent->client->ps.groundEntityNum = ENTITYNUM_NONE;
+		ent->forcePuller = self->s.number;//a body hits like a pushed one (ClientImpacts), but not me
+		ent->forcePushTime = level.time + 600;
+	}
+	else
+	{
+		VectorCopy( ent->currentOrigin, ent->s.pos.trBase );
+		VectorScale( fwd, GRIP_THROW_SPEED, ent->s.pos.trDelta );
+		ent->s.pos.trDelta[2] += 100.0f;
+		ent->s.pos.trType = TR_GRAVITY;
+		ent->s.pos.trTime = level.time;
+		ent->forcePuller = self->s.number;
+		ent->forcePushTime = level.time + 600;
+		WP_GripObjectPhysics( ent );
+		if ( self->s.number < MAX_CLIENTS )
+		{
+			s_gripThrown[self->s.number].entNum = ent->s.number;
+			s_gripThrown[self->s.number].until = level.time + GRIP_THROW_TRACK_MS;
+			VectorCopy( ent->currentOrigin, s_gripThrown[self->s.number].lastPos );
+		}
+	}
+	WP_ForcePowerDrain( self, FP_GRIP, 5 );
+	if ( g_debugForce && g_debugForce->integer )
+	{
+		gi.Printf( "  GRIP %s threw %s (%s)\n", WP_ForceDebugWho( self ), ent->client ? WP_ForceDebugWho( ent ) : ent->classname,
+			ent->client ? ( ent->health > 0 ? "alive" : "body" ) : "object" );
+	}
+}
+
+//a thrown object hits the first person in its path
+static void WP_GripThrownUpdate( gentity_t *self )
+{
+	if ( self->s.number >= MAX_CLIENTS || !s_gripThrown[self->s.number].entNum )
+	{
+		return;
+	}
+	const int n = s_gripThrown[self->s.number].entNum;
+	gentity_t *obj = &g_entities[n];
+	if ( n <= 0 || n >= ENTITYNUM_WORLD || !obj->inuse || obj->client
+		|| level.time > s_gripThrown[self->s.number].until
+		|| s_gripThrown[self->s.number].until > level.time + GRIP_THROW_TRACK_MS )//stale (loaded save)
+	{
+		s_gripThrown[self->s.number].entNum = 0;
+		return;
+	}
+	static const vec3_t boxMins = { -8, -8, -8 }, boxMaxs = { 8, 8, 8 };
+	trace_t tr;
+	gi.trace( &tr, s_gripThrown[self->s.number].lastPos, boxMins, boxMaxs, obj->currentOrigin, n, MASK_SHOT, (EG2_Collision)0, 0 );
+	VectorCopy( obj->currentOrigin, s_gripThrown[self->s.number].lastPos );
+	if ( tr.fraction >= 1.0f || tr.entityNum >= ENTITYNUM_WORLD || tr.entityNum == self->s.number )
+	{
+		return;
+	}
+	gentity_t *victim = &g_entities[tr.entityNum];
+	if ( !victim->client || victim->health <= 0 )
+	{
+		return;
+	}
+	vec3_t dir;
+	VectorCopy( obj->s.pos.trDelta, dir );
+	VectorNormalize( dir );
+	const int dmg = ( obj->e_ThinkFunc == thinkF_G_RunObject ) ? 25 : 10;	//props hit harder than items / limbs
+	G_Damage( victim, obj, self, dir, tr.endpos, dmg, DAMAGE_NO_ARMOR, MOD_IMPACT );
+	if ( victim->health > 0 )
+	{
+		G_Knockdown( victim, self, dir, 200, qtrue );
+	}
+	VectorScale( obj->s.pos.trDelta, 0.3f, obj->s.pos.trDelta );	//it stops short on them
+	VectorCopy( obj->currentOrigin, obj->s.pos.trBase );
+	obj->s.pos.trTime = level.time;
+	s_gripThrown[self->s.number].entNum = 0;
+	if ( g_debugForce && g_debugForce->integer )
+	{
+		gi.Printf( "  GRIP thrown %s hit %s for %d\n", obj->classname, WP_ForceDebugWho( victim ), dmg );
+	}
+}
 
 void ForceGrip( gentity_t *self )
 {//FIXME: make enemy Jedi able to use this
@@ -11477,8 +13918,9 @@ void ForceGrip( gentity_t *self )
 	VectorNormalize( forward );
 	VectorMA( self->client->renderInfo.handLPoint, FORCE_GRIP_DIST, forward, end );
 
-	if ( self->enemy )
-	{//I have an enemy
+	if ( self->enemy && self->s.number >= MAX_CLIENTS )
+	{//I have an enemy (JKEnhanced: NPCs only - the player gets what's nearest the crosshair, below; this
+	 //used to grab the last enemy anywhere within ~78 degrees of the view)
 		if ( !self->enemy->message
 			&& !(self->flags&FL_NO_KNOCKBACK) )
 		{//don't auto-pickup guys with keys
@@ -11506,13 +13948,27 @@ void ForceGrip( gentity_t *self )
 	if ( !traceEnt )
 	{//okay, trace straight ahead and see what's there
 		gi.trace( &tr, self->client->renderInfo.handLPoint, vec3_origin, vec3_origin, end, self->s.number, MASK_SHOT, (EG2_Collision)0, 0 );
-		if ( tr.entityNum >= ENTITYNUM_WORLD || tr.fraction == 1.0 || tr.allsolid || tr.startsolid )
+		if ( !( tr.entityNum >= ENTITYNUM_WORLD || tr.fraction == 1.0 || tr.allsolid || tr.startsolid ) )
+		{
+			traceEnt = &g_entities[tr.entityNum];
+		}
+		if ( self->s.number < MAX_CLIENTS
+			&& ( !traceEnt || ( !traceEnt->client && !WP_GripGrabbableObject( traceEnt ) ) ) )
+		{//JKEnhanced 4B.5: nothing grippable dead ahead - whoever / whatever is nearest the crosshair
+			gentity_t *obj = WP_GripFindObject( self );
+			if ( obj )
+			{
+				traceEnt = obj;
+			}
+		}
+		if ( !traceEnt )
 		{
 			return;
 		}
-
-		traceEnt = &g_entities[tr.entityNum];
 	}
+	//JKEnhanced 4B.5: the player can hold a body or a loose object (no choke, no resist)
+	const qboolean heldObject = (qboolean)( self->s.number < MAX_CLIENTS && self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1//L1 only chokes in place
+		&& ( WP_GripBody( traceEnt ) || WP_GripGrabbableObject( traceEnt ) ) );
 //rww - RAGDOLL_BEGIN
 #ifdef JK2_RAGDOLL_GRIPNOHEALTH
 	if ( !traceEnt || traceEnt == self/*???*/ || traceEnt->bmodel || (traceEnt->NPC && traceEnt->NPC->scriptFlags & SCF_NO_FORCE) )
@@ -11521,7 +13977,7 @@ void ForceGrip( gentity_t *self )
 	}
 #else
 //rww - RAGDOLL_END
-	if ( !traceEnt || traceEnt == self/*???*/ || traceEnt->bmodel || (traceEnt->health <= 0 && traceEnt->takedamage) || (traceEnt->NPC && traceEnt->NPC->scriptFlags & SCF_NO_FORCE) )
+	if ( !traceEnt || traceEnt == self/*???*/ || traceEnt->bmodel || (traceEnt->health <= 0 && traceEnt->takedamage && !heldObject) || (traceEnt->NPC && traceEnt->NPC->scriptFlags & SCF_NO_FORCE && !heldObject) )
 	{
 		return;
 	}
@@ -11529,7 +13985,7 @@ void ForceGrip( gentity_t *self )
 #endif
 //rww - RAGDOLL_END
 
-	if ( traceEnt->m_pVehicle != NULL )
+	if ( !heldObject && traceEnt->m_pVehicle != NULL )
 	{//is it a vehicle
 		//grab pilot if there is one
 		if ( traceEnt->m_pVehicle->m_pPilot != NULL
@@ -11542,7 +13998,10 @@ void ForceGrip( gentity_t *self )
 			return;
 		}
 	}
-	if ( traceEnt->client )
+	if ( heldObject )
+	{//a body / object: none of the live-target checks below (resists, Absorb, classes)
+	}
+	else if ( traceEnt->client )
 	{
 		if ( traceEnt->client->ps.forceJumpZStart )
 		{//can't catch them in mid force jump - FIXME: maybe base it on velocity?
@@ -11636,7 +14095,7 @@ void ForceGrip( gentity_t *self )
 			return;
 		}
 //=CHECKABSORB===
-		if ( -1 != WP_AbsorbConversion( traceEnt, traceEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_GRIP, self->client->ps.forcePowerLevel[FP_GRIP], forcePowerNeeded[self->client->ps.forcePowerLevel[FP_GRIP]]) )
+		if ( -1 != WP_AbsorbConversion( traceEnt, traceEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_GRIP, self->client->ps.forcePowerLevel[FP_GRIP], 20) )//JKEnhanced: the grip start cost (was forcePowerNeeded indexed by LEVEL)
 		{
 			//WP_ForcePowerStop( self, FP_GRIP );
 			return;
@@ -11652,26 +14111,31 @@ void ForceGrip( gentity_t *self )
 		}
 	}
 
-	// Make sure to turn off Force Protection and Force Absorb.
-	if (self->client->ps.forcePowersActive & (1 << FP_PROTECT) )
-	{
-		WP_ForcePowerStop( self, FP_PROTECT );
-	}
-	if (self->client->ps.forcePowersActive & (1 << FP_ABSORB) )
-	{
-		WP_ForcePowerStop( self, FP_ABSORB );
-	}
+	//JKEnhanced 4B.3: drops timed (L1-2) Protect / Absorb; an L3 toggle stays up
+	WP_StopShieldsForAttack( self );
 
-	WP_ForcePowerStart( self, FP_GRIP, 20 );
+	WP_ForcePowerStart( self, FP_GRIP, heldObject ? 5 : 20 );
 	//FIXME: rule out other things?
 	//FIXME: Jedi resist, like the push and pull?
 	self->client->ps.forceGripEntityNum = traceEnt->s.number;
-	if ( traceEnt->NPC && !OnSameTeam( self, traceEnt ) )
+	s_gripHeldObject[self->s.number] = heldObject;
+	if ( self->s.number < MAX_CLIENTS )
+	{
+		s_gripCarryDist[self->s.number] = 0.0f;
+	}
+	if ( heldObject )
+	{
+		if ( g_debugForce && g_debugForce->integer )
+		{
+			gi.Printf( "  GRIP %s picked up %s\n", WP_ForceDebugWho( self ), traceEnt->client ? va( "the body of %s", WP_ForceDebugWho( traceEnt ) ) : traceEnt->classname );
+		}
+	}
+	if ( traceEnt->NPC && !OnSameTeam( self, traceEnt ) && traceEnt->health > 0 && !heldObject )
 	{
 		AI_NerveEvent( traceEnt, NE_FORCE_ON_ME, 1.0f, self );
 		AI_NerveWitness( traceEnt, NE_FORCE_ON_ME, self );
 	}
-	if ( traceEnt->client )
+	if ( traceEnt->client && !heldObject )
 	{
 		Vehicle_t *pVeh;
 		if ( ( pVeh = G_IsRidingVehicle( traceEnt ) ) != NULL )
@@ -11835,15 +14299,8 @@ void ForceLightning( gentity_t *self )
 	{//FIXME: can this be a way to break out?
 		return;
 	}
-	// Make sure to turn off Force Protection and Force Absorb.
-	if (self->client->ps.forcePowersActive & (1 << FP_PROTECT) )
-	{
-		WP_ForcePowerStop( self, FP_PROTECT );
-	}
-	if (self->client->ps.forcePowersActive & (1 << FP_ABSORB) )
-	{
-		WP_ForcePowerStop( self, FP_ABSORB );
-	}
+	//JKEnhanced 4B.3: drops timed (L1-2) Protect / Absorb; an L3 toggle stays up
+	WP_StopShieldsForAttack( self );
 	//Shoot lightning from hand
 	//make sure this plays and that you cannot press fire for about 1 second after this
 	if ( self->client->ps.forcePowerLevel[FP_LIGHTNING] < FORCE_LEVEL_2 )
@@ -11964,6 +14421,36 @@ void ForceLightningDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, flo
 				Jedi_PlayDeflectSound( traceEnt );
 				dmg = Q_irand(0,1);
 				blockedWithHand = (dmg == 0) ? qtrue : qfalse;
+				{//JKEnhanced: the resist pose is re-held every tick, so a held stream stun-locked the boss
+				 //(AI looked dead). After g_bossLightningBreak ms of resisting they Push the caster away.
+					extern cvar_t *g_bossLightningBreak;
+					static int s_resistStart[MAX_GENTITIES];
+					static int s_resistLast[MAX_GENTITIES];
+					const int n = traceEnt->s.number;
+					if ( level.time - s_resistLast[n] > 300 || level.time < s_resistLast[n] )
+					{//a new stream (or a stale entry after a load)
+						s_resistStart[n] = level.time;
+					}
+					s_resistLast[n] = level.time;
+					if ( g_bossLightningBreak->integer > 0
+						&& level.time - s_resistStart[n] >= g_bossLightningBreak->integer
+						&& traceEnt->client->ps.forcePowerLevel[FP_PUSH] > FORCE_LEVEL_0
+						&& !PM_InKnockDown( &traceEnt->client->ps ) )
+					{
+						vec3_t toCaster, ang;
+						VectorSubtract( self->currentOrigin, traceEnt->currentOrigin, toCaster );
+						vectoangles( toCaster, ang );
+						ang[PITCH] = 0;
+						SetClientViewAngle( traceEnt, ang );
+						traceEnt->client->ps.forcePowerDebounce[FP_PUSH] = 0;
+						ForceThrow( traceEnt, qfalse, qfalse );
+						s_resistStart[n] = level.time;	//another full window before the next one
+						if ( g_debugForce && g_debugForce->integer )
+						{
+							gi.Printf( "  %s broke out of %s's Lightning with a Push\n", WP_ForceDebugWho( traceEnt ), WP_ForceDebugWho( self ) );
+						}
+					}
+				}
 			}
 			else if ( traceEnt->s.weapon == WP_SABER )
 			{//saber can block lightning
@@ -12040,6 +14527,16 @@ void ForceLightningDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, flo
 				else if ( modPowerLevel == 2 )
 				{
 					dmg = floor((float)dmg/2.0f);
+				}
+			}
+			if ( dmg > 0 )
+			{//JKEnhanced: g_lightningDamage scales every tick (20 ticks/s); random rounding keeps the average
+				extern cvar_t *g_lightningDamage;
+				const float scaled = dmg * g_lightningDamage->value;
+				dmg = (int)scaled;
+				if ( Q_flrand( 0.0f, 1.0f ) < scaled - dmg )
+				{
+					dmg++;
 				}
 			}
 			//FIXME: if ForceDrain, sap force power and add health to self, use different sound & effects
@@ -12445,13 +14942,16 @@ qboolean ForceDrain2( gentity_t *self )
 			return qfalse;
 		}
 //=CHECKABSORB===
-		/*
-		if ( -1 != WP_AbsorbConversion( traceEnt, traceEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_DRAIN, self->client->ps.forcePowerLevel[FP_DRAIN], forcePowerNeeded[self->client->ps.forcePowerLevel[FP_DRAIN]]) )
+		//JKEnhanced (4A bug fix): this was commented out, so the close-range drain grab went straight
+		//through Absorb. An Absorbing target isn't grabbed; Absorb gives them Force back (and plays
+		//its sound) and the caster pays and has to wait before trying again.
+		//(10 = what the grab costs, WP_ForcePowerStart below; stock indexed forcePowerNeeded by LEVEL here)
+		if ( -1 != WP_AbsorbConversion( traceEnt, traceEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_DRAIN, self->client->ps.forcePowerLevel[FP_DRAIN], 10 ) )
 		{
-			//WP_ForcePowerStop( self, FP_DRAIN );
-			return;
+			WP_ForcePowerDrain( self, FP_DRAIN, 10 );
+			self->client->ps.forcePowerDebounce[FP_DRAIN] = level.time + 1500;
+			return qtrue;
 		}
-		*/
 //===============
 		if ( !FP_ForceDrainGrippableEnt( traceEnt ) )
 		{
@@ -12519,15 +15019,8 @@ void ForceDrain( gentity_t *self, qboolean triedDrain2 )
 		return;
 	}
 
-	// Make sure to turn off Force Protection and Force Absorb.
-	if ( self->client->ps.forcePowersActive & (1 << FP_PROTECT) )
-	{
-		WP_ForcePowerStop( self, FP_PROTECT );
-	}
-	if ( self->client->ps.forcePowersActive & (1 << FP_ABSORB) )
-	{
-		WP_ForcePowerStop( self, FP_ABSORB );
-	}
+	//JKEnhanced 4B.3: drops timed (L1-2) Protect / Absorb; an L3 toggle stays up
+	WP_StopShieldsForAttack( self );
 
 	G_SoundOnEnt( self, CHAN_BODY, "sound/weapons/force/drain.mp3" );
 
@@ -12626,8 +15119,9 @@ void ForceDrainDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, vec3_t 
 			if (traceEnt->client)
 			{
 				//check for client using FP_ABSORB
-				modPowerLevel = WP_AbsorbConversion(traceEnt, traceEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_DRAIN, self->client->ps.forcePowerLevel[FP_DRAIN], 0);
-				//Since this is drain, don't absorb any power, but nullify the affect it has
+				//JKEnhanced (4A bug fix): pass the tick's drain as the Force spent so Absorb converts it into
+				//Force for the target, as Absorb's description says (stock passed 0: no Force back at all)
+				modPowerLevel = WP_AbsorbConversion(traceEnt, traceEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_DRAIN, self->client->ps.forcePowerLevel[FP_DRAIN], dmg);
 			}
 
 			if ( modPowerLevel != -1 )
@@ -12683,6 +15177,10 @@ void ForceDrainDamage( gentity_t *self, gentity_t *traceEnt, vec3_t dir, vec3_t 
 				if ( self->client->ps.forcePowerLevel[FP_DRAIN] > FORCE_LEVEL_2 )
 				{//overcharge health
 					maxHealth = floor( (float)self->client->ps.stats[STAT_MAX_HEALTH] * 1.25f );
+				}
+				{//JKEnhanced: a staged boss can't drain back up into a stage it already lost
+					extern int G_BossHealthCeiling( const gentity_t *ent );
+					maxHealth = Q_min( maxHealth, G_BossHealthCeiling( self ) );
 				}
 				if (self->client->ps.stats[STAT_HEALTH] < maxHealth &&
 					self->health > 0 && self->client->ps.stats[STAT_HEALTH] > 0)
@@ -13025,7 +15523,9 @@ void ForceProtect( gentity_t *self )
 		return;
 	}
 
-	if ( !WP_ForcePowerUsable( self, FP_PROTECT, 0 ) )
+	//JKEnhanced 4B.3: L3 is a toggle - a small cost to turn on, then it pays per hit it stops
+	const int toggleCost = ( self->client->ps.forcePowerLevel[FP_PROTECT] >= FORCE_LEVEL_3 ) ? G_ForceTuning()->protectToggleCost : 0;
+	if ( !WP_ForcePowerUsable( self, FP_PROTECT, toggleCost ) )
 	{
 		return;
 	}
@@ -13038,7 +15538,7 @@ void ForceProtect( gentity_t *self )
 
 	WP_DebounceForceDeactivateTime( self );
 
-	WP_ForcePowerStart( self, FP_PROTECT, 0 );
+	WP_ForcePowerStart( self, FP_PROTECT, toggleCost );
 
 	if ( self->client->ps.saberLockTime < level.time )
 	{
@@ -13580,187 +16080,7 @@ void WP_FireDestruction( gentity_t *ent, int forceLevel )
 }
 
 extern qboolean PM_HasAnimation( gentity_t *ent, int animation );
-void ForceInsanity( gentity_t *self )
-{
-	trace_t	tr;
-	vec3_t	end, forward;
-	gentity_t	*traceEnt;
-	qboolean	targetLive = qfalse;
-
-	if ( self->health <= 0 )
-	{
-		return;
-	}
-	if ( !WP_ForcePowerUsable( self, FP_INSANITY, 0 ) )
-	{
-		return;
-	}
-	
-	if ( self->client->ps.weaponTime >= 800 )
-	{//just did one!
-		return;
-	}
-	if ( self->client->ps.saberLockTime > level.time )
-	{//FIXME: can this be a way to break out?
-		return;
-	}
-	
-	//Pretty heavily based on mind trick
-	
-	AngleVectors( self->client->ps.viewangles, forward, NULL, NULL );
-	VectorNormalize( forward );
-	VectorMA( self->client->renderInfo.eyePoint, 2048, forward, end );
-	
-	//Cause a distraction if enemy is not fighting
-	gi.trace( &tr, self->client->renderInfo.eyePoint, vec3_origin, vec3_origin, end, self->s.number, MASK_OPAQUE|CONTENTS_BODY, (EG2_Collision)0, 0 );
-	if ( tr.entityNum == ENTITYNUM_NONE || tr.fraction == 1.0 || tr.allsolid || tr.startsolid )
-	{
-		return;
-	}
-	
-	traceEnt = &g_entities[tr.entityNum];
-	
-	if( traceEnt->NPC && traceEnt->NPC->scriptFlags & SCF_NO_FORCE )
-	{
-		return;
-	}
-	
-	if ( traceEnt && traceEnt->client  )
-	{
-		switch ( traceEnt->client->NPC_class )
-		{
-			case CLASS_GALAKMECH://cant grip him, he's in armor
-			case CLASS_ATST://much too big to grip!
-				//no droids either
-			case CLASS_PROBE:
-			case CLASS_GONK:
-			case CLASS_R2D2:
-			case CLASS_R5D2:
-			case CLASS_MARK1:
-			case CLASS_MARK2:
-			case CLASS_MOUSE:
-			case CLASS_SEEKER:
-			case CLASS_REMOTE:
-			case CLASS_PROTOCOL:
-			case CLASS_ASSASSIN_DROID:
-			case CLASS_SABER_DROID:
-			case CLASS_BOBAFETT:
-				break;
-			case CLASS_RANCOR:
-				if ( !(traceEnt->spawnflags&1) )
-				{
-					targetLive = qtrue;
-				}
-				break;
-			default:
-				targetLive = qtrue;
-				break;
-		}
-	}
-	if ( targetLive
-		&& traceEnt->NPC
-		&& traceEnt->health > 0
-		&& traceEnt->NPC->charmedTime < level.time
-		&& traceEnt->NPC->confusionTime < level.time )
-	{//hit an organic non-player
-		int override = 0;
-		if ( (traceEnt->NPC->scriptFlags&SCF_NO_MIND_TRICK) )
-		{
-			if ( traceEnt->client->NPC_class == CLASS_GALAKMECH )
-			{
-				G_AddVoiceEvent( traceEnt, Q_irand( EV_CONFUSE1, EV_CONFUSE3 ), Q_irand( 3000, 5000 ) );
-			}
-		}
-		else if ( traceEnt->s.weapon != WP_SABER
-				 && traceEnt->client->NPC_class != CLASS_REBORN )
-		{//haha!  Jedi aren't easily confused!
-			if ( self->client->ps.forcePowerLevel[FP_INSANITY] > FORCE_LEVEL_2
-				&& traceEnt->s.weapon != WP_NONE		//don't charm people who aren't capable of fighting... like ugnaughts and droids, just confuse them
-				&& traceEnt->client->NPC_class != CLASS_TUSKEN//don't charm them, just confuse them
-				&& traceEnt->client->NPC_class != CLASS_NOGHRI//don't charm them, just confuse them
-				&& !Pilot_AnyVehiclesRegistered()		//also, don't charm guys when bikes are near
-				)
-			{//turn them to our side
-				//if insanity 3 and aiming at an enemy need more force power
-				override = 50;
-				if ( self->client->ps.forcePower < 50 )
-				{
-					return;
-				}
-				if ( traceEnt->enemy )
-				{
-					G_ClearEnemy( traceEnt );
-				}
-				if ( traceEnt->NPC )
-				{
-					//traceEnt->NPC->tempBehavior = BS_FOLLOW_LEADER;
-					traceEnt->client->leader = self;
-				}
-				//FIXME: maybe pick an enemy right here?
-				//FIXME: does nothing to TEAM_FREE and TEAM_NEUTRALs!!!
-				team_t	saveTeam = traceEnt->client->enemyTeam;
-				traceEnt->client->enemyTeam = traceEnt->client->playerTeam;
-				traceEnt->client->playerTeam = saveTeam;
-				//FIXME: need a *charmed* timer on this...?  Or do TEAM_PLAYERS assume that "confusion" means they should switch to team_enemy when done?
-				traceEnt->NPC->darkCharmedTime = level.time + insanityTime[self->client->ps.forcePowerLevel[FP_INSANITY]];
-				if ( traceEnt->ghoul2.size() && traceEnt->headBolt != -1 )
-				{//FIXME: what if already playing effect?
-					G_PlayEffect( G_EffectIndex( "force/drain_hand" ), traceEnt->playerModel, traceEnt->headBolt, traceEnt->s.number, traceEnt->currentOrigin, insanityTime[self->client->ps.forcePowerLevel[FP_INSANITY]], qtrue );
-				}
-				if ( PM_HasAnimation( traceEnt, BOTH_SONICPAIN_HOLD ) )
-				{
-					NPC_SetAnim( traceEnt, SETANIM_LEGS, BOTH_SONICPAIN_HOLD, SETANIM_FLAG_NORMAL );
-					NPC_SetAnim( traceEnt, SETANIM_TORSO, BOTH_SONICPAIN_HOLD, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
-					traceEnt->client->ps.torsoAnimTimer += 200;
-					traceEnt->client->ps.weaponTime = traceEnt->client->ps.torsoAnimTimer;
-				}
-			}
-			else
-			{//just insanity them
-				if ( PM_HasAnimation( traceEnt, BOTH_SONICPAIN_HOLD ) )
-				{
-					NPC_SetAnim( traceEnt, SETANIM_LEGS, BOTH_SONICPAIN_HOLD, SETANIM_FLAG_NORMAL );
-					NPC_SetAnim( traceEnt, SETANIM_TORSO, BOTH_SONICPAIN_HOLD, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
-					traceEnt->client->ps.torsoAnimTimer += insanityTime[self->client->ps.forcePowerLevel[FP_INSANITY]];
-					traceEnt->client->ps.weaponTime = traceEnt->client->ps.torsoAnimTimer;
-				}
-				traceEnt->NPC->insanityTime = level.time + insanityTime[self->client->ps.forcePowerLevel[FP_INSANITY]];//confused for 5-10 seconds
-				if ( traceEnt->enemy )
-				{
-					G_ClearEnemy( traceEnt );
-				}
-				if ( traceEnt->ghoul2.size() && traceEnt->headBolt != -1 )
-				{//FIXME: what if already playing effect?
-					G_PlayEffect( G_EffectIndex( "force/drain_hand" ), traceEnt->playerModel, traceEnt->headBolt, traceEnt->s.number, traceEnt->currentOrigin, insanityTime[self->client->ps.forcePowerLevel[FP_INSANITY]], qtrue );
-				}
-			}
-		}
-		else
-		{
-			NPC_Jedi_PlayConfusionSound( traceEnt );
-		}
-		WP_ForcePowerStart( self, FP_INSANITY, override );
-		vec3_t	eyeDir;
-		AngleVectors( traceEnt->client->renderInfo.eyeAngles, eyeDir, NULL, NULL );
-		VectorNormalize( eyeDir );
-		G_PlayEffect( "force/drain_hand", traceEnt->client->renderInfo.eyePoint, eyeDir );
-		
-		//make sure this plays and that you cannot press fire for about 1 second after this
-		//FIXME: BOTH_FORCEMINDTRICK or BOTH_FORCEDISTRACT
-		NPC_SetAnim( self, SETANIM_TORSO, BOTH_MINDTRICK1, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_RESTART|SETANIM_FLAG_HOLD );
-		//FIXME: build-up or delay this until in proper part of anim
-	}
-	
-	WP_ForcePowerStart( self, FP_INSANITY, 0 );
-	
-	self->client->ps.saberMove = self->client->ps.saberBounceMove = LS_READY;//don't finish whatever saber anim you may have been in
-	self->client->ps.saberBlocked = BLOCKED_NONE;
-	self->client->ps.weaponTime = 1000;
-	if ( self->client->ps.forcePowersActive&(1<<FP_SPEED) )
-	{
-		self->client->ps.weaponTime = floor( self->client->ps.weaponTime * g_timescale->value );
-	}
-}
+void ForceInsanity( gentity_t *self );	//fp_insanity.cpp (JKEnhanced 4B.8 - Terror, a nerve cone)
 
 qboolean PlayerAffectedByStasis( void )
 {
@@ -13772,125 +16092,147 @@ qboolean PlayerAffectedByStasis( void )
 	return qfalse;
 }
 
-extern void PM_SetTorsoAnimTimer( gentity_t *ent, int *torsoAnimTimer, int time );
-void ForceStasis( gentity_t *self )
+/*
+ForceRepulse (JKEnhanced 4B: player Repulse restored from 45210704)
+
+Hold to charge, release to throw (WP_ForcePowerStop -> ForceRepulseThrow). A neutral core power
+levelled like Push / Pull: the level sets the radius (forcePushPullRadius) and how far the charge
+can build (WP_RepulseChargeTime, force.cfg repulse.charge). 4B.4: clears space - saber users can block it,
+the hurt comes from slamming into things; not castable gripped / drained / in a saber lock.
+NPCs cast it outright through G_NPCRepulse (fp_repulse.cpp).
+*/
+//JKEnhanced 4B.4: the same charge at every level (force.cfg repulse.charge, 2 s; the level sets the
+//radius); ForceRepulseThrow turns the charge into a 0-1 strength against this
+int WP_RepulseFullCharge( const gentity_t *self )
 {
-	trace_t	tr;
-	vec3_t	end, forward;
-	gentity_t	*traceEnt;
-	int anim, soundIndex;
-	float currentFrame, animSpeed;
-	int junk, actualTime;
-	
+	return G_ForceTuning()->repulseCharge;
+}
+
+//JKEnhanced 4B.4: no Repulse out of a saber lock, a Grip or a Drain - Push is the way out of those
+qboolean WP_RepulseHeld( const gentity_t *self )
+{
+	return (qboolean)( self->client->ps.saberLockTime > level.time
+		|| ( self->client->ps.eFlags & EF_FORCE_GRIPPED ) || ( self->s.eFlags & EF_FORCE_GRIPPED )
+		|| ( self->client->ps.eFlags & EF_FORCE_DRAINED ) || ( self->s.eFlags & EF_FORCE_DRAINED ) );
+}
+
+//What the release pays. The player pays as they charge instead (force.cfg repulse.startCost up front,
+//then draining to repulse.totalCost by a full charge - WP_RepulseChargeDrain), so 0 here; NPCs pay
+//cost.repulse on release (a boss's stage Repulse must go off)
+int WP_RepulseCost( const gentity_t *self )
+{
+	return ( self->s.number < MAX_CLIENTS ) ? 0 : forcePowerNeeded[FP_REPULSE];
+}
+
+//what the player has paid on the charge so far (not saved: a charge doesn't survive a load anyway)
+static int s_repulseSpent[MAX_CLIENTS];
+
+//the player's charge drains toward repulse.totalCost by a full charge; returns qfalse when the Force
+//has run out (it goes off early)
+static qboolean WP_RepulseChargeDrain( gentity_t *self, int chargeTime )
+{
+	if ( self->s.number >= MAX_CLIENTS )
+	{
+		return qtrue;
+	}
+	const forceTuning_t *ft = G_ForceTuning();
+	const int fullCharge = Q_max( 1, WP_RepulseFullCharge( self ) );
+	const int target = ft->repulseStartCost
+		+ (int)( ( ft->repulseTotalCost - ft->repulseStartCost ) * Q_min( 1.0f, (float)chargeTime / fullCharge ) + 0.5f );
+	const int owed = target - s_repulseSpent[self->s.number];
+	if ( owed > 0 )
+	{
+		const int pay = Q_min( owed, self->client->ps.forcePower );
+		if ( pay > 0 )
+		{
+			WP_ForcePowerDrain( self, FP_REPULSE, pay );
+			s_repulseSpent[self->s.number] += pay;
+		}
+	}
+	return (qboolean)( self->client->ps.forcePower > 0 );
+}
+
+int WP_RepulseChargeTime( const gentity_t *self )
+{
+	if ( !self || !self->client || !self->client->ps.repulseChargeStart )
+	{
+		return 0;
+	}
+	return Q_min( level.time - self->client->ps.repulseChargeStart, WP_RepulseFullCharge( self ) );
+}
+
+void ForceRepulse( gentity_t *self )
+{
 	if ( self->health <= 0 )
 	{
 		return;
 	}
-	if ( !WP_ForcePowerUsable( self, FP_STASIS, 0 ) )
-	{
-		return;
-	}
-	
-	if ( self->client->ps.forcePowerDebounce[FP_STASIS] > level.time )
-	{//already using destruction
-		return;
-	}
 	if ( !self->s.number && (cg.zoomMode || in_camera) )
-	{//can't destruction when zoomed in or in cinematic
+	{//can't repulse when zoomed in or in cinematic
 		return;
 	}
+	if ( self->client->ps.leanofs )
+	{//can't repulse while leaning
+		return;
+	}
+	if ( self->client->ps.repulseChargeStart )
+	{//already charging
+		return;
+	}
+	if ( self->client->ps.forcePowerDebounce[FP_REPULSE] > level.time )
+	{
+		return;
+	}
+	//the player needs only the start cost (the rest drains while charging); NPCs pay the cost on release
+	const int startCost = ( self->s.number < MAX_CLIENTS ) ? G_ForceTuning()->repulseStartCost : forcePowerNeeded[FP_REPULSE] + 5;
+	if ( !WP_ForcePowerUsable( self, FP_REPULSE, Q_max( 1, startCost ) ) )
+	{
+		return;
+	}
+	if ( WP_RepulseHeld( self ) )
+	{
+		return;
+	}
+	if ( PM_InKnockDown( &self->client->ps ) )
+	{
+		return;
+	}
+	//JKEnhanced 4B.3: drops timed (L1-2) Protect / Absorb; an L3 toggle stays up
+	WP_StopShieldsForAttack( self );
 
-	if ( self->client->ps.saberLockTime > level.time )
-	{//FIXME: can this be a way to break out?
-		return;
-	}
-	
-	AngleVectors( self->client->ps.viewangles, forward, NULL, NULL );
-	VectorNormalize( forward );
-	VectorMA( self->client->renderInfo.eyePoint, 2048, forward, end );
-	
-	//Stasis the enemy!
-	gi.trace( &tr, self->client->renderInfo.eyePoint, vec3_origin, vec3_origin, end, self->s.number, MASK_OPAQUE|CONTENTS_BODY, (EG2_Collision)0, 0 );
-	if ( tr.entityNum == ENTITYNUM_NONE || tr.fraction == 1.0 || tr.allsolid || tr.startsolid )
-	{
-		return;
-	}
-	
-	traceEnt = &g_entities[tr.entityNum];
-	
-	if( traceEnt->NPC && traceEnt->NPC->scriptFlags & SCF_NO_FORCE )
-	{
-		return;
-	}
-	
-	if(traceEnt->health > 0 &&
-	   traceEnt->s.weapon != WP_SABER && traceEnt->client && traceEnt->client->NPC_class != CLASS_REBORN)
-	{
-		int modPowerLevel = WP_AbsorbConversion(traceEnt, traceEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_STASIS, self->client->ps.forcePowerLevel[FP_STASIS], forcePowerNeeded[FP_STASIS]);
-		int actualPowerLevel;
-		if (modPowerLevel == -1)
-		{
-			actualPowerLevel = self->client->ps.forcePowerLevel[FP_STASIS];
-		}
-		else
-		{
-			actualPowerLevel = modPowerLevel;
-		}
-		
-		if (actualPowerLevel > 0)
-		{
-			//doesn't affect jedi for now...but affects everything else??
-			if (traceEnt->client)
-			{
-				traceEnt->client->ps.stasisTime = level.time + stasisTime[actualPowerLevel];//stuck for 5-10 seconds
-				VectorClear(traceEnt->client->ps.velocity);
-			}
-			
-			if ( gi.G2API_HaveWeGhoul2Models( traceEnt->ghoul2 ) )
-			{
-				actualTime = (cg.time?cg.time:level.time);
-				gi.G2API_GetBoneAnimIndex( &traceEnt->ghoul2[traceEnt->playerModel], traceEnt->rootBone,
-										  level.time, &currentFrame, &junk, &junk, &junk, &animSpeed, NULL );
-				
-				gi.G2API_SetBoneAnimIndex( &traceEnt->ghoul2[traceEnt->playerModel], traceEnt->rootBone,
-										  currentFrame, currentFrame+1,
-										  BONE_ANIM_OVERRIDE_FREEZE/*|BONE_ANIM_OVERRIDE_FREEZE|BONE_ANIM_BLEND*/, animSpeed, level.time, currentFrame, 100 );
-				if (traceEnt->headModel > 0)
-				{
-					gi.G2API_SetBoneAnimIndex( &traceEnt->ghoul2[traceEnt->headModel], traceEnt->headRootBone,
-											  currentFrame, currentFrame+1,
-											  BONE_ANIM_OVERRIDE_FREEZE/*|BONE_ANIM_OVERRIDE_FREEZE|BONE_ANIM_BLEND*/, animSpeed, level.time, currentFrame, 100 );
-				}
-			}
-		}
-		
-	}
-	
-	anim = BOTH_FORCEPUSH;
-	soundIndex = G_SoundIndex( "sound/weapons/force/protecthit.wav" );
-	
-	int parts = SETANIM_TORSO;
-	if ( !PM_InKnockDown( &self->client->ps ) )
-	{
-		if ( !VectorLengthSquared( self->client->ps.velocity ) && !(self->client->ps.pm_flags&PMF_DUCKED))
-		{
-			parts = SETANIM_BOTH;
-		}
-	}
-	NPC_SetAnim( self, parts, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART );
+	self->client->ps.repulseChargeStart = level.time;
+
+	NPC_SetAnim( self, SETANIM_BOTH, BOTH_SWIM_IDLE1, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+
 	self->client->ps.saberMove = self->client->ps.saberBounceMove = LS_READY;//don't finish whatever saber anim you may have been in
 	self->client->ps.saberBlocked = BLOCKED_NONE;
-	
-	G_Sound( self, soundIndex );
-	
-	WP_ForcePowerStart( self, FP_STASIS, 0 );
-	
-	self->client->ps.weaponTime = 1000;
-	if ( self->client->ps.forcePowersActive&(1<<FP_SPEED) )
+
+	self->s.loopSound = G_SoundIndex( "sound/weapons/force/lightning2.wav" );
+
+	self->client->ps.weaponTime = self->client->ps.torsoAnimTimer;
+	if ( self->s.number < MAX_CLIENTS )
 	{
-		self->client->ps.weaponTime = floor( self->client->ps.weaponTime * g_timescale->value );
+		WP_ForcePowerStart( self, FP_REPULSE, -1 );
+		s_repulseSpent[self->s.number] = 0;
+		WP_RepulseChargeDrain( self, 0 );//the start cost
+		if ( g_debugForce && g_debugForce->integer )
+		{
+			gi.Printf( "  REPULSE charge start at %d (paid %d, Force %d)\n", level.time, s_repulseSpent[self->s.number], self->client->ps.forcePower );
+		}
 	}
-	self->client->ps.forcePowerDebounce[FP_STASIS] = level.time + self->client->ps.torsoAnimTimer + 500;
+	else
+	{
+		WP_ForcePowerStart( self, FP_REPULSE, -1 );//(nothing up front: the release pays it)
+	}
+}
+
+extern void PM_SetTorsoAnimTimer( gentity_t *ent, int *torsoAnimTimer, int time );
+void ForceStasis( gentity_t *self );	//fp_stasis.cpp (JKEnhanced 4B.7 - the cone)
+
+qboolean WP_AbsorbablePower( int power )
+{
+	return (qboolean)( power == FP_LIGHTNING || power == FP_DRAIN || power == FP_GRIP || power == FP_PUSH
+		|| power == FP_PULL || power == FP_REPULSE || power == FP_STASIS );
 }
 
 int WP_AbsorbConversion(gentity_t *attacked, int atdAbsLevel, gentity_t *attacker, int atPower, int atPowerLevel, int atForceSpent)
@@ -13898,12 +16240,7 @@ int WP_AbsorbConversion(gentity_t *attacked, int atdAbsLevel, gentity_t *attacke
 	int getLevel = 0;
 	int addTot = 0;
 
-	if (atPower != FP_LIGHTNING &&
-		atPower != FP_DRAIN &&
-		atPower != FP_GRIP &&
-		atPower != FP_PUSH &&
-		atPower != FP_PULL &&
-		atPower != FP_STASIS)
+	if ( !WP_AbsorbablePower( atPower ) )
 	{ //Only these powers can be absorbed
 		return -1;
 	}
@@ -13939,9 +16276,19 @@ int WP_AbsorbConversion(gentity_t *attacked, int atdAbsLevel, gentity_t *attacke
 	{
 		attacked->client->ps.forcePower = attacked->client->ps.forcePowerMax;
 	}
+	if ( attacker && attacker->NPC && attacker->enemy == attacked && getLevel <= FORCE_LEVEL_0 )
+	{//JKEnhanced 4B.3: fully absorbed - the AI stops casting absorbable powers at them for a while
+	 //(sandbox: Tavion pushed an Absorb 3 player 23 times, refunding them every time)
+		TIMER_Set( attacker, "enemyAbsorbs", Q_irand( 8000, 12000 ) );
+	}
 
 	G_SoundOnEnt( attacked, CHAN_ITEM, "sound/weapons/force/absorbhit.wav" );
 
+	if ( g_debugForce && g_debugForce->integer )
+	{
+		gi.Printf( "  ABSORB %s vs %s's %s L%d: works as L%d, +%d Force (now %d)\n", WP_ForceDebugWho( attacked ),
+			WP_ForceDebugWho( attacker ), WP_ForcePowerName( atPower ), atPowerLevel, getLevel, addTot, attacked->client->ps.forcePower );
+	}
 	return getLevel;
 }
 
@@ -13969,17 +16316,168 @@ void WP_ForcePowerRegenerate( gentity_t *self, int overrideAmt )
 	}
 }
 
-void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int overrideAmt )
+/*
+g_debugForce / forcetally (JKEnhanced, Step 4A audit)
+
+g_debugForce 1: one console line per Force cast (WP_ForcePowerStart): who, power, level, cost, the
+caster's Force; plus Force damage taken (G_Damage, MOD_FORCE_*) and Absorb results. 2: also every
+per-tick Force spend (Grip/Lightning/Drain/holds). NPCs pay nothing (WP_ForcePowerDrain), so their
+lines show the cost they would have paid.
+forcetally: how many times each NPC cast each power since the map started (or "forcetally reset").
+Not saved.
+*/
+extern cvar_t *g_debugForce;
+static const char *s_forcePowerNames[NUM_FORCE_POWERS] =
 {
-	if ( self->NPC )
-	{//For now, NPCs have infinite force power
+	"Heal", "Jump", "Speed", "Push", "Pull", "MindTrick", "Grip", "Lightning", "SaberThrow",
+	"SaberDefense", "SaberOffense", "Rage", "Protect", "Absorb", "Drain", "Sight", "Insanity",
+	"Stasis", "Repulse"
+};
+static int s_forceTally[MAX_GENTITIES][NUM_FORCE_POWERS];
+static int s_forceTallyStart = 0;
+
+const char *WP_ForcePowerName( int power )
+{
+	return ( power >= 0 && power < NUM_FORCE_POWERS ) ? s_forcePowerNames[power] : "?";
+}
+
+static const char *WP_ForceDebugWho( const gentity_t *ent )
+{
+	if ( !ent )
+	{
+		return "?";
+	}
+	if ( ent->s.number == 0 )
+	{
+		return "player";
+	}
+	return ent->NPC_type ? va( "%s#%d", ent->NPC_type, ent->s.number ) : va( "ent#%d", ent->s.number );
+}
+
+void WP_ForceDebugCast( const gentity_t *self, int power, int cost )
+{
+	if ( !self || !self->client || power < 0 || power >= NUM_FORCE_POWERS )
+	{
 		return;
 	}
+	if ( self->s.number > 0 && self->s.number < MAX_GENTITIES )
+	{
+		s_forceTally[self->s.number][power]++;
+	}
+	if ( g_debugForce && g_debugForce->integer )
+	{
+		const char *freeReason = WP_NPCForceFreeReason( self, power );
+		gi.Printf( S_COLOR_CYAN "FORCE %s: %s L%d, cost %d, Force %d/%d%s%s%s\n", WP_ForceDebugWho( self ),
+			s_forcePowerNames[power], self->client->ps.forcePowerLevel[power], cost,
+			self->client->ps.forcePower, self->client->ps.forcePowerMax,
+			freeReason ? " (free: " : "", freeReason ? freeReason : "", freeReason ? ")" : "" );
+	}
+}
+
+void WP_ForceDebugDamage( const gentity_t *attacker, const gentity_t *targ, int take, int mod )
+{
+	if ( !g_debugForce || !g_debugForce->integer || ( mod != MOD_FORCE_GRIP && mod != MOD_FORCE_LIGHTNING && mod != MOD_FORCE_DRAIN ) )
+	{
+		return;
+	}
+	gi.Printf( "  %s -> %s: %d damage (%s), health now %d\n", WP_ForceDebugWho( attacker ), WP_ForceDebugWho( targ ), take,
+		mod == MOD_FORCE_GRIP ? "Grip" : ( mod == MOD_FORCE_LIGHTNING ? "Lightning" : "Drain" ), targ ? targ->health : 0 );
+}
+
+void WP_ForceTally_f( void )
+{
+	if ( gi.argc() > 1 && !Q_stricmp( gi.argv( 1 ), "reset" ) )
+	{
+		memset( s_forceTally, 0, sizeof( s_forceTally ) );
+		s_forceTallyStart = level.time;
+		gi.Printf( "forcetally: reset\n" );
+		return;
+	}
+	gi.Printf( "Force casts per NPC over the last %d s:\n", ( level.time - s_forceTallyStart ) / 1000 );
+	for ( int i = 1; i < MAX_GENTITIES; i++ )
+	{
+		char line[1024] = "";
+		for ( int p = 0; p < NUM_FORCE_POWERS; p++ )
+		{
+			if ( s_forceTally[i][p] )
+			{
+				Q_strcat( line, sizeof( line ), va( " %s %d,", s_forcePowerNames[p], s_forceTally[i][p] ) );
+			}
+		}
+		if ( line[0] )
+		{
+			const gentity_t *ent = &g_entities[i];
+			gi.Printf( "  %s:%s\n", ent->inuse ? WP_ForceDebugWho( ent ) : va( "(gone)#%d", i ), line );
+		}
+	}
+}
+
+void WP_ForceTallyReset( void )
+{
+	memset( s_forceTally, 0, sizeof( s_forceTally ) );
+	s_forceTallyStart = level.time;
+}
+
+/*
+WP_NPCForceFree (JKEnhanced 4B)
+
+What an NPC doesn't pay for. g_npcForcePool 0: everything (stock infinite NPC Force). On: blocking
+(the guard meter covers it), jumps (a low bar mustn't strand their pathing) and any power a script
+forced (ICARUS / cinematics can't fail for lack of Force).
+*/
+static const char *WP_NPCForceFreeReason( const gentity_t *self, int forcePower )
+{
+	if ( !self || !self->NPC || !self->client )
+	{
+		return NULL;
+	}
+	extern cvar_t *g_npcForcePool;
+	if ( !g_npcForcePool || !g_npcForcePool->integer )
+	{
+		return "NPC pool off";
+	}
+	if ( forcePower == FP_SABER_DEFENSE )
+	{
+		return "block";
+	}
+	if ( forcePower == FP_LEVITATION )
+	{
+		return "jump";
+	}
+	if ( forcePower >= 0 && forcePower < NUM_FORCE_POWERS && ( self->client->ps.forcePowersForced & ( 1 << forcePower ) ) )
+	{
+		return "scripted";
+	}
+	return NULL;
+}
+
+qboolean WP_NPCForceFree( const gentity_t *self, int forcePower )
+{
+	return (qboolean)( WP_NPCForceFreeReason( self, forcePower ) != NULL );
+}
+
+void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int overrideAmt )
+{
+	const char *freeReason = WP_NPCForceFreeReason( self, forcePower );
 	//take away the power
 	int	drain = overrideAmt;
 	if ( !drain )
 	{
 		drain = forcePowerNeeded[forcePower];
+	}
+	if ( self->NPC && !freeReason && drain > 0 )
+	{//JKEnhanced 4B: NPCs pay (force.cfg npc.costScale), never less than 1
+		drain = Q_max( 1, (int)( drain * G_ForceTuning()->npcCostScale + 0.5f ) );
+	}
+	if ( g_debugForce && g_debugForce->integer > 1 && self && self->client )
+	{//per-tick / follow-up spends
+		gi.Printf( "  FORCE %s spends %d on %s (Force %d)%s%s%s\n", WP_ForceDebugWho( self ),
+			drain, WP_ForcePowerName( forcePower ), self->client->ps.forcePower,
+			freeReason ? " (free: " : "", freeReason ? freeReason : "", freeReason ? ")" : "" );
+	}
+	if ( freeReason )
+	{
+		return;
 	}
 	if ( !drain )
 	{
@@ -13995,6 +16493,10 @@ void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int override
 void WP_ForcePowerStart( gentity_t *self, forcePowers_t forcePower, int overrideAmt )
 {
 	int	duration = 0;
+
+	//JKEnhanced audit: log/tally the cast (Lightning's override is its duration, not a cost)
+	WP_ForceDebugCast( self, forcePower, ( forcePower == FP_REPULSE ) ? ( self->s.number < MAX_CLIENTS ? G_ForceTuning()->repulseStartCost : WP_RepulseCost( self ) )
+		: ( forcePower == FP_LIGHTNING || !overrideAmt ) ? forcePowerNeeded[forcePower] : overrideAmt );//(Repulse: the player's start cost; NPCs pay on release)
 
 	//FIXME: debounce some of these?
 	self->client->ps.forcePowerDebounce[forcePower] = 0;
@@ -14012,8 +16514,20 @@ void WP_ForcePowerStart( gentity_t *self, forcePowers_t forcePower, int override
 		self->client->ps.forcePowersActive |= ( 1 << forcePower );
 		break;
 	case FP_SPEED:
-		//duration is always 5 seconds, player time
-		duration = ceil(FORCE_SPEED_DURATION*forceSpeedValue[self->client->ps.forcePowerLevel[FP_SPEED]]);//FIXME: because the timescale scales down (not instant), this doesn't end up being exactly right...
+		{//JKEnhanced 4B.6: force.cfg speed.duration1-3, in real time (Burst 4 s / Flow 7 s / Focus 10 s). The
+		 //player's own slow-mo runs game time at forceSpeedValue, so game time = real x that; was 10 s at
+		 //every level
+			const int speedLevel = Q_max( FORCE_LEVEL_1, Q_min( FORCE_LEVEL_3, self->client->ps.forcePowerLevel[FP_SPEED] ) );
+			const float realMs = (float)G_ForceTuning()->speedDuration[speedLevel - 1];
+			duration = ( self->s.number < MAX_CLIENTS ) ? (int)ceil( realMs * forceSpeedValue[speedLevel] ) : (int)realMs;
+			G_SpeedCastStart( self );
+			if ( g_debugForce && g_debugForce->integer )
+			{
+				gi.Printf( "  SPEED %s: %s for %.1f s%s\n", WP_ForceDebugWho( self ),
+					speedLevel >= FORCE_LEVEL_3 ? "Focus (L3)" : speedLevel == FORCE_LEVEL_2 ? "Flow (L2)" : "Burst (L1)",
+					realMs / 1000.0f, speedLevel >= FORCE_LEVEL_3 ? va( ", %d reflex dodge(s)", G_ForceTuning()->speedDodges ) : "" );
+			}
+		}
 		self->client->ps.forcePowersActive |= ( 1 << forcePower );
 		self->s.loopSound = G_SoundIndex( "sound/weapons/force/speedloop.wav" );
 		if ( self->client->ps.forcePowerLevel[FP_SPEED] > FORCE_LEVEL_2 )
@@ -14067,23 +16581,18 @@ void WP_ForcePowerStart( gentity_t *self, forcePowers_t forcePower, int override
 		self->client->ps.forcePowersActive |= ( 1 << forcePower );
 		break;
 	case FP_PROTECT:
-		switch ( self->client->ps.forcePowerLevel[FP_PROTECT] )
+		//JKEnhanced 4B.3: L1-2 run for force.cfg's duration; L3 is a toggle (no duration) and stays
+		//silent and invisible until it stops something (G_ForceShieldFlash)
 		{
-		case FORCE_LEVEL_3:
-			duration = 20000;
-			break;
-		case FORCE_LEVEL_2:
-			duration = 15000;
-			break;
-		case FORCE_LEVEL_1:
-		default:
-
-			duration = 10000;
-			break;
+			const int lvl = self->client->ps.forcePowerLevel[forcePower];
+			self->client->ps.forcePowersActive |= ( 1 << forcePower );
+			G_SoundOnEnt( self, CHAN_ITEM, "sound/weapons/force/protect.mp3" );
+			if ( lvl < FORCE_LEVEL_3 )
+			{
+				duration = G_ForceTuning()->protectDuration[( lvl > FORCE_LEVEL_1 ) ? 1 : 0];
+				self->s.loopSound = G_SoundIndex( "sound/weapons/force/protectloop.wav" );
+			}
 		}
-		self->client->ps.forcePowersActive |= ( 1 << forcePower );
-		G_SoundOnEnt( self, CHAN_ITEM, "sound/weapons/force/protect.mp3" );
-		self->s.loopSound = G_SoundIndex( "sound/weapons/force/protectloop.wav" );
 		break;
 	case FP_ABSORB:
 		duration = 20000;
@@ -14113,6 +16622,11 @@ void WP_ForcePowerStart( gentity_t *self, forcePowers_t forcePower, int override
 		break;
 	case FP_STASIS:
 		break;
+	case FP_REPULSE://JKEnhanced (restored)
+		self->client->ps.forcePowersActive |= ( 1 << forcePower );
+		self->client->ps.powerups[PW_FORCE_REPULSE] = Q3_INFINITE;
+		self->client->pushEffectFadeTime = 0;
+		break;
 	default:
 		break;
 	}
@@ -14125,7 +16639,10 @@ void WP_ForcePowerStart( gentity_t *self, forcePowers_t forcePower, int override
 		self->client->ps.forcePowerDuration[forcePower] = 0;
 	}
 
-	WP_ForcePowerDrain( self, forcePower, overrideAmt );
+	if ( overrideAmt >= 0 )
+	{//JKEnhanced: -1 = nothing up front (Repulse pays on release)
+		WP_ForcePowerDrain( self, forcePower, overrideAmt );
+	}
 
 	if ( !self->s.number )
 	{
@@ -14143,6 +16660,26 @@ qboolean WP_ForcePowerAvailable( gentity_t *self, forcePowers_t forcePower, int 
 	if ( !drain )
 	{
 		return qtrue;
+	}
+	extern cvar_t *g_npcForcePool;
+	if ( g_npcForcePool && g_npcForcePool->integer && WP_NPCForceFree( self, forcePower ) )
+	{//JKEnhanced 4B: costs this NPC nothing (block, jump, scripted). Pool off: stock check below
+	 //(their bar stays full unless the player Drains it)
+		return qtrue;
+	}
+	if ( self->NPC && g_npcForcePool && g_npcForcePool->integer )
+	{//what they'll actually pay (npc.costScale)
+		drain = Q_max( 1, (int)( drain * G_ForceTuning()->npcCostScale + 0.5f ) );
+	}
+	if ( self->NPC && WP_SaberRules() && g_npcForcePool && g_npcForcePool->integer
+		&& self->client->ps.weapon == WP_SABER && self->client->ps.forcePowerMax > 0
+		&& forcePower != FP_SABER_DEFENSE && forcePower != FP_SABER_OFFENSE
+		&& self->enemy && self->enemy->client && self->enemy->client->ps.weapon == WP_SABER
+		&& self->client->ps.forcePower - drain < self->client->ps.forcePowerMax / 2 )
+	{//JKEnhanced saber rules: Force is a saber fighter's guard. Facing another saber they keep half of
+	 //it back for that: a power that would take them under half isn't started, and one that is
+	 //running (Drain, lightning, grip) stops when it gets there.
+		return qfalse;
 	}
 	if ( self->client->ps.forcePower < drain )
 	{
@@ -14210,6 +16747,13 @@ qboolean WP_ForcePowerUsable( gentity_t *self, forcePowers_t forcePower, int ove
 		return qfalse;
 	}
 	*/
+	if ( self->NPC && !( self->client->ps.forcePowersForced & ( 1 << forcePower ) )
+		&& WP_AbsorbablePower( forcePower ) && forcePower != FP_REPULSE && !TIMER_Done( self, "enemyAbsorbs" )
+		&& self->enemy && self->enemy->client && ( self->enemy->client->ps.forcePowersActive & ( 1 << FP_ABSORB ) ) )
+	{//JKEnhanced 4B.3: their enemy just absorbed one of these - don't feed them Force until it lapses
+	 //(timer set in WP_AbsorbConversion; once it runs out they'll test it again)
+		return qfalse;
+	}
 	if ( self->client->NPC_class == CLASS_ATST )
 	{//Doh!  No force powers in an AT-ST!
 		return qfalse;
@@ -14342,6 +16886,7 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower )
 		self->client->ps.forcePowerDebounce[FP_LEVITATION] = 0;
 		break;
 	case FP_SPEED:
+		G_SpeedCastEnd( self );//JKEnhanced 4B.6: unused Focus dodges go with it
 		if ( !self->s.number )
 		{//player using force speed
 			if ( g_timescale->value != 1.0 )
@@ -14390,7 +16935,7 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower )
 //rww - RAGDOLL_BEGIN
 #ifndef JK2_RAGDOLL_GRIPNOHEALTH
 //rww - RAGDOLL_END
-					if ( gripEnt->health > 0 )
+					if ( gripEnt->health > 0 && !s_gripHeldObject[self->s.number] )//JKEnhanced: a knocked-out body doesn't come to and raise the alarm
 //rww - RAGDOLL_BEGIN
 #endif
 //rww - RAGDOLL_END
@@ -14474,12 +17019,20 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower )
 						gripEnt->s.pos.trTime = level.time;
 					}
 					else
-					{//drop it
-						gripEnt->e_ThinkFunc = thinkF_G_RunObject;
-						gripEnt->nextthink = level.time + FRAMETIME;
+					{//drop it (JKEnhanced 4B.5: items / limbs back to their own physics, not G_RunObject)
+						WP_GripObjectPhysics( gripEnt );
 						gripEnt->s.pos.trType = TR_GRAVITY;
 						VectorCopy( gripEnt->currentOrigin, gripEnt->s.pos.trBase );
 						gripEnt->s.pos.trTime = level.time;
+						if ( gripEnt->s.eType == ET_ITEM )
+						{//held off the ground while carried (WP_GripMoveObject)
+							gripEnt->s.groundEntityNum = ENTITYNUM_NONE;
+						}
+						if ( VectorLengthSquared( gripEnt->s.pos.trDelta ) > 600.0f*600.0f )
+						{//keeps the carry momentum, within reason
+							VectorNormalize( gripEnt->s.pos.trDelta );
+							VectorScale( gripEnt->s.pos.trDelta, 600.0f, gripEnt->s.pos.trDelta );
+						}
 					}
 				}
 			}
@@ -14647,6 +17200,21 @@ void WP_ForcePowerStop( gentity_t *self, forcePowers_t forcePower )
 		break;
 	case FP_STASIS:
 		break;
+	case FP_REPULSE://JKEnhanced (restored): end the charge visual; a charge in progress throws now
+		self->client->ps.powerups[PW_FORCE_REPULSE] = 0;
+		if ( self->client->ps.repulseChargeStart )
+		{
+			extern void ForceRepulseThrow( gentity_t *self, int chargeTime );
+			self->s.loopSound = 0;
+			ForceRepulseThrow( self, WP_RepulseChargeTime( self ) );
+			self->client->ps.repulseChargeStart = 0;
+		}
+		self->s.loopSound = 0;
+		{//anything still held from the charge (it didn't go off) carries on
+			extern void G_RepulseReleaseShots( gentity_t *self );
+			G_RepulseReleaseShots( self );
+		}
+		break;
 	default:
 		break;
 	}
@@ -14761,6 +17329,14 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				{
 					healAmount = self->client->ps.stats[STAT_MAX_HEALTH] - self->health;
 				}
+				{//JKEnhanced: a staged boss can't heal back up into a stage it already lost
+					extern int G_BossHealthCeiling( const gentity_t *ent );
+					const int ceiling = G_BossHealthCeiling( self );
+					if ( self->health + healAmount > ceiling )
+					{
+						healAmount = Q_max( 0, ceiling - self->health );
+					}
+				}
 				self->health += healAmount;
 				self->client->ps.forceHealCount += healAmount;
 				self->client->ps.forcePowerDebounce[FP_HEAL] = level.time + healInterval;
@@ -14855,8 +17431,8 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 //rww - RAGDOLL_BEGIN
 #ifndef JK2_RAGDOLL_GRIPNOHEALTH
 //rww - RAGDOLL_END
-			if ( gripEnt->health <= 0 && gripEnt->takedamage )//FIXME: what about things that never had health or lose takedamage when they die?
-			{//either invalid ent, or dead ent
+			if ( gripEnt->health <= 0 && gripEnt->takedamage && !s_gripHeldObject[self->s.number] )//FIXME: what about things that never had health or lose takedamage when they die?
+			{//either invalid ent, or dead ent (one we picked up already dead is fine - 4B.5)
 				WP_ForcePowerStop( self, FP_GRIP );
 				return;
 			}
@@ -14895,6 +17471,8 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 			}
 			else if ( gripEnt->NPC
 				&& gripEnt->client
+				&& gripEnt->health > 0	//JKEnhanced 4B.5: bodies don't break free
+				&& !s_gripHeldObject[self->s.number]	//nor do the knocked out
 				&& gripEnt->client->ps.forcePowersKnown
 				&& (gripEnt->client->NPC_class==CLASS_REBORN||gripEnt->client->ps.weapon==WP_SABER)
 				&& !Jedi_CultistDestroyer(gripEnt)
@@ -14903,6 +17481,14 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				WP_ForceForceThrow( gripEnt );
 				//FIXME: I need to go into some pushed back anim...
 				WP_ForcePowerStop( self, FP_GRIP );
+				return;
+			}
+			else if ( self->s.number < MAX_CLIENTS && (cmd->buttons&(BUTTON_ATTACK|BUTTON_ALT_ATTACK))
+				&& ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_2
+					|| ( s_gripHeldObject[self->s.number] && self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 ) )
+				&& (!gripEnt->client || (!gripEnt->message&&!(gripEnt->flags&FL_NO_KNOCKBACK))) )
+			{//JKEnhanced 4B.5: either attack while carrying throws it (a body / object from Grip 2, someone alive at 3)
+				G_GripThrow( self, gripEnt );
 				return;
 			}
 			else if ( PM_SaberInAttack( self->client->ps.saberMove )
@@ -14916,7 +17502,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				int gripLevel = self->client->ps.forcePowerLevel[FP_GRIP];
 				if ( gripEnt->client )
 				{
-					gripLevel = WP_AbsorbConversion( gripEnt, gripEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_GRIP, self->client->ps.forcePowerLevel[FP_GRIP], forcePowerNeeded[gripLevel] );
+					gripLevel = WP_AbsorbConversion( gripEnt, gripEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_GRIP, self->client->ps.forcePowerLevel[FP_GRIP], forcePowerNeeded[FP_GRIP] );//JKEnhanced: was indexed by LEVEL
 				}
 				if ( !gripLevel )
 				{
@@ -14959,8 +17545,12 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_2
 					&& (!gripEnt->client || (!gripEnt->message&&!(gripEnt->flags&FL_NO_KNOCKBACK))) )
 				{//carry
+					if ( self->s.number < MAX_CLIENTS && s_gripCarryDist[self->s.number] > 0.0f )
+					{//JKEnhanced: the mouse wheel set how far out (WP_GripScroll)
+						dist = s_gripCarryDist[self->s.number];
+					}
 					//cap dist
-					if ( dist > FORCE_GRIP_3_MAX_DIST )
+					else if ( dist > FORCE_GRIP_3_MAX_DIST )
 					{
 						dist = FORCE_GRIP_3_MAX_DIST;
 					}
@@ -14981,7 +17571,14 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
 				{//if holding him, make sure there's a clear LOS between my hand and him
 					trace_t gripTrace;
-					gi.trace( &gripTrace, self->client->renderInfo.handLPoint, NULL, NULL, gripEntOrg, ENTITYNUM_NONE, MASK_FORCE_PUSH, (EG2_Collision)0, 0 );
+					vec3_t losOrg;
+					VectorCopy( gripEntOrg, losOrg );
+					if ( !gripEnt->client )
+					{//JKEnhanced: an object's origin can sit in the floor; check its middle
+						VectorAdd( gripEnt->absmin, gripEnt->absmax, losOrg );
+						VectorScale( losOrg, 0.5f, losOrg );
+					}
+					gi.trace( &gripTrace, self->client->renderInfo.handLPoint, NULL, NULL, losOrg, gripEnt->client ? ENTITYNUM_NONE : gripEnt->s.number, MASK_FORCE_PUSH, (EG2_Collision)0, 0 );
 					if ( gripTrace.startsolid
 						|| gripTrace.allsolid
 						|| gripTrace.fraction < 1.0f )
@@ -15026,8 +17623,8 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 						{//not falling to their death
 							gripEnt->NPC->nextBStateThink = level.time + 2000;
 						}
-						if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
-						{//level 1 just holds them
+						if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 && !s_gripHeldObject[self->s.number] )
+						{//level 1 just holds them (JKEnhanced: a body doesn't turn to face us)
 							vectoangles( dir, angles );
 							gripEnt->NPC->desiredYaw = AngleNormalize180(angles[YAW]+180);
 							gripEnt->NPC->desiredPitch = -angles[PITCH];
@@ -15056,7 +17653,28 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				}
 				else
 				{//move
-					if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
+					if ( s_gripHeldObject[self->s.number] )
+					{//JKEnhanced 4B.5: a body part / item / prop - moved smoothly here
+						if ( gripEnt->s.eType == ET_ITEM && self->s.number < MAX_CLIENTS
+							&& ( DistanceSquared( gripEnt->currentOrigin, self->currentOrigin ) < 64.0f*64.0f
+								|| ( s_gripCarryDist[self->s.number] > 0.0f && s_gripCarryDist[self->s.number] <= GRIP_SCROLL_MIN_DIST ) ) )
+						{//pulled an item all the way in: pick it up
+							extern void Touch_Item( gentity_t *ent, gentity_t *other, trace_t *trace );
+							trace_t pickTr;
+							memset( &pickTr, 0, sizeof( pickTr ) );
+							pickTr.entityNum = self->s.number;
+							Touch_Item( gripEnt, self, &pickTr );
+							if ( !gripEnt->inuse || (gripEnt->s.eFlags&EF_NODRAW) || (gripEnt->svFlags&SVF_NOCLIENT) )
+							{//took it (gone, or hidden to respawn): nothing to drop
+								s_gripPickupTime[self->s.number] = level.time;//(WP_GripScroll eats the wheel for a moment)
+								self->client->ps.forceGripEntityNum = ENTITYNUM_NONE;
+								WP_ForcePowerStop( self, FP_GRIP );
+								return;
+							}
+						}
+						WP_GripMoveObject( self, gripEnt, gripOrg, (qboolean)( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_2 ) );
+					}
+					else if ( self->client->ps.forcePowerLevel[FP_GRIP] > FORCE_LEVEL_1 )
 					{//level 1 just holds them
 						VectorCopy( gripEnt->currentOrigin, gripEnt->s.pos.trBase );
 						VectorSubtract( gripOrg, gripEntOrg, gripEnt->s.pos.trDelta );
@@ -15076,7 +17694,15 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				//AddSightEvent( self, gripOrg, 128, AEL_DANGER, 20 );
 				AddSightEvent( self, gripOrg, 128, AEL_DISCOVERED, 20 );
 
-				if ( self->client->ps.forcePowerDebounce[FP_GRIP] < level.time )
+				if ( s_gripHeldObject[self->s.number] )
+				{//JKEnhanced 4B.5: a body / object - no choke damage, a slow trickle to hold it
+					if ( self->client->ps.forcePowerDebounce[FP_GRIP] < level.time )
+					{
+						WP_ForcePowerDrain( self, FP_GRIP, 1 );
+						self->client->ps.forcePowerDebounce[FP_GRIP] = level.time + 400;
+					}
+				}
+				else if ( self->client->ps.forcePowerDebounce[FP_GRIP] < level.time )
 				{
 					//GEntity_PainFunc( gripEnt, self, self, gripOrg, 0, MOD_CRUSH );
 					if ( !gripEnt->client
@@ -15173,8 +17799,8 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 						}
 					}
 				}
-				if ( gripEnt->client && gripEnt->health > 0 )
-				{
+				if ( gripEnt->client && gripEnt->health > 0 && !s_gripHeldObject[self->s.number] )
+				{//JKEnhanced: the knocked out stay limp
 					int anim = BOTH_CHOKE3; //left-handed choke
 					if ( gripEnt->client->ps.weapon == WP_NONE || gripEnt->client->ps.weapon == WP_MELEE )
 					{
@@ -15208,6 +17834,16 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 		}
 		else
 		{
+			//JKEnhanced (3G/4A bug fix): this ran on every player command, so the player's Lightning hit
+			//(and cost Force) once per rendered frame - several ticks per 50 ms server frame at high frame
+			//rates (sandbox log2: 6-8 hits per timestamp). One tick per 50 ms now, the rate NPCs (server
+			//frames) always had. Not saved: a stale value after a load only delays one tick.
+			static int s_lightningNextTick[MAX_GENTITIES];
+			if ( level.time < s_lightningNextTick[self->s.number] && s_lightningNextTick[self->s.number] - level.time <= 50 )
+			{
+				break;
+			}
+			s_lightningNextTick[self->s.number] = level.time + 50;
 			ForceShootLightning( self );
 			if ( self->client->ps.torsoAnim == BOTH_FORCE_2HANDEDLIGHTNING
 				|| self->client->ps.torsoAnim == BOTH_FORCE_2HANDEDLIGHTNING_START
@@ -15231,7 +17867,21 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 		{
 			int addTime = 400;
 
-			self->health -= 2;
+			if ( self->NPC )
+			{//JKEnhanced: an NPC's Rage costs health only down to a quarter of its max, and never past a boss
+			 //stage line (it subtracts health directly, so it used to skip stages: Tavion raged herself to 1
+			 //and died to the first Lightning tick). The player's Rage is unchanged (down to 1).
+				extern int G_BossStageFloor( const gentity_t *ent );
+				const int minHealth = Q_max( G_BossStageFloor( self ) + 1, self->max_health / 4 );
+				if ( self->health - 2 >= minHealth )
+				{
+					self->health -= 2;
+				}
+			}
+			else
+			{
+				self->health -= 2;
+			}
 
 			if (self->client->ps.forcePowerLevel[FP_RAGE] == FORCE_LEVEL_1)
 			{
@@ -15349,7 +17999,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 				else
 				{
 					/*
-					int drainLevel = WP_AbsorbConversion( drainEnt, drainEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_DRAIN, self->client->ps.forcePowerLevel[FP_DRAIN], forcePowerNeeded[self->client->ps.forcePowerLevel[FP_DRAIN]] );
+					int drainLevel = WP_AbsorbConversion( drainEnt, drainEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_DRAIN, self->client->ps.forcePowerLevel[FP_DRAIN], forcePowerNeeded[FP_DRAIN] );//JKEnhanced: was indexed by LEVEL
 					if ( !drainLevel )
 					{
 						WP_ForcePowerStop( self, forcePower );
@@ -15436,7 +18086,7 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 
 					if ( self->client->ps.forcePowerDebounce[FP_DRAIN] < level.time )
 					{
-						int drainLevel = WP_AbsorbConversion( drainEnt, drainEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_DRAIN, self->client->ps.forcePowerLevel[FP_DRAIN], forcePowerNeeded[self->client->ps.forcePowerLevel[FP_DRAIN]] );
+						int drainLevel = WP_AbsorbConversion( drainEnt, drainEnt->client->ps.forcePowerLevel[FP_ABSORB], self, FP_DRAIN, self->client->ps.forcePowerLevel[FP_DRAIN], forcePowerNeeded[FP_DRAIN] );//JKEnhanced: was indexed by LEVEL
 						if ( (drainLevel && drainLevel == -1)
 							|| Q_irand( drainLevel, 3 ) < 3 )
 						{//the drain is being absorbed
@@ -15503,6 +18153,58 @@ static void WP_ForcePowerRun( gentity_t *self, forcePowers_t forcePower, usercmd
 	case FP_INSANITY:
 		break;
 	case FP_STASIS:
+		break;
+	case FP_REPULSE://JKEnhanced 4B (restored from 45210704): charging - let go to throw
+		if ( PM_InKnockDown( &self->client->ps ) )
+		{//knocked off our feet mid-charge: it's lost (what was spent so far stays spent)
+			self->client->ps.repulseChargeStart = 0;
+			self->s.loopSound = 0;
+			WP_ForcePowerStop( self, FP_REPULSE );
+			return;
+		}
+		if ( !self->client->ps.repulseChargeStart )
+		{
+			WP_ForcePowerStop( self, FP_REPULSE );
+			return;
+		}
+		{
+			const int chargeTime = WP_RepulseChargeTime( self );
+			const qboolean full = (qboolean)( chargeTime >= WP_RepulseFullCharge( self ) );
+			//the player pays as they charge; out of Force = it goes off now with what it has
+			const qboolean haveForce = ( self->s.number < MAX_CLIENTS ) ? WP_RepulseChargeDrain( self, chargeTime )
+				: WP_ForcePowerAvailable( self, FP_REPULSE, WP_RepulseCost( self ) );
+			if ( ( !self->s.number && !(cmd->buttons&BUTTON_REPULSE) )
+				|| WP_RepulseHeld( self )//gripped / drained / locked mid-charge: the throw won't go (4B.4)
+				|| full || !haveForce )
+			{//let go, fully charged (holding it isn't a way to sit out the fight) or out of Force: it goes off now
+				if ( g_debugForce && g_debugForce->integer && self->s.number < MAX_CLIENTS )
+				{
+					gi.Printf( "  REPULSE fires after %d ms (%s), paid %d, Force %d\n", level.time - self->client->ps.repulseChargeStart,
+						WP_RepulseHeld( self ) ? "held - cancelled" : full ? "full charge" : !haveForce ? "out of Force" : "let go",
+						s_repulseSpent[self->s.number], self->client->ps.forcePower );
+				}
+				WP_ForcePowerStop( self, FP_REPULSE );
+				return;
+			}
+		}
+		NPC_SetAnim( self, SETANIM_BOTH, BOTH_SWIM_IDLE1, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+		if ( self->client->ps.torsoAnimTimer < 100 )
+		{//hold the pose at least another 100 ms
+			self->client->ps.torsoAnimTimer = 100;
+		}
+		if ( self->client->ps.legsAnimTimer < 100 )
+		{
+			self->client->ps.legsAnimTimer = 100;
+		}
+		{//shots coming at us are caught and held, and go back out when it fires (fp_repulse.cpp)
+			extern void G_RepulseCatchShots( gentity_t *self );
+			G_RepulseCatchShots( self );
+		}
+		VectorClear( self->client->ps.velocity );
+		cmd->forwardmove = 0;
+		cmd->rightmove = 0;
+		cmd->upmove = 0;
+		VectorClear( self->client->ps.moveDir );
 		break;
 	default:
 		break;
@@ -15600,6 +18302,10 @@ void WP_CheckForcedPowers( gentity_t *self, usercmd_t *ucmd )
 				//do only once
 				self->client->ps.forcePowersForced &= ~(1<<forcePower);
 				break;
+			case FP_REPULSE://JKEnhanced 4B: scripted - charge while forced
+				ucmd->buttons &= ~(BUTTON_ATTACK|BUTTON_ALT_ATTACK|BUTTON_FORCE_FOCUS|BUTTON_FORCEGRIP|BUTTON_FORCE_LIGHTNING|BUTTON_SABERTHROW|BUTTON_FORCE_DRAIN);
+				ucmd->buttons |= BUTTON_REPULSE;
+				break;
 			}
 		}
 	}
@@ -15633,6 +18339,25 @@ void WP_ForcePowersUpdate( gentity_t *self, usercmd_t *ucmd )
 	}
 
 	WP_CheckForcedPowers( self, ucmd );
+
+	{//JKEnhanced: a two-handed Force pose (Repulse / two-handed Lightning) doesn't outlast its power. These
+	 //anims loop, and with the saber lit nothing replaced the pose until the next swing (hands out, blade out)
+		playerState_t *ps = &self->client->ps;
+		const int torso = ps->torsoAnim;
+		if ( ( torso == BOTH_FORCE_2HANDEDLIGHTNING || torso == BOTH_FORCE_2HANDEDLIGHTNING_START
+				|| torso == BOTH_FORCE_2HANDEDLIGHTNING_HOLD || torso == BOTH_FORCE_2HANDEDLIGHTNING_RELEASE
+				|| ( torso == BOTH_SWIM_IDLE1 && self->waterlevel < 2 && (ps->forcePowersKnown&(1<<FP_REPULSE)) ) )//(Repulse's charge pose)
+			&& ps->torsoAnimTimer <= 0 && ps->weaponTime <= 0
+			&& !(ps->forcePowersActive&((1<<FP_LIGHTNING)|(1<<FP_REPULSE))) && !ps->repulseChargeStart )
+		{
+			NPC_SetAnim( self, SETANIM_TORSO, ps->legsAnim, SETANIM_FLAG_OVERRIDE );
+			if ( ps->weapon == WP_SABER )
+			{
+				ps->saberMove = ps->saberBounceMove = LS_READY;
+				ps->saberBlocked = BLOCKED_NONE;
+			}
+		}
+	}
 
 	if ( !self->s.number )
 	{//player uses different kind of force-jump
@@ -15730,6 +18455,12 @@ void WP_ForcePowersUpdate( gentity_t *self, usercmd_t *ucmd )
 		}
 	}
 
+	if ( ucmd->buttons & BUTTON_REPULSE )
+	{//JKEnhanced 4B: start charging (+force_repulse, or F with Repulse selected)
+		ForceRepulse( self );
+	}
+	WP_GripThrownUpdate( self );	//JKEnhanced 4B.5: an object we threw hits whoever's in its path
+
 	for ( i = 0; i < NUM_FORCE_POWERS; i++ )
 	{
 		if ( self->client->ps.forcePowerDuration[i] )
@@ -15745,7 +18476,10 @@ void WP_ForcePowersUpdate( gentity_t *self, usercmd_t *ucmd )
 		}
 		if ( (self->client->ps.forcePowersActive&( 1 << i )) )
 		{
-			usingForce = qtrue;
+			if ( i != FP_PROTECT )
+			{//JKEnhanced 4B.3: Protect no longer stops regen (L1-2 paid up front, L3 pays per block); Absorb still does
+				usingForce = qtrue;
+			}
 			WP_ForcePowerRun( self, (forcePowers_t)i, ucmd );
 		}
 	}
@@ -15770,20 +18504,30 @@ void WP_ForcePowersUpdate( gentity_t *self, usercmd_t *ucmd )
 			int regenTime;
 			int defLevel = self->client->ps.forcePowerLevel[FP_SABER_DEFENSE];
 			int regenMult = ( defLevel >= FORCE_LEVEL_3 ) ? 2 : 1;
-			WP_ForcePowerRegenerate( self, self->client->ps.forcePowerRegenAmount * regenMult );
 			if (!self->s.number && self->client->NPC_class == CLASS_PLAYER)
 			{
 				regenTime = Q_max(g_forceRegenTime->integer, 1);
 			}
 			else
 			{
-				regenTime = self->client->ps.forcePowerRegenRate;
+				regenTime = Q_max( self->client->ps.forcePowerRegenRate, 1 );
 			}
-			self->client->ps.forcePowerRegenDebounceTime = level.time + regenTime;
 			if ( self->client->ps.forceRageRecoveryTime >= level.time )
 			{//regen half as fast
-				self->client->ps.forcePowerRegenDebounceTime += regenTime;
+				regenTime *= 2;
 			}
+			//JKEnhanced 3G: count every tick that came due since the last frame. The debounce used to
+			//restart from "now", dropping the overshoot, so at 30 fps (33 ms frames) a 50 ms tick came
+			//every ~66 ms - Force regen depended on frame rate. Only catches up a few ticks (not
+			//after a long pause, e.g. a power-use debounce or a full bar).
+			const int late = level.time - self->client->ps.forcePowerRegenDebounceTime;
+			const qboolean onSchedule = (qboolean)( late < regenTime * 4 );
+			const int ticks = onSchedule ? 1 + late / regenTime : 1;
+			const int perTick = ( self->client->ps.forcePowerRegenAmount ? self->client->ps.forcePowerRegenAmount : 1 ) * regenMult;//(0 meant +1; Saber Defense 3 doubles it - the player is always 0)
+			WP_ForcePowerRegenerate( self, perTick * ticks );
+			self->client->ps.forcePowerRegenDebounceTime = onSchedule
+				? self->client->ps.forcePowerRegenDebounceTime + ticks * regenTime
+				: level.time + regenTime;
 		}
 	}
 }
@@ -15821,7 +18565,7 @@ void WP_InitForcePowers( gentity_t *ent )
 		else
 		{
 			ent->client->ps.forcePowersKnown = ( 1 << FP_HEAL )|( 1 << FP_LEVITATION )|( 1 << FP_SPEED )|( 1 << FP_PUSH )|( 1 << FP_PULL )|( 1 << FP_TELEPATHY )|( 1 << FP_GRIP )|( 1 << FP_LIGHTNING)|( 1 << FP_SABERTHROW)|( 1 << FP_SABER_DEFENSE )|( 1 << FP_SABER_OFFENSE )|( 1<< FP_RAGE )|( 1<< FP_DRAIN )|( 1<< FP_PROTECT )|( 1<< FP_ABSORB )|( 1<< FP_SEE )
-				|( 1 << FP_INSANITY )|( 1 << FP_STASIS );
+				|( 1 << FP_INSANITY )|( 1 << FP_STASIS )|( 1 << FP_REPULSE );//JKEnhanced 4B: Repulse known, level 0 until the story raises it
 			ent->client->ps.forcePowerLevel[FP_HEAL] = FORCE_LEVEL_2;
 			ent->client->ps.forcePowerLevel[FP_LEVITATION] = FORCE_LEVEL_2;
 			ent->client->ps.forcePowerLevel[FP_PUSH] = FORCE_LEVEL_1;

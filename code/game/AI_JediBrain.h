@@ -3,7 +3,7 @@
 The saber fighter's tactical layer: what a Jedi/Reborn is trying to do in a duel right now.
 The low-level block/evade/flip code in AI_Jedi.cpp is unchanged; this decides when to press,
 when to hang back, and when to back off and get their Force back, and AI_Jedi.cpp reads
-the answer (Jedi_TacticApply, the attack gate, the taunt gate). Stored in gNPC_t::duelRole.
+the answer (Jedi_TacticAggression / Jedi_TacticMove, the attack gate, the taunt gate). Stored in gNPC_t::duelRole.
 ===========================================================================
 */
 #pragma once
@@ -33,6 +33,9 @@ int			AI_JediBlockSkill( const gentity_t *npc );
 
 // the enemy is open: recovering from a swing, bounced, broken, knocked down, or guard-broken
 qboolean	AI_JediEnemyOpen( const gentity_t *npc );
+
+// how good a moment this is for a telegraphed heavy attack (vs g_heavyAttackThreshold)
+float		AI_JediBrain_HeavyAttackScore( gentity_t *npc );
 
 // an NPC landing a timed parry (the player has WP_InPerfectParryWindow): skill-based, with a
 // cooldown, decided once per frame so every check in one collision agrees

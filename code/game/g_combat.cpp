@@ -33,6 +33,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_vehicles.h"
 #include "Q3_Interface.h"
 #include "g_navigator.h"
+#include "g_force.h"
+#include "g_boss.h"
 
 #define TURN_OFF			0x00000100
 
@@ -2110,6 +2112,7 @@ void G_RemoveWeaponsWithLimbs( gentity_t *ent, gentity_t *limb, int limbAnim )
 	}
 }
 
+extern qboolean G_StandardHumanoid( gentity_t *self );
 static qboolean G_Dismember( gentity_t *ent, vec3_t point,
 				 const char *limbBone, const char *rotateBone, const char *limbName,
 				 const char *limbCapName, const char *stubCapName, const char *limbTagName, const char *stubTagName,
@@ -2291,23 +2294,52 @@ static qboolean G_Dismember( gentity_t *ent, vec3_t point,
 	limb->contents = CONTENTS_CORPSE|CONTENTS_BODY;
 	VectorSet( limb->mins, -3.0f, -3.0f, -6.0f );
 	VectorSet( limb->maxs, 3.0f, 3.0f, 6.0f );
-
-	//make sure it doesn't start in solid
-	gi.trace( &trace, limb->s.pos.trBase, limb->mins, limb->maxs, limb->s.pos.trBase, limb->s.number, limb->clipmask, (EG2_Collision)0, 0 );
-	if ( trace.startsolid )
+	//JKEnhanced: the top half of someone cut in two gets a box around the whole of it - traces (sabers,
+	//Force aim, Grip) only look at a model whose box they cross, and a 6x6x12 box at the waist missed
+	//nearly all of it. Corpse-only contents: people walk through it like a body, shots still hit it.
+	const qboolean bigTorso = (qboolean)( limbAnim == BOTH_DISMEMBER_TORSO1 && G_StandardHumanoid( ent ) );
+	for ( int sizeTry = bigTorso ? 0 : 1; sizeTry < 2; sizeTry++ )
 	{
-		limb->s.pos.trBase[2] -= limb->mins[2];
-		gi.trace( &trace, limb->s.pos.trBase, limb->mins, limb->maxs, limb->s.pos.trBase, limb->s.number, limb->clipmask, (EG2_Collision)0, 0 );
+		if ( sizeTry == 0 )
+		{
+			VectorSet( limb->mins, -20.0f, -20.0f, -6.0f );
+			VectorSet( limb->maxs, 20.0f, 20.0f, 20.0f );
+			limb->contents = CONTENTS_CORPSE;
+			limb->clipmask = MASK_SOLID;//falls through bodies (it would start inside the one it came off)
+		}
+		else
+		{//doesn't fit there: the small box, as before
+			VectorSet( limb->mins, -3.0f, -3.0f, -6.0f );
+			VectorSet( limb->maxs, 3.0f, 3.0f, 6.0f );
+			limb->contents = CONTENTS_CORPSE|CONTENTS_BODY;
+			limb->clipmask = MASK_SOLID|CONTENTS_BODY|CONTENTS_CORPSE;
+		}
+
+		//(the big box only has to fit the level)
+		const int fitMask = limb->clipmask;
+		//make sure it doesn't start in solid
+		gi.trace( &trace, limb->s.pos.trBase, limb->mins, limb->maxs, limb->s.pos.trBase, limb->s.number, fitMask, (EG2_Collision)0, 0 );
 		if ( trace.startsolid )
 		{
-			limb->s.pos.trBase[2] += limb->mins[2];
-			gi.trace( &trace, limb->s.pos.trBase, limb->mins, limb->maxs, limb->s.pos.trBase, limb->s.number, limb->clipmask, (EG2_Collision)0, 0 );
+			limb->s.pos.trBase[2] -= limb->mins[2];
+			gi.trace( &trace, limb->s.pos.trBase, limb->mins, limb->maxs, limb->s.pos.trBase, limb->s.number, fitMask, (EG2_Collision)0, 0 );
 			if ( trace.startsolid )
-			{//stuck?  don't remove
-				G_FreeEntity( limb );
-				return qfalse;
+			{
+				limb->s.pos.trBase[2] += limb->mins[2];
+				gi.trace( &trace, limb->s.pos.trBase, limb->mins, limb->maxs, limb->s.pos.trBase, limb->s.number, fitMask, (EG2_Collision)0, 0 );
+				if ( trace.startsolid )
+				{
+					if ( sizeTry == 0 )
+					{
+						continue;
+					}
+					//stuck?  don't remove
+					G_FreeEntity( limb );
+					return qfalse;
+				}
 			}
 		}
+		break;
 	}
 
 	//move it
@@ -2473,7 +2505,6 @@ qboolean G_GetRootSurfNameWithVariant( gentity_t *ent, const char *rootSurfName,
 	return qfalse;
 }
 
-extern qboolean G_StandardHumanoid( gentity_t *self );
 qboolean G_DoDismemberment( gentity_t *self, vec3_t point, int mod, int damage, int hitLoc, qboolean force = qfalse )
 {
 //extern cvar_t	*g_iscensored;
@@ -2648,18 +2679,177 @@ qboolean G_DoDismemberment( gentity_t *self, vec3_t point, int mod, int damage, 
 				break;
 			}
 			if ( doDismemberment )
-		{//whoever's watching won't forget this
-			AI_NerveWitness( self, NE_ALLY_DISMEMBERED, NULL );
-		}
-		if ( doDismemberment )
 			{
-				return G_Dismember( self, point, limbBone, rotateBone, limbName,
+				//alive, or this is the killing blow: player_die's own dismember runs before it sets PM_DEAD;
+				//a saber cut right after it lands within a second of the death stamp (s.time, as CorpsePhysics uses it)
+				const qboolean wasAlive = (qboolean)( !self->client || self->client->ps.pm_type != PM_DEAD
+					|| level.time - self->s.time < 1000 );
+				const qboolean cut = G_Dismember( self, point, limbBone, rotateBone, limbName,
 					limbCapName, stubCapName, limbTagName, stubTagName,
 					anim, limbRollBase, limbPitchBase, damage, hitLoc );
+				if ( cut && wasAlive )
+				{//whoever's watching won't forget this (only when it came off, and not for chopping up a corpse)
+					AI_NerveWitness( self, NE_ALLY_DISMEMBERED, NULL );
+				}
+				return cut;
 			}
 		}
 	}
 	return qfalse;
+}
+
+/*
+G_TorsoLimbCut (JKEnhanced)
+
+The top half of someone cut in two is a limb entity, and G_DoDismemberment only works on clients, so
+nothing could come off it. A saber attack that hits its head or an arm (WP_SaberDamageEffects, by the
+surface it hit) cuts that off as its own limb - the same surfaces and caps as G_DoDismemberment.
+*/
+qboolean G_TorsoLimbCut( gentity_t *limb, const char *surfName, const vec3_t point, const vec3_t dir )
+{
+	if ( !limb || !limb->inuse || limb->client || limb->count != BOTH_DISMEMBER_TORSO1
+		|| Q_stricmp( "limb", limb->classname ) || !surfName || !limb->ghoul2.size()
+		|| !( g_dismemberment->integer || g_saberRealisticCombat->integer > 1 ) )
+	{
+		return qfalse;
+	}
+	const char	*part, *rotateBone;
+	int			anim, weaponHand = -1;
+	float		rollBase = 0, pitchBase = 0;
+	if ( !Q_stricmpn( surfName, "head", 4 ) )
+	{
+		if ( g_dismemberment->integer <= 2 && g_saberRealisticCombat->integer <= 1 )
+		{
+			return qfalse;
+		}
+		part = "head";	rotateBone = "cranium";	anim = BOTH_DISMEMBER_HEAD1;
+		rollBase = pitchBase = -1;
+	}
+	else if ( !Q_stricmpn( surfName, "r_arm", 5 ) || !Q_stricmpn( surfName, "r_hand", 6 ) )
+	{
+		part = "r_arm";	rotateBone = "rradius";	anim = BOTH_DISMEMBER_RARM;	weaponHand = 0;
+	}
+	else if ( !Q_stricmpn( surfName, "l_arm", 5 ) || !Q_stricmpn( surfName, "l_hand", 6 ) )
+	{
+		part = "l_arm";	rotateBone = "lradius";	anim = BOTH_DISMEMBER_LARM;	weaponHand = 1;
+	}
+	else
+	{
+		return qfalse;
+	}
+
+	char limbName[MAX_QPATH], stubName[MAX_QPATH], limbCapName[MAX_QPATH], stubCapName[MAX_QPATH];
+	if ( anim == BOTH_DISMEMBER_HEAD1 )
+	{
+		Q_strncpyz( limbName, "head", sizeof( limbName ) );
+		Q_strncpyz( limbCapName, "head_cap_torso", sizeof( limbCapName ) );
+		Q_strncpyz( stubCapName, "torso_cap_head", sizeof( stubCapName ) );
+		if ( gi.G2API_GetSurfaceRenderStatus( &limb->ghoul2[0], limbName ) )
+		{//already off
+			return qfalse;
+		}
+	}
+	else
+	{
+		if ( !G_GetRootSurfNameWithVariant( limb, part, limbName, sizeof( limbName ) ) )
+		{//already off (no variant of it is on)
+			return qfalse;
+		}
+		G_GetRootSurfNameWithVariant( limb, "torso", stubName, sizeof( stubName ) );
+		Com_sprintf( limbCapName, sizeof( limbCapName ), "%s_cap_torso", limbName );
+		Com_sprintf( stubCapName, sizeof( stubCapName ), "%s_cap_%s", stubName, part );
+	}
+
+	//where it joins the torso piece now
+	vec3_t org;
+	VectorCopy( point, org );
+	const int jointBolt = gi.G2API_AddBolt( &limb->ghoul2[0], rotateBone, qfalse );
+	if ( jointBolt != -1 )
+	{
+		mdxaBone_t	boltMatrix;
+		gi.G2API_GetBoltMatrix( limb->ghoul2, 0, jointBolt, &boltMatrix, limb->currentAngles, limb->currentOrigin,
+			level.time, NULL, limb->s.modelScale );
+		gi.G2API_GiveMeVectorFromMatrix( boltMatrix, ORIGIN, org );
+	}
+	static const vec3_t subMins = { -3.0f, -3.0f, -6.0f }, subMaxs = { 3.0f, 3.0f, 6.0f };
+	trace_t trace;
+	gi.trace( &trace, org, subMins, subMaxs, org, limb->s.number, MASK_SOLID, (EG2_Collision)0, 0 );
+	if ( trace.startsolid || trace.allsolid )
+	{//the joint is in a wall / the floor: start it on the torso piece instead
+		VectorCopy( limb->currentOrigin, org );
+		org[2] += 8.0f;
+		gi.trace( &trace, org, subMins, subMaxs, org, limb->s.number, MASK_SOLID, (EG2_Collision)0, 0 );
+		if ( trace.startsolid || trace.allsolid )
+		{
+			return qfalse;
+		}
+	}
+
+	gentity_t *sub = G_Spawn();
+	gi.G2API_CopyGhoul2Instance( limb->ghoul2, sub->ghoul2, 0 );
+	sub->playerModel = 0;
+	sub->craniumBone = limb->craniumBone;
+	sub->cervicalBone = limb->cervicalBone;
+	sub->thoracicBone = limb->thoracicBone;
+	sub->upperLumbarBone = limb->upperLumbarBone;
+	sub->lowerLumbarBone = limb->lowerLumbarBone;
+	sub->hipsBone = limb->hipsBone;
+	sub->rootBone = limb->rootBone;
+	gi.G2API_SetRootSurface( sub->ghoul2, 0, limbName );
+	gi.G2API_SetNewOrigin( &sub->ghoul2[0], gi.G2API_AddBolt( &sub->ghoul2[0], rotateBone, qfalse ) );
+	gi.G2API_SetSurfaceOnOff( &sub->ghoul2[0], limbCapName, 0 );
+	//off the torso piece (here, not CG_Limb: that works on a client owner)
+	gi.G2API_SetSurfaceOnOff( &limb->ghoul2[0], limbName, 0x00000100 );//G2SURFACEFLAG_NODESCENDANTS
+	gi.G2API_SetSurfaceOnOff( &limb->ghoul2[0], stubCapName, 0 );
+	if ( weaponHand >= 0 && limb->weaponModel[weaponHand] > 0 && limb->weaponModel[weaponHand] < limb->ghoul2.size() )
+	{//the weapon was in that hand
+		gi.G2API_RemoveGhoul2Model( limb->ghoul2, limb->weaponModel[weaponHand] );
+		limb->weaponModel[weaponHand] = -1;
+	}
+
+	sub->classname = "limb";
+	sub->owner = limb->owner;
+	sub->enemy = limb->enemy;
+	sub->count = anim;
+	sub->s.radius = 60;
+	sub->svFlags = SVF_USE_CURRENT_ORIGIN;
+	sub->clipmask = MASK_SOLID|CONTENTS_BODY|CONTENTS_CORPSE;
+	sub->contents = CONTENTS_CORPSE|CONTENTS_BODY;
+	VectorCopy( subMins, sub->mins );
+	VectorCopy( subMaxs, sub->maxs );
+	sub->e_clThinkFunc = clThinkF_NULL;
+	sub->e_ThinkFunc = thinkF_LimbThink;
+	sub->nextthink = level.time + FRAMETIME;
+	G_SetOrigin( sub, org );
+	VectorCopy( org, sub->s.pos.trBase );
+	sub->s.eType = ET_THINKER;
+	sub->physicsBounce = 0.2f;
+	sub->s.eFlags |= EF_BOUNCE_SHRAPNEL;
+	sub->s.pos.trType = TR_GRAVITY;
+	sub->s.pos.trTime = level.time;
+	vec3_t vel;
+	EvaluateTrajectoryDelta( &limb->s.pos, level.time, vel );
+	if ( limb->s.pos.trType == TR_STATIONARY || limb->s.pos.trType == TR_INTERPOLATE )
+	{
+		VectorClear( vel );
+	}
+	VectorMA( vel, 150.0f, dir, sub->s.pos.trDelta );
+	sub->s.pos.trDelta[2] += 60.0f;
+	VectorSet( sub->s.angles2, pitchBase, 0, rollBase );
+	VectorCopy( limb->currentAngles, sub->s.apos.trBase );
+	sub->s.apos.trTime = level.time;
+	sub->s.apos.trType = TR_LINEAR;
+	VectorClear( sub->s.apos.trDelta );
+	sub->s.apos.trDelta[0] = Q_irand( -200, 200 );
+	sub->s.apos.trDelta[1] = Q_irand( -400, 400 );
+	VectorCopy( limb->s.modelScale, sub->s.modelScale );
+	VectorCopy( limb->startRGBA, sub->startRGBA );
+	gi.linkentity( sub );
+	if ( limb->owner )
+	{
+		AI_NerveWitness( limb->owner, NE_ALLY_DISMEMBERED, NULL );
+	}
+	return qtrue;
 }
 
 static int G_CheckSpecialDeathAnim( gentity_t *self, vec3_t point, int damage, int mod, int hitLoc )
@@ -5097,16 +5287,18 @@ int CheckArmor (gentity_t *ent, int damage, int dflags, int mod)
 		// armor
 		count = client->ps.stats[STAT_ARMOR];
 
-		// Three-tier absorption: full shields absorb all damage, mid-tier absorbs 75%, low absorbs 50%
+		// Three-tier absorption: full shields absorb all damage, mid-tier absorbs 75%, low absorbs 50%.
+		// Tiers scale with the shield cap (200, or 100 on Jedi Master): above 5/8 and above 3/8 of it.
+		const int maxArmor = client->ps.stats[STAT_MAX_ARMOR] > 0 ? client->ps.stats[STAT_MAX_ARMOR] : 200;
 		if ( !ent->s.number && client->NPC_class == CLASS_ATST )
 		{//player in ATST... armor takes *all* the damage regardless of shield level
 			save = damage;
 		}
-		else if ( count > 125 )
+		else if ( count > maxArmor * 5 / 8 )
 		{
 			save = damage;
 		}
-		else if ( count > 75 )
+		else if ( count > maxArmor * 3 / 8 )
 		{
 			save = (int)ceil( (float)damage * 0.75f );
 		}
@@ -5139,6 +5331,7 @@ int CheckArmor (gentity_t *ent, int damage, int dflags, int mod)
 extern void NPC_SetPainEvent( gentity_t *self );
 extern qboolean Boba_StopKnockdown( gentity_t *self, gentity_t *pusher, const vec3_t pushDir, qboolean forceKnockdown = qfalse );
 extern qboolean Jedi_StopKnockdown( gentity_t *self, gentity_t *pusher, const vec3_t pushDir );
+extern cvar_t *g_debugForce;
 void G_Knockdown( gentity_t *self, gentity_t *attacker, const vec3_t pushDir, float strength, qboolean breakSaberLock )
 {
 	if ( !self || !self->client || !attacker || !attacker->client )
@@ -5165,6 +5358,15 @@ void G_Knockdown( gentity_t *self, gentity_t *attacker, const vec3_t pushDir, fl
 	}
 	else if ( Rosh_BeingHealed( self ) )
 	{
+		return;
+	}
+	else if ( self->health > 0 && G_SpeedLevel( self ) >= FORCE_LEVEL_2 )
+	{//JKEnhanced 4B.6: Speed 2+ (Flow) keeps its feet - shoved, not knocked down
+		if ( g_debugForce && g_debugForce->integer )
+		{
+			gi.Printf( "  SPEED %d (%s) Flow shrugged off a knockdown from %d\n", self->s.number,
+				self->NPC_type ? self->NPC_type : "player", attacker->s.number );
+		}
 		return;
 	}
 
@@ -5373,7 +5575,8 @@ void G_ApplyKnockback( gentity_t *targ, vec3_t newDir, float knockback )
 
 	// set the timer so that the other client can't cancel
 	// out the movement immediately
-	if ( targ->client && !targ->client->ps.pm_time )
+	if ( targ->client && !targ->client->ps.pm_time
+		&& G_SpeedLevel( targ ) < FORCE_LEVEL_2 )//JKEnhanced 4B.6: Speed 2+ (Flow) keeps control - shoved, not stunned
 	{
 		int		t;
 
@@ -5751,6 +5954,481 @@ static qboolean G_TryNonLethal( gentity_t *targ, gentity_t *attacker, int mod, i
 	return qtrue;
 }
 
+/*
+-------------------------
+G_BossStageClamp (JKEnhanced)
+
+Boss guard stages. A boss's health is split into N stages (the .npc "guardStages" key, else
+g_bossGuardStages for bosses, else 1 = off; floors at
+max_health*(N-1)/N ... max_health/N, then 0). While their guard is up, nothing takes them below
+the current stage's floor - the excess hit goes into their guard instead, so pressure still counts.
+Breaking their guard opens the stage: during the break window they can lose at most this one stage
+(down to the floor, not past it). Reaching a floor starts a stage transition: a short invulnerable
+recovery (g_bossStageRecover), guard refilled and 15% stronger, a Force push to clear space, an
+angry bark, and the duel brain backs off to recover before pressing again. The last stage's floor
+is 0. The stage is worked out from health, so nothing extra is saved.
+Bosses: G_IsSaberBoss( ent, qfalse ). Script kills (DAMAGE_NO_PROTECTION) and the world
+(falling, crushing, lava, trigger_hurt...) are not clamped.
+-------------------------
+*/
+extern qboolean	G_IsSaberBoss( const gentity_t *ent, qboolean includeElites );
+extern void		G_DamageGuard( gentity_t *victim, gentity_t *attacker, int amount );
+
+extern cvar_t	*g_bossGuardStages;
+extern cvar_t	*g_bossStageRecover;
+extern cvar_t	*d_saberCombat;
+
+/*
+G_BossStageBurst (JKEnhanced)
+
+The fallback for a boss's stage transition when the real Repulse can't cast (G_BossStageRepulseThink:
+still knocked down, no Repulse level...): just its effect, no Force-power use - the two-handed
+channel pose, the repulse sound, a push blur, and every enemy within g_bossBurstRadius (with a clear
+line from the boss) thrown away and knocked down.
+*/
+extern cvar_t *g_bossBurstRadius;
+static void G_BossStageBurst( gentity_t *boss )
+{
+	const float radius = g_bossBurstRadius->value;
+	NPC_SetAnim( boss, SETANIM_TORSO, BOTH_FORCE_2HANDEDLIGHTNING_HOLD, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART );
+	boss->client->ps.saberMove = boss->client->ps.saberBounceMove = LS_READY;
+	boss->client->ps.weaponTime = 650;
+	G_Sound( boss, G_SoundIndex( "sound/weapons/force/repulse.wav" ) );
+	G_PlayEffect( "force/pushblur", boss->currentOrigin );
+
+	gentity_t	*list[MAX_GENTITIES];
+	vec3_t		mins, maxs;
+	for ( int k = 0; k < 3; k++ )
+	{
+		mins[k] = boss->currentOrigin[k] - radius;
+		maxs[k] = boss->currentOrigin[k] + radius;
+	}
+	const int n = gi.EntitiesInBox( mins, maxs, list, MAX_GENTITIES );
+	for ( int e = 0; e < n; e++ )
+	{
+		gentity_t *ent = list[e];
+		if ( !ent || ent == boss || !ent->inuse || !ent->client || ent->health <= 0
+			|| ent->client->playerTeam == boss->client->playerTeam )
+		{
+			continue;
+		}
+		vec3_t dir;
+		VectorSubtract( ent->currentOrigin, boss->currentOrigin, dir );
+		if ( VectorLength( dir ) > radius )
+		{
+			continue;
+		}
+		trace_t tr;
+		gi.trace( &tr, boss->client->renderInfo.eyePoint, vec3_origin, vec3_origin, ent->currentOrigin, boss->s.number, MASK_FORCE_PUSH, (EG2_Collision)0, 0 );
+		if ( tr.fraction < 1.0f && tr.entityNum != ent->s.number )
+		{//no clear line
+			continue;
+		}
+		dir[2] = 0;
+		VectorNormalize( dir );
+		dir[2] = 0.35f;	//a little lift
+		G_Throw( ent, dir, 350 );
+		G_Knockdown( ent, boss, dir, 350, qtrue );
+	}
+}
+
+static int G_BossGuardStages( const gentity_t *ent )
+{
+	if ( ent->NPC->guardStages > 0 )
+	{//set by the .npc
+		return ent->NPC->guardStages;
+	}
+	return ( g_bossGuardStages && G_IsSaberBoss( ent, qfalse ) ) ? g_bossGuardStages->integer : 1;
+}
+
+/*
+G_BossHealthCeiling (JKEnhanced)
+
+The most health a staged boss can heal back to (Drain, Heal): the top of the stage they're in, so a
+lost stage stays lost. The stage comes from health, so this is read before the heal is added.
+Anyone without stages: no limit (Q3_INFINITE).
+*/
+int G_BossHealthCeiling( const gentity_t *ent )
+{
+	if ( !ent || !ent->NPC || !ent->client || ent->max_health <= 0 || ent->NPC->guardMax <= 0 )
+	{
+		return Q3_INFINITE;
+	}
+	const int stages = G_BossGuardStages( ent );
+	if ( stages <= 1 )
+	{
+		return Q3_INFINITE;
+	}
+	int ceiling = Q3_INFINITE;
+	for ( int k = 1; k < stages; k++ )
+	{
+		const int f = ent->max_health * ( stages - k ) / stages;
+		if ( ent->health > f )
+		{
+			break;
+		}
+		ceiling = f;
+	}
+	return ceiling;
+}
+
+/*
+G_BossStageFloor (JKEnhanced)
+
+The floor of the stage a staged boss is in (0 = last stage, or no stages). Used to keep self-inflicted
+health costs (Rage) from skipping stages.
+*/
+int G_BossStageFloor( const gentity_t *ent )
+{
+	if ( !ent || !ent->NPC || !ent->client || ent->max_health <= 0 || ent->NPC->guardMax <= 0 )
+	{
+		return 0;
+	}
+	const int stages = G_BossGuardStages( ent );
+	for ( int k = 1; k < stages; k++ )
+	{
+		const int f = ent->max_health * ( stages - k ) / stages;
+		if ( ent->health > f )
+		{
+			return f;
+		}
+	}
+	return 0;
+}
+
+extern qboolean G_NPCRepulse( gentity_t *npc, int chargeMs );
+
+/*
+G_BossStageEvent (JKEnhanced 4B.9)
+
+A staged boss just lost stage N: fire the spawner's stageNtarget (stage1target / 2 / 3). Runs from
+G_BossStageRepulseThink, a think after the break, not mid-G_Damage. The last stage has no event:
+death fires NPC_target as usual. Not saved: a break pending across a save just doesn't fire.
+*/
+static int s_bossStageLost[MAX_GENTITIES];
+
+static void G_BossStageEvent( gentity_t *boss )
+{
+	const int stage = s_bossStageLost[boss->s.number];
+	s_bossStageLost[boss->s.number] = 0;
+	if ( stage <= 0 )
+	{
+		return;
+	}
+	const char *target = stage == 1 ? boss->stage1target : stage == 2 ? boss->stage2target : stage == 3 ? boss->stage3target : NULL;
+	if ( d_saberCombat->integer || g_debugDamage->integer )
+	{
+		gi.Printf( S_COLOR_RED"%s: STAGE %d event: %s\n", boss->NPC_type, stage,
+			( target && target[0] ) ? va( "firing '%s'", target ) : "no target" );
+	}
+	if ( target && target[0] )
+	{
+		G_UseTargets2( boss, boss, target );
+	}
+}
+
+//the boss bar (cgame) and ICARUS read the stage from here: 1 = first, 0 = no stages
+int G_BossStage( const gentity_t *ent )
+{
+	if ( !ent || !ent->NPC || !ent->client || ent->max_health <= 0 || ent->NPC->guardMax <= 0 )
+	{
+		return 0;
+	}
+	const int stages = G_BossGuardStages( ent );
+	if ( stages <= 1 )
+	{
+		return 0;
+	}
+	for ( int k = 1; k < stages; k++ )
+	{
+		if ( ent->health > ent->max_health * ( stages - k ) / stages )
+		{
+			return k;
+		}
+	}
+	return stages;
+}
+
+/*
+G_BossBarInfo (JKEnhanced 4B.9)
+
+For the cgame boss bar: the boss to show this frame, or qfalse. Opted in by the spawner's "bossbar"
+key / SET_BOSSBAR, or any saber boss with g_bossBarAll 1 (testing). It has to be alive, not taken
+out, near the player and fighting them (their enemy is the player, or the player hit them in the
+last 10 s). The one already shown is kept while it still qualifies; otherwise the nearest.
+*/
+extern cvar_t	*g_bossBarAll;
+extern qboolean	G_IsNeutralized( const gentity_t *ent );
+static int		s_bossBarEnt = -1;
+static int		s_bossHitByPlayer[MAX_GENTITIES];
+
+static qboolean G_BossBarEligible( gentity_t *ent, gentity_t *player )
+{
+	if ( !ent || !ent->inuse || !ent->NPC || !ent->client || ent->health <= 0 || G_IsNeutralized( ent ) )
+	{
+		return qfalse;
+	}
+	const qboolean named = (qboolean)( ent->bossbar && ent->bossbar[0] );
+	if ( !named && !( g_bossBarAll && g_bossBarAll->integer && G_IsSaberBoss( ent, qfalse ) ) )
+	{
+		return qfalse;
+	}
+	if ( DistanceSquared( ent->currentOrigin, player->currentOrigin ) > 2048.0f * 2048.0f
+		|| !gi.inPVS( ent->currentOrigin, player->currentOrigin ) )
+	{
+		return qfalse;
+	}
+	const int hit = s_bossHitByPlayer[ent->s.number];
+	return (qboolean)( ent->enemy == player || ( hit && hit <= level.time && level.time - hit < 10000 ) );
+}
+
+qboolean G_BossBarInfo( bossBarInfo_t *out )
+{
+	gentity_t *player = &g_entities[0];
+	if ( !out || !player->inuse || !player->client )
+	{
+		return qfalse;
+	}
+	gentity_t *boss = NULL;
+	if ( s_bossBarEnt >= 0 && G_BossBarEligible( &g_entities[s_bossBarEnt], player ) )
+	{
+		boss = &g_entities[s_bossBarEnt];
+	}
+	else
+	{
+		float best = 0;
+		for ( int i = MAX_CLIENTS; i < globals.num_entities; i++ )
+		{
+			gentity_t *ent = &g_entities[i];
+			if ( !G_BossBarEligible( ent, player ) )
+			{
+				continue;
+			}
+			const float d = DistanceSquared( ent->currentOrigin, player->currentOrigin );
+			if ( !boss || d < best )
+			{
+				boss = ent;
+				best = d;
+			}
+		}
+	}
+	if ( !boss )
+	{
+		s_bossBarEnt = -1;
+		return qfalse;
+	}
+	s_bossBarEnt = boss->s.number;
+	out->entNum = boss->s.number;
+	Q_strncpyz( out->name, ( boss->bossbar && boss->bossbar[0] ) ? boss->bossbar
+		: boss->NPC_type, sizeof( out->name ) );
+	out->health = boss->health;
+	out->maxHealth = Q_max( 1, boss->max_health );
+	out->stages = ( boss->NPC->guardMax > 0 ) ? Q_max( 1, G_BossGuardStages( boss ) ) : 1;
+	out->guard = boss->NPC->guard;
+	out->guardMax = boss->NPC->guardMax;
+	if ( WP_SaberRules() && boss->client && boss->client->ps.forcePowerMax > 0 )
+	{//saber rules: Force is the guard
+		out->guard = boss->client->ps.forcePower;
+		out->guardMax = boss->client->ps.forcePowerMax;
+	}
+	out->guardBroken = (qboolean)( boss->NPC->guardBreakTime > level.time );
+	out->recovering = (qboolean)!TIMER_Done( boss, "bossStageRecover" );
+	return qtrue;
+}
+
+//G_Damage: the player hurt this one (the bar shows for a boss you're fighting even if it's busy with someone else)
+void G_BossBarNoteHit( const gentity_t *targ, const gentity_t *attacker )
+{
+	if ( targ && attacker && attacker->s.number == 0 && targ->s.number >= MAX_CLIENTS && targ->s.number < MAX_GENTITIES )
+	{
+		s_bossHitByPlayer[targ->s.number] = level.time;
+	}
+}
+
+/*
+G_BossStageSize (JKEnhanced saber rules)
+
+Health in one stage of a staged boss, 0 for anyone without stages. A saber wound takes a third of
+it; a kill-grade cut takes what is left of the stage (G_BossStageClamp holds them at the floor).
+*/
+int G_BossStageSize( const gentity_t *ent )
+{
+	if ( !ent || !ent->NPC || !ent->client || ent->max_health <= 0 || ent->NPC->guardMax <= 0 )
+	{
+		return 0;
+	}
+	const int stages = G_BossGuardStages( ent );
+	return stages > 1 ? Q_max( 1, ent->max_health / stages ) : 0;
+}
+
+static int G_BossStageClamp( gentity_t *targ, gentity_t *attacker, int take, int mod, int dflags )
+{
+	if ( take <= 0 || !targ || !targ->NPC || !targ->client || targ->health <= 0 || targ->max_health <= 0
+		|| targ->NPC->guardMax <= 0 || G_BossGuardStages( targ ) <= 1 )
+	{//no guard means no way to break a stage
+		return take;
+	}
+	if ( (dflags&DAMAGE_NO_PROTECTION)
+		|| mod == MOD_FALLING || mod == MOD_CRUSH || mod == MOD_TRIGGER_HURT
+		|| mod == MOD_LAVA || mod == MOD_SLIME || mod == MOD_WATER )
+	{
+		return take;
+	}
+	if ( !TIMER_Done( targ, "bossStageRecover" ) )
+	{//mid-transition: untouchable
+		return 0;
+	}
+	const int stages = G_BossGuardStages( targ );
+	const int maxH = targ->max_health;
+	//the current stage's floor: the highest floor still below their health
+	int floor = 0;
+	int stageNum = 0;	//the stage they are in (1 = first)
+	for ( int k = 1; k < stages; k++ )
+	{
+		const int f = maxH * ( stages - k ) / stages;
+		if ( targ->health > f )
+		{
+			floor = f;
+			stageNum = k;
+			break;
+		}
+	}
+	if ( floor <= 0 )
+	{//last stage: no floor
+		return take;
+	}
+	//(saber rules: a stage goes when the damage gets there - cuts, not a guard break, take stages)
+	const qboolean broken = (qboolean)( WP_SaberRules() || targ->NPC->guardBreakTime > level.time );
+	if ( !broken )
+	{//guard up: can't go below the floor; the rest of the hit wears the guard down instead
+		const int room = targ->health - ( floor + 1 );
+		if ( take > room )
+		{
+			const int excess = take - Q_max( 0, room );
+			take = Q_max( 0, room );
+			if ( attacker && attacker->client && targ->NPC->guardMax > 0 )
+			{
+				G_DamageGuard( targ, attacker, Q_max( 1, excess / 2 ) );
+			}
+			if ( !( room <= 0 && targ->NPC->guardBreakTime > level.time ) )
+			{
+				return take;
+			}
+			//JKEnhanced: already at the floor and this hit broke the guard - that IS the stage break.
+			//(Before, you then had ~1 s to land another hit before a boss's guard refilled in full;
+			//Tavion sat at 134 health through a dozen clamped 100-damage hits.)
+			take = excess;
+		}
+		else
+		{
+			return take;
+		}
+	}
+	//guard broken: they can lose this stage, but not more
+	if ( targ->health - take > floor )
+	{
+		return take;
+	}
+	take = targ->health - floor;
+	//stage transition
+	TIMER_Set( targ, "bossStageRecover", g_bossStageRecover->integer );
+	targ->NPC->guardBreakTime = 0;
+	if ( targ->NPC->guardMax > 0 )
+	{
+		targ->NPC->guardMax = targ->NPC->guardMax * 115 / 100;
+		targ->NPC->guard = targ->NPC->guardMax;
+	}
+	if ( WP_SaberRules() && targ->client->ps.forcePowerMax > 0 )
+	{//saber rules: Force is the guard, so the next stage starts with a full one
+		targ->client->ps.forcePower = targ->client->ps.forcePowerMax;
+	}
+	else if ( targ->client->ps.forcePowerMax > 0 && targ->client->ps.forcePower < targ->client->ps.forcePowerMax / 2 )
+	{//enough Force to fight the next stage
+		targ->client->ps.forcePower = targ->client->ps.forcePowerMax / 2;
+	}
+	targ->client->ps.saberBlocked = BLOCKED_NONE;
+	targ->client->ps.saberBounceMove = LS_NONE;
+	G_AddVoiceEvent( targ, Q_irand( EV_ANGER1, EV_ANGER3 ), 1000 );
+	//the break itself: shockwave + shake now, the Repulse on their next think (G_BossStageRepulseThink).
+	//Casting it here, mid-G_Damage, let this hit's pain / lightning reaction override the anim.
+	G_PlayEffect( "scepter/slam", targ->currentOrigin );
+	{
+		extern void CGCam_Shake( float intensity, int duration );
+		const float d = Distance( targ->currentOrigin, g_entities[0].currentOrigin );
+		if ( d < 1024.0f )
+		{
+			CGCam_Shake( 3.0f * ( 1.0f - d / 1024.0f ), 600 );
+		}
+	}
+	TIMER_Set( targ, "bossStageRepulse", 50 );
+	s_bossStageLost[targ->s.number] = stageNum;	//its stageNtarget fires with the Repulse (G_BossStageRepulseThink)
+	targ->NPC->duelRole = JT_RECOVER;
+	TIMER_Set( targ, "jediTactic", g_bossStageRecover->integer + 1000 );
+	if ( d_saberCombat->integer || g_debugDamage->integer )
+	{
+		gi.Printf( S_COLOR_RED"%s: STAGE CLEARED - down to %d / %d health, %d ms recovery\n", targ->NPC_type, floor, maxH, g_bossStageRecover->integer );
+	}
+	return take;
+}
+
+/*
+G_BossStageRepulseThink (JKEnhanced)
+
+Called at the top of NPC_Think. Fires the Repulse queued by a stage break: full charge, whole-body
+anim, pain held off for the cast so the next hit can't cut it. Falls back to G_BossStageBurst
+(same throw, no power) when Repulse can't cast, e.g. still knocked down.
+*/
+void G_BossStageRepulseThink( gentity_t *self )
+{
+	if ( !self || !self->NPC || !self->client || self->health <= 0
+		|| !TIMER_Done2( self, "bossStageRepulse", qtrue ) )
+	{
+		return;
+	}
+	playerState_t *ps = &self->client->ps;
+	extern qboolean PM_LockedAnim( int anim );
+	extern qboolean WP_ForcePowerUsable( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
+	//the break leaves them in a guard-break stagger / pain anim, which blocks Force powers
+	//(WP_ForcePowerUsable: PM_LockedAnim): the stage transition overrides it
+	const qboolean downed = PM_InKnockDown( ps );
+	if ( !downed )
+	{
+		ps->torsoAnimTimer = ps->legsAnimTimer = 0;
+		ps->saberMove = ps->saberBounceMove = LS_READY;
+		ps->saberBlocked = BLOCKED_NONE;
+		ps->saberLockTime = 0;
+		ps->leanofs = 0;
+		ps->weaponTime = 0;
+	}
+	ps->forcePowerDebounce[FP_REPULSE] = 0;	//a recent AI Repulse mustn't block the stage one
+	const char *why = downed ? "knocked down"
+		: ps->forcePowerLevel[FP_REPULSE] <= FORCE_LEVEL_0 ? "no Repulse level"
+		: !( ps->forcePowersKnown & ( 1 << FP_REPULSE ) ) ? "Repulse not known"
+		: ( PM_LockedAnim( ps->torsoAnim ) && ps->torsoAnimTimer ) ? "locked anim"
+		: !WP_ForcePowerUsable( self, FP_REPULSE, 0 ) ? "WP_ForcePowerUsable refused"
+		: "ForceRepulseThrow bailed";
+	const qboolean repulsed = G_NPCRepulse( self, 2600 );
+	if ( !repulsed && !TIMER_Done( self, "bossStageRecover" ) )
+	{//e.g. still getting up: try again next think while the transition lasts
+		TIMER_Set( self, "bossStageRepulse", 0 );
+		return;
+	}
+	if ( repulsed )
+	{
+		NPC_SetAnim( self, SETANIM_BOTH, BOTH_FORCE_2HANDEDLIGHTNING_HOLD, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD|SETANIM_FLAG_RESTART );
+	}
+	else
+	{
+		G_BossStageBurst( self );
+	}
+	self->painDebounceTime = level.time + 1000;
+	if ( d_saberCombat->integer || g_debugDamage->integer )
+	{
+		gi.Printf( S_COLOR_RED"%s: stage Repulse - %s%s\n", self->NPC_type, repulsed ? "cast" : "fallback push: ", repulsed ? "" : why );
+	}
+	G_BossStageEvent( self );
+}
+
 static void G_UndyingThreshold( gentity_t *targ, int dflags )
 {
 	if ( targ->health >= 1 )
@@ -5775,6 +6453,118 @@ static void G_UndyingThreshold( gentity_t *targ, int dflags )
 		return;
 	}
 	G_ActivateBehavior( targ, BSET_DEATH );
+}
+
+/*
+JKEnhanced 4B.3: L3 Protect (the toggle) sometimes dodges a ranged shot outright - force.cfg
+protect.dodgeChance / dodgeCost / dodgeCooldown. Saber hits are left to the guard.
+Only when you're free to move: on the ground, not knocked down, not mid-swing.
+*/
+extern cvar_t *g_debugForce;
+extern qboolean PM_SaberInAttack( int move );
+extern void WP_ForcePowerDrain( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
+/*
+JKEnhanced 4B.6: Speed 3 (Focus) slips the first saber hit of each cast (force.cfg speed.dodges) -
+the same dodge anims as Protect's. Not out of a knockdown / lock / their own swing, and not a finisher
+on a downed or locked-out victim (those land).
+*/
+static qboolean G_SpeedReflexDodge( gentity_t *targ, gentity_t *attacker, int mod )
+{
+	static int	s_slipUntil[MAX_GENTITIES];	// the rest of that swing slides off too
+	if ( mod == MOD_SABER && s_slipUntil[targ->s.number] > level.time && s_slipUntil[targ->s.number] <= level.time + 400 )
+	{
+		return qtrue;
+	}
+	if ( mod != MOD_SABER || !targ->client || targ->health <= 0 || G_SpeedLevel( targ ) < FORCE_LEVEL_3 )
+	{
+		return qfalse;
+	}
+	gclient_t *cl = targ->client;
+	if ( PM_InKnockDown( &cl->ps )
+		|| PM_SaberInAttack( cl->ps.saberMove )
+		|| PM_InSpecialJump( cl->ps.torsoAnim )
+		|| cl->ps.saberLockTime > level.time
+		|| G_IsNeutralized( targ ) )
+	{
+		return qfalse;
+	}
+	if ( !G_SpeedTakeDodge( targ ) )
+	{
+		return qfalse;
+	}
+	NPC_SetAnim( targ, SETANIM_BOTH, Q_irand( BOTH_DODGE_FL, BOTH_DODGE_R ), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+	cl->ps.legsAnimTimer = cl->ps.torsoAnimTimer;
+	cl->ps.saberMove = cl->ps.saberBounceMove = LS_READY;
+	cl->ps.saberBlocked = BLOCKED_NONE;
+	s_slipUntil[targ->s.number] = level.time + 400;
+	G_Sound( targ, G_SoundIndex( "sound/weapons/force/speed.wav" ) );
+	if ( g_debugForce && g_debugForce->integer )
+	{
+		gi.Printf( "  SPEED %d (%s) Focus dodged a saber hit from %d\n", targ->s.number,
+			targ->NPC_type ? targ->NPC_type : "player", attacker ? attacker->s.number : -1 );
+	}
+	return qtrue;
+}
+
+static qboolean G_ProtectDodge( gentity_t *targ, int mod )
+{
+	static int	s_nextDodge[MAX_GENTITIES];
+	const forceTuning_t *ft = G_ForceTuning();
+
+	switch ( mod )
+	{
+	case MOD_BRYAR:
+	case MOD_BRYAR_ALT:
+	case MOD_BLASTER:
+	case MOD_BLASTER_ALT:
+	case MOD_DISRUPTOR:
+	case MOD_SNIPER:
+	case MOD_BOWCASTER:
+	case MOD_BOWCASTER_ALT:
+	case MOD_REPEATER:
+	case MOD_REPEATER_ALT:
+	case MOD_DEMP2:
+	case MOD_DEMP2_ALT:
+	case MOD_FLECHETTE:
+	case MOD_FLECHETTE_ALT:
+	case MOD_ROCKET:
+	case MOD_ROCKET_ALT:
+	case MOD_CONC:
+	case MOD_CONC_ALT:
+	case MOD_ENERGY:
+	case MOD_EMPLACED:
+		break;
+	default:
+		return qfalse;
+	}
+	gclient_t *cl = targ->client;
+	if ( cl->ps.forcePower < ft->protectDodgeCost
+		|| ( s_nextDodge[targ->s.number] > level.time && s_nextDodge[targ->s.number] <= level.time + ft->protectDodgeCooldown )//(> cooldown away: stale, from a loaded save)
+		|| Q_irand( 1, 100 ) > ft->protectDodgeChance )
+	{
+		return qfalse;
+	}
+	if ( cl->ps.groundEntityNum == ENTITYNUM_NONE
+		|| PM_InKnockDown( &cl->ps )
+		|| ( cl->ps.pm_time && ( cl->ps.pm_flags & PMF_TIME_KNOCKBACK ) )
+		|| PM_SaberInAttack( cl->ps.saberMove )
+		|| PM_InSpecialJump( cl->ps.torsoAnim )
+		|| cl->ps.saberLockTime > level.time )
+	{
+		return qfalse;
+	}
+	s_nextDodge[targ->s.number] = level.time + ft->protectDodgeCooldown;
+	NPC_SetAnim( targ, SETANIM_BOTH, Q_irand( BOTH_DODGE_FL, BOTH_DODGE_R ), SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+	cl->ps.legsAnimTimer = cl->ps.torsoAnimTimer;
+	WP_ForcePowerDrain( targ, FP_PROTECT, ft->protectDodgeCost );
+	G_ForceShieldFlash( targ, FP_PROTECT );
+	G_SoundOnEnt( targ, CHAN_ITEM, "sound/weapons/force/protecthit.wav" );
+	if ( g_debugForce && g_debugForce->integer )
+	{
+		gi.Printf( "  PROTECT %d (%s) dodged a shot (mod %d): -%d Force (now %d)\n", targ->s.number,
+			targ->NPC_type ? targ->NPC_type : "player", mod, ft->protectDodgeCost, cl->ps.forcePower );
+	}
+	return qtrue;
 }
 
 void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const vec3_t dir, const vec3_t point, int damage, int dflags, int mod, int hitLoc )
@@ -5816,11 +6606,14 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 		targ = targ->owner;
 	}
 
-	// Guard-broken saberists take heavily amplified saber damage — the guard-break payoff window
+	// Guard-broken saberists: optional bonus saber damage (g_guardBreakDamage, 1 = none; was a fixed x2.5).
+	// The payoff is already there without it: no parry/evade, and no full-guard damage resistance.
+	extern cvar_t *g_guardBreakDamage;
 	if ( mod == MOD_SABER && damage > 0
-		&& targ->NPC && targ->NPC->guardBreakTime > level.time )
+		&& targ->NPC && targ->NPC->guardBreakTime > level.time
+		&& g_guardBreakDamage->value > 1.0f )
 	{
-		damage = damage * 5 / 2;
+		damage = (int)ceil( damage * g_guardBreakDamage->value );
 	}
 
 	if ( (targ->flags&FL_SHIELDED) && mod != MOD_SABER  && !targ->client)
@@ -6109,8 +6902,20 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 			damage = floor((float)damage/(float)(targ->client->ps.forcePowerLevel[FP_RAGE]*2));
 		}
 		//protect
-		if ( (targ->client->ps.forcePowersActive & (1 << FP_PROTECT)) )
+		//JKEnhanced 4B.3: the L3 toggle works only while you have Force, and pays for what it stops
+		const qboolean protectToggle = G_ForceShieldIsToggle( targ, FP_PROTECT );
+		if ( protectToggle && targ->client->ps.forcePower > 0 && G_ProtectDodge( targ, mod ) )
+		{//dodged it
+			return;
+		}
+		if ( G_SpeedReflexDodge( targ, attacker, mod ) )
+		{//JKEnhanced 4B.6: Focus slipped the first saber hit
+			return;
+		}
+		if ( (targ->client->ps.forcePowersActive & (1 << FP_PROTECT))
+			&& ( !protectToggle || targ->client->ps.forcePower > 0 ) )
 		{
+			const int preProtectDamage = damage;
 			/*
 			qboolean doSound = qfalse;
 			switch ( targ->client->ps.forcePowerLevel[FP_PROTECT] )
@@ -6248,8 +7053,8 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 							damage = 0;
 						}
 						else
-						{
-							damage = ceil((float)damage*0.25f);//was 0.1f);
+						{//JKEnhanced 4B.3: force.cfg protect.damagePct (40; stock 25, was 10)
+							damage = ceil((float)damage*G_ForceTuning()->protectDamagePct/100.0f);
 						}
 						break;
 					case FORCE_LEVEL_2:
@@ -6281,6 +7086,18 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 				{
 					//make protect sound
 					G_SoundOnEnt( targ, CHAN_ITEM, "sound/weapons/force/protecthit.wav" );
+				}
+				if ( protectToggle && damage < preProtectDamage )
+				{//JKEnhanced 4B.3: 1 Force per protect.hitCostDiv damage taken off (at least 1)
+					const int blocked = preProtectDamage - damage;
+					const int cost = Q_max( 1, ( blocked + G_ForceTuning()->protectHitCostDiv - 1 ) / G_ForceTuning()->protectHitCostDiv );
+					WP_ForcePowerDrain( targ, FP_PROTECT, cost );
+					G_ForceShieldFlash( targ, FP_PROTECT );
+					if ( g_debugForce && g_debugForce->integer )
+					{
+						gi.Printf( "  PROTECT %d (%s) took %d off a %d hit: -%d Force (now %d)\n", targ->s.number,
+							targ->NPC_type ? targ->NPC_type : "player", blocked, preProtectDamage, cost, targ->client->ps.forcePower );
+					}
 				}
 			}
 		}
@@ -6340,7 +7157,8 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 
 	if ( targ->client
 		&& (targ->client->ps.forcePowersActive&(1<<FP_PROTECT))
-		&& targ->client->ps.forcePowerLevel[FP_PROTECT] == FORCE_LEVEL_3 )
+		&& targ->client->ps.forcePowerLevel[FP_PROTECT] == FORCE_LEVEL_3
+		&& targ->client->ps.forcePower > 0 )//JKEnhanced 4B.3: an empty L3 toggle doesn't hold you in place
 	{//pretend there was no damage?
 		knockback = 0;
 	}
@@ -6763,6 +7581,10 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 	if ( g_debugDamage->integer ) {
 		gi.Printf( "[%d]client:%i health:%i damage:%i armor:%i hitloc:%s\n", level.time, targ->s.number, targ->health, take, asave, hitLocName[hitLoc] );
 	}
+	{//JKEnhanced audit: g_debugForce damage line (health shown before this hit lands)
+		extern void WP_ForceDebugDamage( const gentity_t *attacker, const gentity_t *targ, int take, int mod );
+		WP_ForceDebugDamage( attacker, targ, take, mod );
+	}
 
 	// add to the damage inflicted on a player this frame
 	// the total will be turned into screen blends and view angle kicks
@@ -6773,6 +7595,11 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 		client->damage_blood += take;
 		if ( dir ) {	//can't check newdir since it's local, newdir is dir normalized
 			VectorCopy ( newDir, client->damage_from );
+			if ( mod == MOD_SABER && attacker && attacker != targ && attacker->client )
+			{//JKEnhanced: a saber's dir is the blade's sweep; the hit indicator wants where the swinger is
+				VectorSubtract( targ->currentOrigin, attacker->currentOrigin, client->damage_from );
+				VectorNormalize( client->damage_from );
+			}
 			client->damage_fromWorld = false;
 		} else {
 			VectorCopy ( targ->currentOrigin, client->damage_from );
@@ -6852,6 +7679,22 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 		}
 	}
 
+	if ( take > 0 && targ->client && targ->client->NPC_class == CLASS_SABOTEUR && targ->client->ps.powerups[PW_CLOAKED] )
+	{//JKEnhanced: a hit on a cloaked saboteur makes the cloak shimmer (cg_players.cpp)
+		TIMER_Set( targ, "cloakReveal", 300 );
+	}
+
+	//JKEnhanced: boss guard stages - a boss can't be taken past a stage without breaking their guard
+	{
+		const int preClamp = take;
+		G_BossBarNoteHit( targ, attacker );
+		take = G_BossStageClamp( targ, attacker, take, mod, dflags );
+		if ( g_debugDamage->integer && take != preClamp )
+		{//the line above printed the damage before this
+			gi.Printf( "  client:%i boss stage clamp: %d -> %d (health %d)\n", targ->s.number, preClamp, take, targ->health );
+		}
+	}
+
 	if ( take || (dflags&DAMAGE_NO_DAMAGE) )
 	{
 		if ( !targ->client || !attacker->client )
@@ -6898,6 +7741,13 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, const
 		//		attackerTeam = TEAM_PLAYER;
 		//	}
 
+			if ( g_debugDamage->integer && take && attacker != targ
+				&& !( targTeam != attackerTeam
+					|| (targ->s.number < MAX_CLIENTS && targTeam == TEAM_FREE)
+					|| (attacker && attacker->s.number < MAX_CLIENTS && attackerTeam == TEAM_FREE) ) )
+			{//JKEnhanced: say why a printed hit didn't come off their health
+				gi.Printf( "  client:%i NOT damaged: same team as attacker %i (team %d) - charmed?\n", targ->s.number, attacker->s.number, targTeam );
+			}
 			if ( targTeam != attackerTeam
 				|| (targ->s.number < MAX_CLIENTS && targTeam == TEAM_FREE)//evil player hit
 				|| (attacker && attacker->s.number < MAX_CLIENTS && attackerTeam == TEAM_FREE) )//evil player attacked

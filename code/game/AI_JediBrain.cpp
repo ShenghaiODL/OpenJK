@@ -8,6 +8,8 @@ Jedi tactical layer. See AI_JediBrain.h.
 #include "anims.h"
 #include "wp_saber.h"
 #include "AI_JediBrain.h"
+#include "g_force.h"
+#include "g_difficulty.h"
 
 extern qboolean	PM_SaberInAttack( int move );
 extern qboolean	PM_SaberInStart( int move );
@@ -116,6 +118,63 @@ static float ForceFrac( const gentity_t *ent )
 	return (float)ent->client->ps.forcePower / (float)ent->client->ps.forcePowerMax;
 }
 
+/*
+AI_JediBrain_HeavyAttackScore (JKEnhanced)
+
+How good a moment this is for a telegraphed heavy attack (Jedi_CheckHeavyAttack throws one above
+g_heavyAttackThreshold). Up: we're pressing, the enemy is open (recovering, bounced, broken,
+knocked down) or committed to their own swing, low on Force (blocks cost Force), backing off.
+Down: the enemy stands ready with block up (a likely perfect parry), our own guard is low. Lower
+blockSkill fighters judge it noisily.
+*/
+float AI_JediBrain_HeavyAttackScore( gentity_t *npc )
+{
+	if ( !npc || !npc->NPC || !npc->client || !npc->enemy || !npc->enemy->client )
+	{
+		return 0.0f;
+	}
+	const gentity_t		*enemy = npc->enemy;
+	const playerState_t	*eps = &enemy->client->ps;
+	const qboolean		open = AI_JediEnemyOpen( npc );
+	const int			skill = AI_JediBlockSkill( npc );
+	float s = 0.15f;
+
+	if ( npc->NPC->duelRole == JT_PRESS )
+	{
+		s += 0.25f;
+	}
+	if ( open )
+	{
+		s += 0.45f;
+	}
+	else if ( PM_SaberInAttack( eps->saberMove ) || PM_SaberInSpecialAttack( eps->torsoAnim ) )
+	{//committed to their own swing
+		s += 0.25f;
+	}
+	if ( ForceFrac( enemy ) < 0.3f )
+	{
+		s += 0.25f;
+	}
+	vec3_t toEnemy;
+	VectorSubtract( enemy->currentOrigin, npc->currentOrigin, toEnemy );
+	VectorNormalize( toEnemy );
+	if ( DotProduct( eps->velocity, toEnemy ) > 100.0f )
+	{//backing away from us
+		s += 0.1f;
+	}
+	if ( !open && eps->weapon == WP_SABER && eps->saberBlockingTime > level.time )
+	{//standing ready with block up: a heavy into that is asking to be perfect-parried
+		s -= 0.35f;
+	}
+	if ( WP_SaberRules() ? ForceFrac( npc ) < 0.3f//saber rules: Force is the guard
+		: ( npc->NPC->guardMax > 0 && npc->NPC->guard < npc->NPC->guardMax * 3 / 10 ) )
+	{
+		s -= 0.2f;
+	}
+	s += Q_flrand( -0.25f, 0.25f ) * ( 5 - skill ) / 4.0f;
+	return s;
+}
+
 // how many other saber fighters are already in this enemy's face
 static int EngagedOthers( const gentity_t *npc )
 {
@@ -164,6 +223,14 @@ static qboolean Usable( const gentity_t *npc, int power )
 	return (qboolean)( (npc->client->ps.forcePowersKnown&(1<<power)) && npc->client->ps.forcePowerLevel[power] > 0 );
 }
 
+//can it fire right now? Under the saber rules that includes the Force a saber fighter keeps back
+//for guarding (WP_ForcePowerAvailable): a tactic built on a power they can't pay for does nothing.
+extern qboolean WP_ForcePowerUsable( gentity_t *self, forcePowers_t forcePower, int overrideAmt );
+static qboolean CanUse( gentity_t *npc, int power )
+{
+	return (qboolean)( Usable( npc, power ) && ( !WP_SaberRules() || WP_ForcePowerUsable( npc, (forcePowers_t)power, 0 ) ) );
+}
+
 int AI_JediTactic( gentity_t *npc, float enemyDist )
 {
 	if ( !npc || !npc->NPC || !npc->client || !npc->enemy || !npc->enemy->client )
@@ -198,7 +265,8 @@ int AI_JediTactic( gentity_t *npc, float enemyDist )
 	const float		enemyForce	= ForceFrac( npc->enemy );
 	const float		myHealth	= npc->max_health > 0 ? (float)npc->health / npc->max_health : 1.0f;
 	const float		enemyHealth	= npc->enemy->max_health > 0 ? (float)npc->enemy->health / npc->enemy->max_health : 1.0f;
-	const float		guard		= ni->guardMax > 0 ? (float)ni->guard / ni->guardMax : 1.0f;
+	const float		guard		= WP_SaberRules() ? myForce//saber rules: Force is the guard
+									: ( ni->guardMax > 0 ? (float)ni->guard / ni->guardMax : 1.0f );
 	const int		tier		= AI_NerveTier( npc );
 	const int		skill		= AI_JediBlockSkill( npc );
 	const qboolean	leadFree	= LeadIsFree( npc );
@@ -224,9 +292,25 @@ int AI_JediTactic( gentity_t *npc, float enemyDist )
 		}
 	}
 	// DEFEND: they're swinging, or we'd rather they over-commit first; better fighters like this more
-	if ( enemySaber )
+	//(only in reach, and with limited patience: waiting at range, or for someone who never swings,
+	//was a standoff that looked like the AI had frozen)
+	static int s_lastEnemySwing[MAX_GENTITIES];
+	if ( enemySwing || level.time < s_lastEnemySwing[npc->s.number]
+		|| cur == JT_NONE )//a new duel: their patience starts now (it started at 0, so DEFEND was cut from the first rescore)
+	{
+		s_lastEnemySwing[npc->s.number] = level.time;
+	}
+	if ( enemySaber && enemyDist > 160 )
+	{//out of reach: nothing to wait for
+		s[JT_DEFEND] = 0.1f;
+	}
+	else if ( enemySaber )
 	{
 		s[JT_DEFEND] = 0.35f + ( enemySwing ? 0.3f : 0.0f ) + ( myForce < 0.5f ? 0.15f : 0.0f ) + 0.04f * skill;
+		if ( level.time - s_lastEnemySwing[npc->s.number] > 3000 )
+		{//they're not biting: stop waiting
+			s[JT_DEFEND] *= 0.4f;
+		}
 	}
 	else
 	{//guns: nothing to wait for
@@ -235,9 +319,13 @@ int AI_JediTactic( gentity_t *npc, float enemyDist )
 	// KEEP_DISTANCE: someone else has them, or we're losing our nerve
 	s[JT_KEEP_DISTANCE] = 0.15f + ( !leadFree || engaged >= 2 ? 0.6f : 0.0f ) + ( tier >= NT_BREAKING ? 0.35f : 0.0f );
 	// RECOVER: out of Force or guard
-	if ( myForce < 0.25f || guard < 0.3f )
+	//(saber rules: Force is the guard. Once backing off they stay off until there is enough for a few
+	//stops - going in and out around the line every second or two read as dithering)
+	if ( WP_SaberRules() ? ( myForce < 0.25f || ( cur == JT_RECOVER && myForce < 0.5f ) )
+		: ( myForce < 0.25f || guard < 0.3f ) )
 	{
-		s[JT_RECOVER] = 0.6f + ( 1.0f - myForce ) * 0.3f + ( guard < 0.3f ? 0.2f : 0.0f );
+		s[JT_RECOVER] = WP_SaberRules() ? 1.2f//(beats everything, so being swung at does not pull them back into DEFEND half-recovered)
+			: 0.6f + ( 1.0f - myForce ) * 0.3f + ( guard < 0.3f ? 0.2f : 0.0f );
 		if ( raging )
 		{
 			s[JT_RECOVER] = 0;
@@ -246,17 +334,18 @@ int AI_JediTactic( gentity_t *npc, float enemyDist )
 	// FORCE_OPENER: shove a staggered enemy, or drag one in from just out of reach
 	if ( TIMER_Done( npc, "jediOpenerDebounce" ) && myForce > 0.35f )
 	{
-		if ( Usable( npc, FP_PUSH ) && enemyOpen && enemyDist < 200 )
+		//(saber rules: not when they are already in blade reach - cut them, don't shove them away)
+		if ( CanUse( npc, FP_PUSH ) && enemyOpen && enemyDist < 200 && ( !WP_SaberRules() || enemyDist > 48 ) )
 		{
 			s[JT_FORCE_OPENER] = 0.7f;
 		}
-		else if ( Usable( npc, FP_PULL ) && enemyDist > 160 && enemyDist < 450 && !enemySwing )
+		else if ( CanUse( npc, FP_PULL ) && enemyDist > 160 && enemyDist < 450 && !enemySwing )
 		{
 			s[JT_FORCE_OPENER] = 0.45f;
 		}
 	}
 	// SABER_THROW: at someone standing off who isn't swinging
-	if ( TIMER_Done( npc, "saberThrowDebounce" ) && Usable( npc, FP_SABERTHROW ) && myForce > 0.3f
+	if ( TIMER_Done( npc, "saberThrowDebounce" ) && CanUse( npc, FP_SABERTHROW ) && myForce > 0.3f
 		&& enemyDist > 200 && enemyDist < 500 && !enemySwing && !npc->client->ps.saberInFlight )
 	{
 		s[JT_SABER_THROW] = 0.4f + ( ni->rank >= RANK_LT_JG ? 0.1f : 0.0f );
@@ -345,13 +434,44 @@ qboolean WP_NPCPerfectParry( gentity_t *self )
 	{
 		return qfalse;
 	}
-	if ( self->client->ps.forcePowerMax > 0 && self->client->ps.forcePower <= 0 )
+	extern qboolean WP_NPCForceFree( const gentity_t *self, int forcePower );
+	if ( self->client->ps.forcePowerMax > 0 && self->client->ps.forcePower <= 0 && !WP_NPCForceFree( self, FP_SABER_DEFENSE ) )//4B: blocks are Force-free for NPCs
 	{
 		return qfalse;
 	}
 	const int skill = AI_JediBlockSkill( self );
+	extern cvar_t *g_saberDeterministic;
+	if ( g_saberDeterministic && g_saberDeterministic->integer )
+	{//JKEnhanced: no dice - only masters and bosses (blockSkill 5: boss characters, Desann/Luke/Tavion/
+	 //Alora/Kyle, captain rank, or a .npc blockSkill 5) knock your swing away, and only when they READ it:
+	 //they're in their defensive stance (the DEFEND tactic) and you're predictable - the same direction
+	 //twice in a row, or a flurry of 5+ swings. Everyone else just blocks.
+		const gentity_t *enemy = self->enemy;
+		const int readSkill = ( G_SpeedLevel( self ) >= FORCE_LEVEL_3 ) ? 4 : 5;//4B.6: Speed 3 (Focus) - a skill-4 duelist reads you too
+		if ( skill < readSkill || !enemy || !enemy->client )
+		{
+			return qfalse;
+		}
+		if ( self->NPC->duelRole != JT_DEFEND )
+		{
+			return qfalse;
+		}
+		//saberAttackChainCount goes up about twice per chained swing (PM_SetSaberMove and the chain
+		//code both count it), so 10 is a real flurry of ~5 swings; 5 was firing after 2-3
+		if ( self->NPC->sameBlockDirCount >= 2
+			|| enemy->client->ps.saberAttackChainCount >= 10 )
+		{
+			s_ppDecided[n] = qtrue;
+			self->NPC->perfectParryDebounce = level.time + 2500 - skill * 200;
+		}
+		return s_ppDecided[n];
+	}
 	//skill 1: never, 2: 6 %, 3: 12 %, 4: 18 %, 5: 24 % of blocks; harder on higher difficulty
-	const int chance = ( skill - 1 ) * 6 + g_spskill->integer * 2;
+	int chance = ( skill - 1 ) * 6 + G_DifficultyLevel() * 2;//(Jedi Master counts as 3)
+	if ( G_SpeedLevel( self ) >= FORCE_LEVEL_3 )
+	{//JKEnhanced 4B.6: Focus widens it (force.cfg speed.parryPct)
+		chance = chance * G_ForceTuning()->speedParryPct / 100;
+	}
 	if ( skill > 1 && Q_irand( 0, 99 ) < chance )
 	{
 		s_ppDecided[n] = qtrue;

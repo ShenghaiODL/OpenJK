@@ -43,6 +43,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../cgame/cg_local.h"	// yeah I know this is naughty, but we're shipping soon...
 
 #include "wp_saber.h"
+#include "g_force.h"
 #include "g_vehicles.h"
 #include <float.h>
 
@@ -64,6 +65,8 @@ extern qboolean PM_SaberInSpecialAttack( int anim );
 extern qboolean PM_SaberInAttack( int move );
 extern qboolean PM_InAnimForSaberMove( int anim, int saberMove );
 extern saberMoveName_t PM_SaberBounceForAttack( int move );
+extern qboolean WP_SaberHitStopped( const gentity_t *ent );
+int PM_SaberNeutralPose( void );	//JKEnhanced saber rules: the pose for saber lit, guard not up (-1 = the stance)
 extern saberMoveName_t PM_SaberAttackForMovement( int forwardmove, int rightmove, int curmove );
 extern saberMoveName_t PM_BrokenParryForParry( int move );
 extern saberMoveName_t PM_KnockawayForParry( int move );
@@ -2880,6 +2883,75 @@ PM_AirMove
 
 ===================
 */
+/*
+PM_CheckLedgeAssist (JKEnhanced, Step 3H)
+
+The player holds jump and forward into a ledge that's just out of reach (its top 16-64 units above
+their feet, room to stand on it): give them the lift to clear it, like the NPC nav "jump onto the
+box". Only near the top of a jump or falling, not during flips/wall moves. g_ledgeAssist 0 = off.
+*/
+extern cvar_t *g_ledgeAssist;
+static void PM_CheckLedgeAssist( void )
+{
+	static int s_lastAssist = -10000;
+	if ( !g_ledgeAssist || !g_ledgeAssist->integer || pm->ps->clientNum != 0
+		|| pm->ps->groundEntityNum != ENTITYNUM_NONE
+		|| pm->cmd.upmove <= 0 || pm->cmd.forwardmove <= 0
+		|| pm->ps->velocity[2] > 120.0f
+		|| pm->ps->pm_type != PM_NORMAL
+		|| ( pm->ps->pm_flags & PMF_TIME_KNOCKBACK )
+		|| PM_InKnockDown( pm->ps ) || PM_FlippingAnim( pm->ps->legsAnim ) || PM_InRoll( pm->ps )
+		|| ( pm->cmd.serverTime - s_lastAssist < 600 && pm->cmd.serverTime >= s_lastAssist ) )
+	{
+		return;
+	}
+	vec3_t fwd, start, end;
+	const vec3_t yawOnly = { 0, pm->ps->viewangles[YAW], 0 };
+	AngleVectors( yawOnly, fwd, NULL, NULL );
+	trace_t tr;
+	//a wall right in front, at waist height
+	VectorCopy( pm->ps->origin, start );
+	VectorMA( start, 20.0f, fwd, end );
+	pm->trace( &tr, start, pm->mins, pm->maxs, end, pm->ps->clientNum, pm->tracemask, (EG2_Collision)0, 0 );
+	if ( tr.fraction >= 1.0f || tr.allsolid || tr.startsolid || fabs( tr.plane.normal[2] ) > 0.3f )
+	{
+		return;
+	}
+	//room above it: the body box fits 64 up and 24 forward
+	vec3_t up;
+	VectorCopy( pm->ps->origin, up );
+	up[2] += 64.0f;
+	pm->trace( &tr, pm->ps->origin, pm->mins, pm->maxs, up, pm->ps->clientNum, pm->tracemask, (EG2_Collision)0, 0 );
+	if ( tr.fraction < 1.0f )
+	{
+		return;
+	}
+	VectorMA( up, 24.0f, fwd, end );
+	pm->trace( &tr, up, pm->mins, pm->maxs, end, pm->ps->clientNum, pm->tracemask, (EG2_Collision)0, 0 );
+	if ( tr.fraction < 1.0f || tr.startsolid )
+	{
+		return;
+	}
+	//the ledge top under that spot
+	vec3_t down;
+	VectorCopy( end, down );
+	down[2] = pm->ps->origin[2] - 8.0f;
+	pm->trace( &tr, end, pm->mins, pm->maxs, down, pm->ps->clientNum, pm->tracemask, (EG2_Collision)0, 0 );
+	if ( tr.fraction >= 1.0f || tr.startsolid || tr.plane.normal[2] < 0.7f )
+	{
+		return;
+	}
+	const float rise = tr.endpos[2] - pm->ps->origin[2];	//how far up the body has to go
+	if ( rise < 8.0f || rise > 56.0f )
+	{
+		return;
+	}
+	const float grav = pm->ps->gravity > 0 ? (float)pm->ps->gravity : 800.0f;
+	pm->ps->velocity[2] = sqrtf( 2.0f * grav * ( rise + 10.0f ) );
+	VectorMA( pm->ps->velocity, 60.0f, fwd, pm->ps->velocity );
+	s_lastAssist = pm->cmd.serverTime;
+}
+
 static void PM_AirMove( void ) {
 	int			i;
 	vec3_t		wishvel;
@@ -2888,6 +2960,8 @@ static void PM_AirMove( void ) {
 	float		wishspeed;
 	usercmd_t	cmd;
 	float		gravMod = 1.0f;
+
+	PM_CheckLedgeAssist();
 
 #if METROID_JUMP
 	PM_CheckJump();
@@ -7949,6 +8023,39 @@ void PM_SwimFloatAnim( void )
 
 /*
 ===============
+PM_BobCycleAdvance (OpenJK PR #1356)
+
+How far bobCycle moves in this pmove step: bobmove units per msec. bobCycle is an integer, so
+adding bobmove * msec directly dropped the fraction every step (0.3 * 6 msec = 1.8 became 1): the
+footstep and view bob cycle slowed by an amount that depended on the frame rate - and with the
+player's sub-stepped Pmove (8 ms steps) on every step. Advancing by floor( bobmove * time ) at the
+end minus at the start of the step makes the rounding of consecutive steps cancel, so the cycle runs
+at the exact rate at any frame rate, with no extra state.
+===============
+*/
+static int PM_BobCycleAdvance( float bobmove )
+{
+	const double timeEnd = pm->ps->commandTime;	// already advanced to this command's time
+	const double timeStart = timeEnd - pml.msec;
+
+	return (int)( floor( bobmove * timeEnd ) - floor( bobmove * timeStart ) );
+}
+
+//JKEnhanced: the player's walk/sneak noise, at most every 250 ms. It used to go out on every pmove
+//(several per frame with sub-stepping), so a walking player filled the alert list and pushed
+//gunfire and danger alerts out of it.
+static void PM_PlayerStepNoise( float radius )
+{
+	static int s_nextStepNoise = 0;
+	if ( pm->cmd.serverTime < s_nextStepNoise - 250 || pm->cmd.serverTime >= s_nextStepNoise )
+	{//(the first test: time went backwards, a load or a new map)
+		s_nextStepNoise = pm->cmd.serverTime + 250;
+		AddSoundEvent( pm->gent, pm->ps->origin, radius, AEL_MINOR, qtrue, qtrue );
+	}
+}
+
+/*
+===============
 PM_Footsteps
 ===============
 */
@@ -8109,7 +8216,7 @@ static void PM_Footsteps( void )
 					{//moving
 						old = pm->ps->bobCycle;
 						bobmove = 0.15f;	// swim is a slow cycle
-						pm->ps->bobCycle = (int)( old + bobmove * pml.msec ) & 255;
+						pm->ps->bobCycle = ( old + PM_BobCycleAdvance( bobmove ) ) & 255;
 
 						// if we just crossed a cycle boundary, play an apropriate footstep event
 						if ( ( ( old + 64 ) ^ ( pm->ps->bobCycle + 64 ) ) & 128 )
@@ -8269,6 +8376,10 @@ static void PM_Footsteps( void )
 							|| (!PM_JumpingAnim( pm->ps->torsoAnim )&&!PM_InAirKickingAnim( pm->ps->torsoAnim ))) )//OR: on ground and torso not in a jump anim
 					{
 						legsAnim = pm->ps->torsoAnim;
+					}
+					else if ( PM_SaberNeutralPose() != -1 )
+					{//JKEnhanced saber rules: lit but not guarding
+						legsAnim = PM_SaberNeutralPose();
 					}
 					else
 					{
@@ -8431,7 +8542,7 @@ static void PM_Footsteps( void )
 				}
 				if ( pm->gent && pm->gent->s.number == 0 )
 				{//the player's sneak: quiet, but consistent, so stealth is about distance, not dice
-					AddSoundEvent( pm->gent, pm->ps->origin, 24, AEL_MINOR, qtrue, qtrue );
+					PM_PlayerStepNoise( 24 );
 				}
 				else if ( !Q_irand( 0, 19 ) )
 				{//5% chance of making an alert
@@ -8642,7 +8753,7 @@ static void PM_Footsteps( void )
 				}
 				else if ( pm->gent && pm->gent->s.number == 0 )
 				{//the player walking: a small, steady noise (crouch-walking is quieter, see above)
-					AddSoundEvent( pm->gent, pm->ps->origin, 64, AEL_MINOR, qtrue, qtrue );
+					PM_PlayerStepNoise( 64 );
 				}
 				else if ( !Q_irand( 0, 9 ) )
 				{//10% chance of a small alert, mainly for the sand_creature
@@ -8668,7 +8779,7 @@ DoFootSteps:
 
 	// check for footstep / splash sounds
 	old = pm->ps->bobCycle;
-	pm->ps->bobCycle = (int)( old + bobmove * pml.msec ) & 255;
+	pm->ps->bobCycle = ( old + PM_BobCycleAdvance( bobmove ) ) & 255;
 
 	// if we just crossed a cycle boundary, play an apropriate footstep event
 	if ( ( ( old + 64 ) ^ ( pm->ps->bobCycle + 64 ) ) & 128 )
@@ -9186,9 +9297,35 @@ static void PM_FinishWeaponChange( void ) {
 	}
 }
 
+/*
+PM_SaberNeutralPose (JKEnhanced saber rules)
+
+Saber lit but guard not up: Neutral has its own pose (hands at the sides by default; neutralAnim
+in ext_data/saberanims.cfg), so a raised guard - the style's saber stance - reads at a glance.
+Returns -1 when the stance should show as usual: guard up, old rules, cutscenes, vehicles, locks -
+and on the move, where the stock saber walk and run carry the blade naturally (hands straight
+down while walking or strafing looked wrong).
+*/
+int PM_SaberNeutralPose( void )
+{
+	if ( !WP_SaberRules() || in_camera || pm->ps->weapon != WP_SABER || !pm->ps->SaberActive()
+		|| pm->ps->saberBlockingTime > cg.time || pm->ps->saberLockTime > level.time
+		|| PM_RidingVehicle()
+		|| pm->cmd.forwardmove || pm->cmd.rightmove || pm->ps->groundEntityNum == ENTITYNUM_NONE )
+	{
+		return -1;
+	}
+	return WP_SaberStyleSheet( pm->ps->saberAnimLevel )->neutralAnim;
+}
+
 int PM_ReadyPoseForSaberAnimLevel( void )
 {
 	int anim = BOTH_STAND2;
+	const int neutral = PM_SaberNeutralPose();
+	if ( neutral != -1 )
+	{//JKEnhanced saber rules: lit but not guarding
+		return neutral;
+	}
  	if (PM_RidingVehicle())
 	{
 		return -1;
@@ -9272,6 +9409,119 @@ void PM_SetJumped( float height, qboolean force )
 	}
 }
 
+/*
+PM_BlockThreatAnim (JKEnhanced, g_saberBlockThreat)
+
+The held block faces the swing that's coming: the nearest saber enemy in reach that's winding up,
+swinging or chaining into a swing. Their swing's starting corner, seen from your side (their right
+is your left), gives the same zone WP_SaberBlockNonRandom would parry from, and that parry's own
+pose is held - so when the hit lands the parry is already there instead of snapping across.
+Returns -1 when nobody is swinging at you (WASD picks the pose then).
+*/
+static int PM_BlockThreatAnim( void )
+{
+	extern cvar_t *g_saberBlockThreat;
+	if ( !g_saberBlockThreat || !g_saberBlockThreat->integer || !pm->gent || !pm->gent->client )
+	{
+		return -1;
+	}
+	const float	reach = 192.0f;
+	vec3_t		mins, maxs;
+	for ( int k = 0; k < 3; k++ )
+	{
+		mins[k] = pm->ps->origin[k] - reach;
+		maxs[k] = pm->ps->origin[k] + reach;
+	}
+	gentity_t	*list[MAX_GENTITIES];
+	const int	n = gi.EntitiesInBox( mins, maxs, list, MAX_GENTITIES );
+	float		bestDist = reach * reach;
+	int			quad = -1;
+	for ( int i = 0; i < n; i++ )
+	{
+		gentity_t *other = list[i];
+		if ( !other || other == pm->gent || !other->client || other->health <= 0 )
+		{
+			continue;
+		}
+		playerState_t *ops = &other->client->ps;
+		if ( ops->weapon != WP_SABER || !ops->SaberActive() || ops->saberInFlight
+			|| ( other->enemy != pm->gent && other->client->playerTeam == pm->gent->client->playerTeam ) )
+		{
+			continue;
+		}
+		int q;
+		if ( PM_SaberInStart( ops->saberMove ) || PM_SaberInTransition( ops->saberMove ) )
+		{//winding up / chaining: where the next swing starts
+			q = saberMoveData[ops->saberMove].endQuad;
+		}
+		else if ( PM_SaberInAttack( ops->saberMove ) )
+		{
+			q = saberMoveData[ops->saberMove].startQuad;
+		}
+		else
+		{
+			continue;
+		}
+		const float d = DistanceSquared( other->currentOrigin, pm->ps->origin );
+		if ( d < bestDist )
+		{
+			bestDist = d;
+			quad = q;
+		}
+	}
+	if ( quad == -1 )
+	{
+		return -1;
+	}
+	//their corner -> your parry pose (offsets from _T_: T_, TR, TL, BL, BR - see the LS_PARRY_* rows)
+	int pose;
+	switch ( quad )
+	{
+	case Q_TR:
+	case Q_R:	pose = 2;	break;	//comes in at your upper left: LS_PARRY_UL
+	case Q_TL:
+	case Q_L:	pose = 1;	break;	//your upper right: LS_PARRY_UR
+	case Q_BR:	pose = 4;	break;	//your lower left: LS_PARRY_LL
+	case Q_BL:	pose = 3;	break;	//your lower right: LS_PARRY_LR
+	default:	pose = 0;	break;	//straight down (or up the middle): LS_PARRY_UP
+	}
+	if ( pm->ps->dualSabers && pm->ps->saber[1].Active() )
+	{
+		return BOTH_P6_S6_T_ + pose;
+	}
+	if ( pm->ps->SaberStaff() )
+	{
+		return BOTH_P7_S7_T_ + pose;
+	}
+	return BOTH_P1_S1_T_ + pose;
+}
+
+/*
+NPC attack phrases (JKEnhanced saber rules)
+
+The Jedi AI (Jedi_PhraseThink, AI_Jedi.cpp) names the swing it wants next; when pmove picks an
+NPC's attack it takes that instead of rolling one. A request older than half a second is stale.
+Not saved: the AI asks again every think.
+*/
+int g_saberPhraseNext[MAX_GENTITIES];
+int g_saberPhraseNextTime[MAX_GENTITIES];
+
+static saberMoveName_t PM_NPCPhraseAttack( void )
+{
+	if ( !pm->gent || pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer() )
+	{
+		return LS_NONE;
+	}
+	const int n = pm->gent->s.number;
+	const int want = g_saberPhraseNext[n];
+	const int age = level.time - g_saberPhraseNextTime[n];
+	g_saberPhraseNext[n] = LS_NONE;
+	if ( want >= LS_A_TL2BR && want <= LS_A_T2B && age >= 0 && age <= 500 )
+	{
+		return (saberMoveName_t)want;
+	}
+	return LS_NONE;
+}
 
 void PM_SetSaberMove(saberMoveName_t newMove)
 {
@@ -9330,8 +9580,28 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 				signed char rm = pm->cmd.rightmove;
 				signed char fm = pm->cmd.forwardmove;
 				bool hasInput = (rm > 40 || rm < -40 || fm > 40 || fm < -40);
-				if ( !hasInput )
+				const int threatAnim = PM_BlockThreatAnim();
+				const int styleGuardAnim = WP_SaberRules() ? WP_SaberStyleSheet( pm->ps->saberAnimLevel )->guardAnim : -1;
+				if ( threatAnim != -1 )
+				{//face the swing that's coming (torso only, the legs keep doing what they're doing)
+					setflags |= SETANIM_FLAG_OVERRIDE;
+					movingBlock = true;
+					anim = threatAnim;
+				}
+				else if ( styleGuardAnim != -1 )
+				{//JKEnhanced saber rules: nobody swinging - the style's own guard pose (ext_data/saberanims.cfg),
+				 //so a raised guard never looks like standing at ready
+					setflags |= SETANIM_FLAG_OVERRIDE;
+					movingBlock = true;
+					anim = styleGuardAnim;
+				}
+				else if ( WP_SaberRules() || !hasInput )
 				{
+					if ( hasInput )
+					{//(saber rules: guarding on the move - the stance on the torso only, the legs keep running)
+						setflags |= SETANIM_FLAG_OVERRIDE;
+						movingBlock = true;
+					}
 					// No directional input — hold the style's idle stance
 					if ( pm->ps->dualSabers && pm->ps->saber[1].Active() )
 						anim = BOTH_SABERDUAL_STANCE;
@@ -9383,6 +9653,10 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 			&& pm->ps->saber[1].readyAnim != -1 )
 		{
 			anim = pm->ps->saber[1].readyAnim;
+		}
+		else if ( PM_SaberNeutralPose() != -1 )
+		{//JKEnhanced saber rules: lit but not guarding
+			anim = PM_SaberNeutralPose();
 		}
 		else if ( pm->ps->saber[0].type == SABER_ARC )
 		{//FIXME: need it's own style?
@@ -9621,13 +9895,16 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 		setflags |= SETANIM_FLAG_RESTART;
 	}
 
-	if ( (anim == BOTH_STAND1 && (pm->ps->saber[0].type == SABER_ARC || (pm->ps->dualSabers && pm->ps->saber[1].Active())) )
+	//(JKEnhanced saber rules: not while guarding - a raised guard stays up on the torso when walking or
+	//running; matching it to the legs put the arms back down, which read as no guard)
+	if ( !( WP_SaberRules() && manualBlocking )
+		&& ( (anim == BOTH_STAND1 && (pm->ps->saber[0].type == SABER_ARC || (pm->ps->dualSabers && pm->ps->saber[1].Active())) )
 		|| anim == BOTH_STAND2
 		//FIXME: temp hack to stop it from using run2 with staff
 		|| (0 && anim == BOTH_SABERSTAFF_STANCE)
 		|| anim == BOTH_SABERDUAL_STANCE
 		|| anim == BOTH_SABERFAST_STANCE
-		|| anim == BOTH_SABERSLOW_STANCE )
+		|| anim == BOTH_SABERSLOW_STANCE ) )
 	{//match torso anim to walk/run anim if newMove is just LS_READY
 		//FIXME: play both_stand2_random1 when you've been idle for a while
 		switch ( pm->ps->legsAnim )
@@ -9732,7 +10009,45 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 	}
 	if (anim!=-1)
 	{
-		PM_SetAnim( pm, parts, anim, setflags, saberMoveData[newMove].blendTime );
+		{//JKEnhanced saber rules: a transition between two swings that runs long (the behind-the-back
+		 //spins are 650-700 ms with the blade nowhere useful) is played faster, to fit g_saberTransitionCap
+			extern cvar_t	*g_saberTransitionCap;
+			extern float	pm_saberAnimBoost;
+			extern int		PM_AnimLength( int index, animNumber_t anim );
+			if ( WP_SaberRules() && g_saberTransitionCap->integer > 0 && PM_SaberInTransition( newMove )
+				&& pm->gent && pm->gent->client )
+			{
+				const int len = PM_AnimLength( pm->gent->client->clientInfo.animFileIndex, (animNumber_t)anim );
+				if ( len > g_saberTransitionCap->integer * 11 / 10 )//(not for a few ms over)
+				{
+					pm_saberAnimBoost = (float)len / (float)g_saberTransitionCap->integer;
+					extern cvar_t *g_debugBlock;
+					if ( g_debugBlock && g_debugBlock->integer && pm->ps->clientNum == 0 )
+					{
+						Com_Printf( "SPIN %s (%s): %d ms played in %d\n", saberMoveData[newMove].name, animTable[anim].name, len, g_saberTransitionCap->integer );
+					}
+				}
+			}
+			PM_SetAnim( pm, parts, anim, setflags, saberMoveData[newMove].blendTime );
+			pm_saberAnimBoost = 1.0f;
+		}
+		if ( WP_SaberRules() && newMove >= LS_S_TL2BR && newMove <= LS_S_T2B && pm->ps->torsoAnim == anim )
+		{//JKEnhanced saber rules: a wind-up lasts long enough for a guard to answer it. A stock wind-up
+		 //that's shorter is held at full draw for the rest (the anim stops on its last frame); a
+		 //telegraphed heavy attack holds longest.
+			extern cvar_t *g_saberHeavyWindup;
+			const qboolean heavy = (qboolean)( pm->ps->heavyAttackPhase == 1
+				&& newMove == LS_S_TL2BR + ( pm->ps->heavyAttackMove - LS_A_TL2BR ) );
+			const int minMs = heavy ? g_saberHeavyWindup->integer : WP_SaberStyleSheet( pm->ps->saberAnimLevel )->windup;
+			if ( pm->ps->torsoAnimTimer < minMs )
+			{
+				if ( parts == SETANIM_BOTH && pm->ps->legsAnimTimer == pm->ps->torsoAnimTimer )
+				{
+					pm->ps->legsAnimTimer = minMs;
+				}
+				pm->ps->torsoAnimTimer = minMs;
+			}
+		}
 	}
 
 	if ( pm->ps->torsoAnim == anim )
@@ -9805,6 +10120,12 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 		// (e.g. the attacker died mid-swing, or the phase handoff was somehow never reached).
 		if ( pm->ps->heavyAttackMove != LS_NONE
 			&& ( ( pm->ps->heavyAttackPhase == 2 && pm->ps->saberMove == pm->ps->heavyAttackMove && newMove != pm->ps->heavyAttackMove )
+				//JKEnhanced: windup interrupted (bounced, parried, knocked away, cancelled): the heavy is
+				//over. It used to stay flagged up to 3s, so their next normal swings counted as heavy
+				//(no clash block, heavy block rules) and kept the windup slow-down
+				|| ( pm->ps->heavyAttackPhase == 1
+					&& newMove != (LS_S_TL2BR + (pm->ps->heavyAttackMove - LS_A_TL2BR))
+					&& newMove != pm->ps->heavyAttackMove )
 				|| level.time >= pm->ps->heavyAttackEndTime ) )
 		{
 			if ( pm->gent && pm->gent->chestBolt != -1 )
@@ -10458,15 +10779,21 @@ void PM_SaberLockBreak( gentity_t *gent, gentity_t *genemy, saberLockResult_t re
 	int breakType = SABERLOCK_BREAK;
 	qboolean singleVsSingle = qtrue;
 
+	//JKEnhanced saber rules: no roll for the finishing break - it happens when the loser had no Force
+	//left to push back with (never against a boss)
+	extern cvar_t *g_saberLockTapCost;
+	const qboolean rulesSuperBreak = (qboolean)( genemy && genemy->client && genemy->client->ps.forcePowerMax > 0
+		&& genemy->client->ps.forcePower < g_saberLockTapCost->integer
+		&& !( genemy->NPC && (genemy->NPC->aiFlags&(NPCAI_BOSS_CHARACTER|NPCAI_SUBBOSS_CHARACTER)) ) );
 	if ( result == LOCK_VICTORY
-		&& Q_irand(0,7) < victoryStrength )
+		&& ( WP_SaberRules() ? rulesSuperBreak : Q_irand(0,7) < victoryStrength ) )
 	{
 		if ( genemy
 			&& genemy->NPC
 			&& ((genemy->NPC->aiFlags&NPCAI_BOSS_CHARACTER)
 				||(genemy->NPC->aiFlags&NPCAI_SUBBOSS_CHARACTER)
 				||(genemy->client&&genemy->client->NPC_class == CLASS_SHADOWTROOPER))
-			&& Q_irand(0, 4)
+			&& !WP_SaberRules() && Q_irand(0, 4)
 			)
 		{//less of a chance of getting a superbreak against a boss
 			breakType = SABERLOCK_BREAK;
@@ -10527,6 +10854,16 @@ void PM_SaberLockBreak( gentity_t *gent, gentity_t *genemy, saberLockResult_t re
 		}
 		//painDebounceTime will stop them from doing anything
 		genemy->painDebounceTime = level.time + genemy->client->ps.torsoAnimTimer + 500;
+		if ( WP_SaberRules() && result == LOCK_VICTORY && genemy->health > 0 )
+		{//JKEnhanced saber rules: the loser is Open (long) - the lose anim plays, then they can't guard or attack
+			extern cvar_t *g_saberOpenLong;
+			TIMER_Set( genemy, "parryStaggered", g_saberOpenLong->integer );
+			genemy->client->ps.saberBlockingTime = 0;
+			if ( genemy->NPC )
+			{
+				TIMER_Set( genemy, "attackDelay", g_saberOpenLong->integer );
+			}
+		}
 		if ( Q_irand( 0, 1 ) )
 		{
 			G_AddEvent( genemy, EV_PAIN, Q_irand( 0, 75 ) );
@@ -10776,7 +11113,8 @@ qboolean PM_SaberLocked( void )
 		{//lock just ended
 			int strength = G_SaberLockStrength( gent );
 			int eStrength = G_SaberLockStrength( genemy );
-			if ( strength > 1 && eStrength > 1 && !Q_irand( 0, abs(strength-eStrength)+1 ) )
+			if ( !WP_SaberRules()//(saber rules: a lock that times out just parts them)
+				&& strength > 1 && eStrength > 1 && !Q_irand( 0, abs(strength-eStrength)+1 ) )
 			{//both knock each other down!
 				PM_SaberLockBreak( gent, genemy, LOCK_DRAW, 0 );
 			}
@@ -10820,6 +11158,10 @@ qboolean PM_SaberLocked( void )
 					assert( ret ); // this would be pretty bad, the below code seems to assume the call succeeds. -gil
 #endif
 					strength = G_SaberLockStrength( gent );
+					if ( WP_SaberRules() )
+					{//JKEnhanced saber rules: one tap is one push of the style's weight, paid for in Force (none left: no push)
+						strength = WP_SaberLockPush( gent );
+					}
 					if ( PM_InSaberLockOld( pm->ps->torsoAnim ) )
 					{//old locks
 						if ( pm->ps->torsoAnim == BOTH_CCWCIRCLELOCK ||
@@ -11937,6 +12279,25 @@ qboolean PM_SaberBlocking( void )
 			case BLOCKED_PARRY_BROKEN:
 				//whatever parry we were is in now broken, play the appropriate knocked-away anim
 				{
+					const int openMs = ( WP_SaberRules() && pm->gent ) ? WP_SaberOpenTime( pm->gent ) : 0;
+					const int openAnim = openMs > 0 ? WP_SaberStyleSheet( pm->ps->saberAnimLevel )->openAnim : -1;
+					if ( openAnim != -1 )
+					{//JKEnhanced saber rules: Open (off balance) - the style's own stagger, from any saber move,
+					 //held for as long as Open lasts (torso only on the move, so you can still back away)
+						const qboolean moving = (qboolean)( pm->cmd.forwardmove || pm->cmd.rightmove
+							|| pm->ps->groundEntityNum == ENTITYNUM_NONE );
+						//drop whatever the saber was doing (a swing mustn't keep cutting while they stagger)
+						pm->ps->torsoAnimTimer = 0;
+						PM_SetSaberMove( LS_READY );
+						pm->ps->saberMove = pm->ps->saberMoveNext = LS_READY;
+						pm->ps->saberBlocking = saberMoveData[LS_READY].blocking;
+						pm->ps->saberBlocked = BLOCKED_NONE;
+						//(the legs only hold for the anim's own length, so walking off doesn't slide)
+						PM_SetAnim( pm, moving ? SETANIM_TORSO : SETANIM_BOTH, openAnim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD, 100 );
+						pm->ps->torsoAnimTimer = openMs;
+						pm->ps->weaponTime = openMs;
+						break;
+					}
 					saberMoveName_t nextMove;
 					if ( PM_SaberInBrokenParry( pm->ps->saberBounceMove ) )
 					{//already have one...?
@@ -12236,6 +12597,11 @@ void PM_WeaponLightsaber(void)
 		{
 			pm->ps->weaponTime = 0;
 		}
+	}
+
+	if ( pm->gent && WP_SaberHitStopped( pm->gent ) )
+	{//JKEnhanced: frozen for a hit-stop (wp_saber.cpp) - the saber code waits until it ends
+		return;
 	}
 
 	if ( pm->ps->weapons[WP_SCEPTER]
@@ -12749,7 +13115,12 @@ void PM_WeaponLightsaber(void)
 		&& (pm->ps->clientNum < MAX_CLIENTS || PM_ControlledByPlayer()) )
 	{
 		PM_CheckKick();
-		return;
+		if ( PM_KickingAnim( pm->ps->legsAnim ) || PM_KickingAnim( pm->ps->torsoAnim ) )
+		{//kicking (or already mid-kick): that's this frame's saber action
+			return;
+		}
+		//no kick could start (mid-air, mid-swing...): carry on as normal, so holding kick doesn't
+		//shut off attacking and blocking
 	}
 
 	if ( PM_CheckAltKickAttack() )
@@ -12924,7 +13295,10 @@ void PM_WeaponLightsaber(void)
 				if ( pm->ps->saber[0].animSpeedScale != 0 )
 				{
 					pm->ps->heavyAttackSpeedRestore = pm->ps->saber[0].animSpeedScale;
-					pm->ps->saber[0].animSpeedScale *= g_heavyAttackSpeedScale->value;
+					if ( !WP_SaberRules() )
+					{//(saber rules: the wind-up plays at full speed and is held at full draw instead - PM_SetSaberMove)
+						pm->ps->saber[0].animSpeedScale *= g_heavyAttackSpeedScale->value;
+					}
 				}
 				pm->ps->heavyAttackEndTime = level.time + 3000;//generous safety net; refreshed again at the windup->strike handoff
 				if ( pm->gent && pm->gent->chestBolt != -1 )
@@ -12933,12 +13307,24 @@ void PM_WeaponLightsaber(void)
 					extern int G_EffectIndex( const char *name );
 					G_PlayEffect( G_EffectIndex("force/rage2"), pm->gent->playerModel, pm->gent->chestBolt, pm->gent->s.number, pm->gent->currentOrigin, 3000, qtrue );
 				}
+				{//JKEnhanced: an audible windup too, so the perfect-parry timing has a clear cue
+					extern cvar_t *g_heavyAttackSound;
+					extern void G_SoundOnEnt( gentity_t *ent, soundChannel_t channel, const char *soundPath );
+					if ( pm->gent && g_heavyAttackSound && g_heavyAttackSound->string[0] )
+					{
+						G_SoundOnEnt( pm->gent, CHAN_AUTO, g_heavyAttackSound->string );
+					}
+				}
 			}
 			else if ( curmove >= LS_PARRY_UP && curmove <= LS_REFLECT_LL )
 			{//from a parry or reflection, can go directly into an attack
 				if ( pm->ps->clientNum >= MAX_CLIENTS && !PM_ControlledByPlayer() )
 				{//NPCs
-					newmove = PM_NPCSaberAttackFromQuad( saberMoveData[curmove].endQuad );
+					newmove = PM_NPCPhraseAttack();//JKEnhanced saber rules: the swing the AI's phrase asks for
+					if ( newmove == LS_NONE )
+					{
+						newmove = PM_NPCSaberAttackFromQuad( saberMoveData[curmove].endQuad );
+					}
 				}
 				else
 				{
@@ -12984,7 +13370,12 @@ void PM_WeaponLightsaber(void)
 						newmove = saberMoveData[curmove].chain_idle;
 					}
 					else */
-					if ( pm->ps->clientNum >= MAX_CLIENTS
+					const saberMoveName_t phraseMove = PM_NPCPhraseAttack();
+					if ( phraseMove != LS_NONE )
+					{//JKEnhanced saber rules: an NPC's swings come from its style's phrases, not a roll
+						newmove = phraseMove;
+					}
+					else if ( pm->ps->clientNum >= MAX_CLIENTS
 						&& !PM_ControlledByPlayer()
 						&& (Q_irand( 0, pm->ps->forcePowerLevel[FP_SABER_OFFENSE]-1 )
 							|| (pm->gent&&pm->gent->enemy&&pm->gent->enemy->client&&PM_InKnockDownOnGround(&pm->gent->enemy->client->ps))//enemy knocked down, use some logic
@@ -13836,11 +14227,17 @@ static void PM_Weapon( void )
 	}
 
 	if ( pm->ps->weapon == WP_Z6_ROTARY && pm->ps->z6Heat > 0 && pm->ps->z6HeatDecayTime < level.time )
-	{//cool down when not actively adding heat (WP_FireZ6Rotary keeps pushing this stamp forward while firing)
-		pm->ps->z6Heat -= 1;
-		if ( pm->ps->z6Heat < 0 )
+	{//cool down when not actively adding heat (WP_FireZ6Rotary keeps pushing this stamp forward while firing):
+	 //1 heat per 20 ms of game time, using the stamp as the clock (it was 1 per pmove, so it cooled
+	 //faster at high frame rates and with the player's sub-stepped pmoves)
+		while ( pm->ps->z6Heat > 0 && pm->ps->z6HeatDecayTime + 20 <= level.time )
 		{
-			pm->ps->z6Heat = 0;
+			pm->ps->z6Heat--;
+			pm->ps->z6HeatDecayTime += 20;
+		}
+		if ( pm->ps->z6HeatDecayTime < level.time - 20 )
+		{//(caught up, or stale after a load)
+			pm->ps->z6HeatDecayTime = level.time - 20;
 		}
 	}
 
@@ -14857,6 +15254,9 @@ void PM_CheckForceUseButton( gentity_t *ent, usercmd_t *ucmd  )
 		case FP_SABERTHROW:
 			ucmd->buttons |= BUTTON_SABERTHROW;
 			break;
+		case FP_REPULSE://JKEnhanced 4B: hold F to charge, let go to throw
+			ucmd->buttons |= BUTTON_REPULSE;
+			break;
 //		default:
 //			Com_Printf( "Use Force: Unhandled force: %d\n", showPowers[cg.forcepowerSelect]);
 //			break;
@@ -14994,6 +15394,79 @@ void PM_AdjustAttackStates( pmove_t *pm )
 {
 	int amount;
 
+	{//JKEnhanced g_debugBlock: the block button's press/release, and anything stopping block switching on
+		extern cvar_t *g_debugBlock;
+		if ( g_debugBlock && g_debugBlock->integer && pm->ps->clientNum == 0 && pm->gent && pm->gent->client )
+		{
+			const qboolean now = (qboolean)( ( pm->cmd.buttons & BUTTON_SABERBLOCK ) != 0 );
+			const qboolean before = (qboolean)( ( pm->gent->client->buttons & BUTTON_SABERBLOCK ) != 0 );
+			if ( now != before )
+			{
+				Com_Printf( "block %s%s%s%s%s\n", now ? "PRESSED" : "released",
+					( now && g_saberAutoBlocking->integer ) ? " - IGNORED: g_saberAutoBlocking is on" : "",
+					( now && g_saberNewControlScheme->integer ) ? " - IGNORED: g_saberNewControlScheme is on" : "",
+					( now && in_camera ) ? " - IGNORED: in a camera view" : "",
+					( now && pm->ps->weapon != WP_SABER ) ? " - IGNORED: saber not your weapon" : "" );
+			}
+		}
+	}
+
+	//JKEnhanced block cancel: when did the player's current live strike begin (the cancel window counts
+	//from there; see the block branch below)
+	static int s_strikeMove = LS_NONE;
+	static int s_strikeStart = 0;
+	static int s_lastStrikeCancel = -100000;
+	if ( pm->ps->clientNum == 0 )
+	{
+		if ( PM_SaberInAttack( pm->ps->saberMove ) || PM_SaberInSpecialAttack( pm->ps->torsoAnim ) )
+		{
+			if ( s_strikeMove != pm->ps->saberMove )
+			{
+				s_strikeMove = pm->ps->saberMove;
+				s_strikeStart = pm->cmd.serverTime;
+			}
+		}
+		else
+		{
+			s_strikeMove = LS_NONE;
+		}
+	}
+
+	//JKEnhanced: a block pressed too late to pull the swing back is queued, not dropped: the moment the
+	//strike ends, the player goes straight into guard (no return/chain, no Force) for g_blockReleaseGrace ms.
+	//Holding block does this anyway (it cancels the return); this covers a tap. Attacking again drops it.
+	static qboolean	s_blockQueued = qfalse;
+	static int		s_blockQueuedTime = 0;
+	if ( pm->ps->clientNum == 0 && s_blockQueued && pm->gent )
+	{
+		if ( (pm->cmd.buttons&(BUTTON_SABERBLOCK|BUTTON_ATTACK))
+			|| pm->cmd.serverTime < s_blockQueuedTime || pm->cmd.serverTime - s_blockQueuedTime > 1500 )
+		{
+			s_blockQueued = qfalse;
+		}
+		else if ( !PM_SaberInAttack( pm->ps->saberMove ) && !PM_SaberInSpecialAttack( pm->ps->torsoAnim ) )
+		{//the swing is over
+			s_blockQueued = qfalse;
+			if ( pm->ps->weapon == WP_SABER && !pm->ps->saberInFlight
+				&& !PM_SaberInBrokenParry( pm->ps->saberMove ) && !PM_InKnockDown( pm->ps )
+				&& TIMER_Done( pm->gent, "parryStaggered" ) )
+			{
+				extern cvar_t *g_blockReleaseGrace;
+				extern cvar_t *g_debugBlock;
+				pm->ps->weaponTime = 0;
+				pm->ps->saberMove = pm->ps->saberMoveNext = LS_READY;
+				pm->ps->saberBounceMove = LS_NONE;
+				pm->ps->torsoAnimTimer = 0;
+				pm->ps->saberAttackChainCount = 0;
+				pm->ps->saberBlockingTime = pm->cmd.serverTime + Q_max( 100, g_blockReleaseGrace->integer );
+				if ( g_debugBlock && g_debugBlock->integer )
+				{
+					Com_Printf( "queued block: guard up as your swing ended\n" );
+				}
+			}
+		}
+	}
+
 	if ( !g_saberAutoBlocking->integer
 		&& !g_saberNewControlScheme->integer
 		&& !in_camera
@@ -15022,7 +15495,92 @@ void PM_AdjustAttackStates( pmove_t *pm )
 			pm->ps->saberBlockStartTime = pm->cmd.serverTime;
 			pm->ps->perfectParryDebounce = pm->cmd.serverTime + cooldown;
 		}
-		pm->ps->saberBlockingTime = pm->cmd.serverTime + 100;
+		{//JKEnhanced: block stays up g_blockReleaseGrace ms after release (was a flat 100); a hit in that
+		 //time while starting an attack is parried instead (WP_BlockReleaseGraceParry, wp_saber.cpp)
+			extern cvar_t *g_blockReleaseGrace;
+			pm->ps->saberBlockingTime = pm->cmd.serverTime + Q_max( 100, g_blockReleaseGrace->integer );
+		}
+		{//JKEnhanced: block always answers. Pressing/holding block drops the player's own swing - wind-up,
+		 //strike, bounce, transition, return - straight into guard, so a held block never "does nothing".
+		 //Cancelling the live strike (or a kata) costs g_blockCancelCost Force (no Force: you're committed).
+		 //No cancel out of a broken parry, a knockdown or a stagger: those are the visible punishes.
+			extern cvar_t *g_blockCancelCost;
+			if ( pm->ps->clientNum == 0 && pm->gent && !pm->ps->saberInFlight && !WP_SaberHitStopped( pm->gent )
+				&& pm->ps->saberMove != LS_READY
+				&& ( PM_SaberInStart( pm->ps->saberMove ) || PM_SaberInAttack( pm->ps->saberMove )
+					|| PM_SaberInTransitionAny( pm->ps->saberMove ) || PM_SaberInReturn( pm->ps->saberMove )
+					|| PM_SaberInBounce( pm->ps->saberMove ) || PM_SaberInSpecialAttack( pm->ps->torsoAnim ) )
+				&& !PM_SaberInBrokenParry( pm->ps->saberMove ) && !PM_InKnockDown( pm->ps )
+				&& TIMER_Done( pm->gent, "parryStaggered" ) )
+			{
+				//a swing that's already been blocked (bounce pending) is a bounce, not a live strike
+				const qboolean live = (qboolean)( pm->ps->saberBlocked != BLOCKED_ATK_BOUNCE
+					&& ( PM_SaberInAttack( pm->ps->saberMove ) || PM_SaberInSpecialAttack( pm->ps->torsoAnim ) ) );
+				const int cost = live ? g_blockCancelCost->integer : 0;
+				//the live strike can only be pulled back early (g_blockCancelWindow ms into it), and not again
+				//within g_blockCancelCooldown; wind-ups, bounces, transitions and returns cancel any time
+				extern cvar_t *g_blockCancelWindow;
+				extern cvar_t *g_blockCancelCooldown;
+				const int cancelWindow = g_blockCancelWindow->integer
+					+ ( G_SpeedLevelPS( pm->ps ) >= FORCE_LEVEL_2 ? G_ForceTuning()->speedCancelBonus : 0 );//JKEnhanced 4B.6: Speed 2+ (Flow)
+				const qboolean strikeOk = (qboolean)( !live
+					|| ( pm->cmd.serverTime - s_strikeStart <= cancelWindow
+						&& pm->cmd.serverTime - s_lastStrikeCancel >= g_blockCancelCooldown->integer ) );
+				if ( !strikeOk || pm->ps->forcePower < cost )
+				{//committed: queue the block for when the swing ends (above); g_debugBlock says why, once per swing
+					if ( !s_blockQueued )
+					{
+						s_blockQueued = qtrue;
+						s_blockQueuedTime = pm->cmd.serverTime;
+					}
+					extern cvar_t *g_debugBlock;
+					static int s_refusedStrikeStart = -1;
+					if ( g_debugBlock && g_debugBlock->integer && s_refusedStrikeStart != s_strikeStart )
+					{
+						s_refusedStrikeStart = s_strikeStart;
+						Com_Printf( "block can't cancel this swing (queued for when it ends): %s\n",
+							pm->ps->forcePower < cost ? "not enough Force"
+							: ( pm->cmd.serverTime - s_strikeStart > cancelWindow
+								? va( "committed (%d ms in, window %d)", pm->cmd.serverTime - s_strikeStart, cancelWindow )
+								: "cancelled one too recently" ) );
+					}
+				}
+				else
+				{
+					if ( live )
+					{
+						s_lastStrikeCancel = pm->cmd.serverTime;
+					}
+					//a pulled-back wind-up or strike is a feint: enemies reacting to it bite (WP_PlayerFeint).
+					//The strike already paid; a wind-up feint costs the same Force only if someone bites.
+					const qboolean windup = (qboolean)( !live && PM_SaberInStart( pm->ps->saberMove ) );
+					pm->ps->forcePower -= cost;
+					pm->ps->weaponTime = 0;
+					pm->ps->saberMove = pm->ps->saberMoveNext = LS_READY;
+					pm->ps->saberBounceMove = LS_NONE;
+					pm->ps->saberBlocked = BLOCKED_NONE;
+					pm->ps->torsoAnimTimer = 0;
+					pm->ps->saberAttackChainCount = 0;
+					qboolean feinted = qfalse;
+					if ( live || ( windup && pm->ps->forcePower >= g_blockCancelCost->integer ) )
+					{
+						extern qboolean WP_PlayerFeint( gentity_t *player );
+						feinted = WP_PlayerFeint( pm->gent );
+						if ( feinted && windup )
+						{
+							pm->ps->forcePower -= g_blockCancelCost->integer;
+						}
+					}
+					extern cvar_t *g_debugBlock;
+					if ( g_debugBlock && g_debugBlock->integer )
+					{
+						Com_Printf( "block CANCELLED your %s%s%s\n", live ? "swing" : ( windup ? "wind-up" : "recovery" ),
+							( live || ( windup && feinted ) ) ? va( " (-%d Force)", g_blockCancelCost->integer ) : "",
+							feinted ? " - FEINT" : "" );
+					}
+				}
+			}
+		}
 		pm->cmd.buttons &= ~BUTTON_ATTACK;
 		pm->cmd.buttons &= ~BUTTON_ALT_ATTACK;
 	}
@@ -15407,7 +15965,7 @@ Pmove
 Can be called by either the server or the client
 ================
 */
-void Pmove( pmove_t *pmove )
+static void PmoveSingle( pmove_t *pmove )
 {
 	Vehicle_t *pVeh = NULL;
 
@@ -15845,5 +16403,103 @@ void Pmove( pmove_t *pmove )
 	if ( pm->ps->pm_flags & PMF_SLOW_MO_FALL )
 	{//half grav
 		pm->ps->gravity *= 2;
+	}
+}
+
+/*
+================
+Pmove (JKEnhanced, Step 3G)
+
+The player's movement used to run as one step of however long the client frame was (1-200 ms),
+so low frame rates moved in big steps: different jump heights, landing, step-ups and slides than
+at high frame rates. Now a player command longer than g_playerMaxStep ms (default 8; 0 = off) is
+split into equal sub-steps, so 30 fps moves like ~120 fps. NPCs (fixed server frames) are as before.
+Across sub-steps: button press edges count once (client->buttons is "last frame" during the later
+sub-steps and restored after), and touched entities from every sub-step are kept.
+g_debugFrameRate 1 prints each jump's apex, air time and average frame length on landing.
+================
+*/
+extern cvar_t	*g_playerMaxStep;
+extern cvar_t	*g_debugFrameRate;
+void Pmove( pmove_t *pmove )
+{
+	const int	finalTime = pmove->cmd.serverTime;
+	int			total = finalTime - pmove->ps->commandTime;
+	const int	maxStep = ( g_playerMaxStep && pmove->ps->clientNum == 0 ) ? g_playerMaxStep->integer : 0;
+
+	if ( maxStep <= 0 || total <= maxStep || total > 200 )
+	{//one step (as stock): NPCs, high frame rates, or a hitch
+		PmoveSingle( pmove );
+	}
+	else
+	{
+		const int	steps = ( total + maxStep - 1 ) / maxStep;
+		const int	savedButtons = ( pmove->gent && pmove->gent->client ) ? pmove->gent->client->buttons : 0;
+		const usercmd_t	originalCmd = pmove->cmd;	//pmove edits its cmd (clears upmove after a force jump, strips buttons...): every sub-step starts from the real one
+		int			touchents[MAXTOUCH];
+		int			numtouch = 0;
+		for ( int s = 0; s < steps; s++ )
+		{
+			const int remainingSteps = steps - s;
+			const int chunk = ( finalTime - pmove->ps->commandTime ) / remainingSteps;
+			pmove->cmd = originalCmd;
+			pmove->cmd.serverTime = ( s == steps - 1 ) ? finalTime : pmove->ps->commandTime + Q_max( 1, chunk );
+			if ( s > 0 && pmove->gent && pmove->gent->client )
+			{//press edges only on the first sub-step
+				pmove->gent->client->buttons = pmove->cmd.buttons;
+			}
+			PmoveSingle( pmove );
+			for ( int t = 0; t < pmove->numtouch && numtouch < MAXTOUCH; t++ )
+			{
+				int k;
+				for ( k = 0; k < numtouch; k++ )
+				{
+					if ( touchents[k] == pmove->touchents[t] )
+					{
+						break;
+					}
+				}
+				if ( k == numtouch )
+				{
+					touchents[numtouch++] = pmove->touchents[t];
+				}
+			}
+		}
+		if ( pmove->gent && pmove->gent->client )
+		{
+			pmove->gent->client->buttons = savedButtons;
+		}
+		memcpy( pmove->touchents, touchents, sizeof( touchents[0] ) * numtouch );
+		pmove->numtouch = numtouch;
+	}
+
+	if ( g_debugFrameRate && g_debugFrameRate->integer && pmove->ps->clientNum == 0 )
+	{//jump measurement: apex above takeoff, air time, average frame length while airborne
+		static qboolean	s_inAir = qfalse;
+		static float	s_startZ, s_maxZ;
+		static int		s_startTime, s_frames, s_msecSum;
+		const qboolean	inAir = (qboolean)( pmove->ps->groundEntityNum == ENTITYNUM_NONE );
+		if ( inAir && !s_inAir )
+		{
+			s_startZ = s_maxZ = pmove->ps->origin[2];
+			s_startTime = finalTime;
+			s_frames = 0;
+			s_msecSum = 0;
+		}
+		if ( inAir )
+		{
+			if ( pmove->ps->origin[2] > s_maxZ )
+			{
+				s_maxZ = pmove->ps->origin[2];
+			}
+			s_frames++;
+			s_msecSum += total;
+		}
+		else if ( s_inAir && s_frames > 0 )
+		{
+			Com_Printf( "jump: apex %.1f, air %d ms, %d frames of %.1f ms avg (g_playerMaxStep %d)\n",
+				s_maxZ - s_startZ, finalTime - s_startTime, s_frames, (float)s_msecSum / s_frames, maxStep );
+		}
+		s_inAir = inAir;
 	}
 }
