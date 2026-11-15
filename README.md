@@ -30,15 +30,69 @@ Perfect parry retrigger changed from re-pressing block to tapping attack while b
 Cooldown between perfect-parry windows is now split by threat: 1000ms after a saber hit, only 150ms if a blaster bolt is incoming (g_perfectParryCooldownSaber / g_perfectParryCooldownMissile) -- blasters fire way faster than sabers swing, so the old single cooldown made blocking a burst basically impossible
 Perfectly parrying a thrown saber now disarms the thrower entirely; NPCs throw their sabers less often and can't spam it back-to-back anymore
 Removed the old requirement to strafe toward side attacks while manually blocking -- holding block now parries from any direction, timing is the skill test instead
+The perfect-parry window now scales with the attack: slower, heavier styles (Strong, Desann) give you a wider window, Fast and dual/staff flurries a tighter one, faster-playing swings tighten it, and telegraphed heavy attacks and katas widen it (x1.5, g_perfectParryHeavyScale). g_debugParry 1 prints how early your tap was against the window for each hit
+A perfect parry now pays off properly: the attacker loses more guard (40, g_perfectParryGuardDamage) and is knocked off balance for a moment (can't parry or attack, g_perfectParryStagger), you gain a little Force (g_perfectParryForceGain, double against heavy attacks), and you get a riposte -- attack within 0.6s and the swing comes out instantly and goes through their parry/dodge (g_perfectRiposteTime; no damage bonus). Perfectly parrying a kata stops it dead and staggers them
+Enemies that land a perfect parry on you get the same stagger on you, but no riposte damage bonus
+No more dice in saber clashes (g_saberDeterministic, on by default; 0 brings back the stock rolls): a held block against a normal swing always holds -- what wears you down is Force, and harder swings (Strong/Desann, heavy attacks) cost more to block; at 0 Force your block breaks. Only a telegraphed heavy attack can disarm or knock you down, and only a perfect parry stops one cleanly. Only masters and bosses can knock your swing away, and only when they READ you -- they're hanging back defending and you hit from the same direction twice or swing a long string of attacks -- so mix up your angles. Regular saber enemies just block.
+Block always answers: pressing block cancels your own swing, its recovery or a bounce straight into guard, so holding block never "does nothing". Cancelling the live part of a swing costs a little Force (5, g_blockCancelCost) and only works early in the swing (first 200ms, g_blockCancelWindow) and not twice in a row (500ms, g_blockCancelCooldown) -- after that you're committed; wind-ups, bounces and recoveries can always be cancelled.
+Feints: pull back your wind-up or the start of a swing (within 0.3s) with block while an enemy is squaring up to parry it, and they bite -- for a moment they can't parry or attack, and your next swing comes out instantly. Costs 5 Force (a wind-up feint only costs it if someone bites). Each enemy is wary of feints for a few seconds after biting, and masters see through about half
+Pressing block too late no longer does nothing: the block is queued, and the moment your swing ends you drop straight into guard
+Fixed: Force Drain's close-range grab went straight through Absorb, and Absorb gave no Force back from Drain -- an Absorbing target can't be grabbed now and gets Force back from every Drain tick
+Fixed: the stealth light meter showed while you were knocked down or rolling
+Fixed: Insanity cost twice its Force when it worked, and full price when it missed or hit someone immune
+Fixed: enemies lying on the ground or getting up could still parry your saber (a stab-down on a downed Reborn did no damage)
+Fixed: bosses using Force Rage drained their own health straight through their guard stages; an enemy's Rage now never takes it below a quarter of its health or past a stage
+Fixed: your Force Lightning hit (and cost Force) once per rendered frame, so it was far stronger at high frame rates; it now ticks at a steady rate like everyone else's
+Fixed: Absorb sometimes gave back huge amounts of Force (up to 48 from a single Grip or Push) because it read the wrong cost
+Fixed: a boss's stage-break Repulse was cut off by the hit that caused it; it now fires right after, full body, with a shockwave and screen shake when the stage breaks
+Fixed: Stasis did nothing unless your crosshair was exactly on the target; it now takes the enemy nearest your aim
+Fixed: Tavion (scepter) could freeze in place for the rest of the fight after a scepter ground slam
+Fixed: Tavion's scepter beam hit every 50 ms with no limit and could take 700+ health in a second; it now hits a few times a second for much less
+Fixed: Tavion (scepter) and dual-saber Alora never got their boss Repulse or boss-sized guard
+Fixed: an enemy stabbing down at you while you were knocked down did uncapped damage on every frame (thousands per hit); it is now one normal hit
+Enemies now have a real Force bar: their powers cost Force like yours and they back off to recover when they run low, so no more endless Push and saber-throw spam. Blocking and jumping stay free for them; bosses get a bigger bar that refills faster
+Force Push and Pull hitting several targets cost a little more per extra target (15 / 20 / 25 / 30) instead of up to 50
+Force costs and the enemy Force pool are tunable in ext_data/force.cfg
+Force Repulse is back as a core power for you: hold to charge, release to blast everyone around you away. Its rank sets the reach and how far the charge can build
+Breaking a boss's guard while they're at the end of a stage now clears the stage right away, instead of needing another hit in a one-second window
+Fixed: holding Force Lightning on a boss locked them in their resist pose until they died; after a moment of resisting they now Push you away
+Force Lightning does less damage per tick (about 40% of before) now that it ticks at a steady rate
+Breaking an enemy's guard no longer multiplies your saber damage (it was up to x3.75); a broken guard still can't parry, dodge or soak hits
+Fixed: some enemies (Gran shooters, Rodians, Trandoshans) never got the Z-6 rotary cannon they were meant to carry; they do now
+New testing tools: forcesandbox (cheat: all Force powers plus a ring of test targets), g_debugForce 1 (prints every Force cast, its cost and what it did), forcetally (how often each enemy used each power)
+Swing meets swing: if you're mid-swing and an enemy's swing lands on you from the front, your swing blocks it (any direction) and theirs bounces off -- no more trading hits (g_saberClashBlock). Heavy attacks still need a perfect parry. The only times block can't save you are when you've been visibly punished: your swing got knocked away (broken parry), you're knocked down, or staggered. Saber locks only happen when both swings are heavy, and not over and over
+Block release grace: your block stays up for a moment after you let go of it (350ms, g_blockReleaseGrace). If a hit lands in that time while you're only starting an attack (wind-up/transition, not the actual strike), your attack is cancelled into a parry instead of eating the hit -- since you can't hold block and attack at the same time, letting go to swing no longer leaves you wide open. No grace if your swing already got knocked away or you're mid-strike
+g_debugBlock 1: whenever a saber hit gets through while you're blocking, the console says why (block not active, out of Force, mid-animation, their swing broke your parry and with what numbers, hit from behind/the side, etc.)
 NPCs with a guard pool show a thin orange composure bar under their health bar; flashes white while broken
+Boss guard stages: bosses (Desann, Tavion, Alora, Kyle and other boss characters) fight in stages -- their health is split into thirds (g_bossGuardStages), and you can't cut through a stage while their guard is up (hits that would go past it wear their guard down instead). Break their guard and you can take that stage -- but only that one. Each time they lose a stage they blast you back with Force Repulse, are untouchable for a moment (1.5s, g_bossStageRecover) and come back with a stronger guard. No more bosses dropping to two lucky hits
+Enemies use Force Repulse too: bosses get it automatically, and any NPC can be given it in its .npc file (FP_REPULSE). They use it to clear space when two or more enemies crowd them, or to get you off them when they are trying to recover -- watch for the two-handed charge pose. Scripts can grant it with setForceRepulse / SET_FORCE_REPULSE
+New .npc key "guardStages N": set how many guard stages an NPC fights in (bosses default to g_bossGuardStages, everyone else 1 = none; any NPC with a guard pool can opt in)
+Boss stages stick: Drain and Heal can no longer heal a boss back into a stage you already took off them
+One saber swing now hits you (or an enemy saberist) once -- the blade staying in contact used to land 2-5 full hits from a single swing
+Saber-lock wins and stab-downs only do their uncapped finishing damage to someone who actually lost the lock or is on the ground -- no more 1000+ damage hits from a lock-win animation brushing past you
+Fixed: after an enemy's heavy attack got interrupted, their next normal swings were still treated as heavy for a few seconds (your swing wouldn't clash-block them and normal blocks failed)
+Master duelists read a flurry after about 5 swings in a row, not 2-3
+Enemy saber hits on you now depend on who is swinging: a basic saberist takes about 4-5 hits to kill you, trained Jedi/Reborn about 3, bosses 2. Telegraphed heavy attacks hit 1.5x harder, Easy/Hard scale it x0.75/x1.25, and nothing but a lost saber lock or a stab while you are down one-shots you. Realistic saber combat now only makes YOUR hits lethal; hits on you follow the same numbers (g_saberPlayerDamageScale to tune)
+Getting your swing knocked away or staggered is punished once: the hit that lands ends it and you can block again
+Hit indicators: red marks around the crosshair point at whoever just hit you, and turn with you (cg_damageIndicator)
+Distinct sounds when you break an enemy's guard and when a hit gets through your block (g_guardBreakSound / g_blockFailSound)
+Snipers show a red laser while they charge a shot, and live enemy grenades and det packs near you are marked on screen (or at the edge of the crosshair ring when behind you) (cg_threatCues)
+Enemy katas have a cooldown (they used to be rolled every moment you were in range) and play the same warning sound as a heavy attack
+Fixed: a thrown saber hit you (or an enemy) every frame it was touching you; it now hits once on the way out and once on the way back, at the same damage as that enemy's swing. Enemies also throw their saber less often (every 8-14s at most)
+New difficulty file ext_data/difficulty.cfg: enemy bolt damage, weapon skill, saber damage to you, your parry window, enemy nerve, enemy guard and how often they throw heavy attacks, per difficulty (replaces g_npcDamageEasy/Normal/Hard). Easy now also gives a wider parry window, weaker guards and fewer heavies; Hard the opposite
+Frame rate no longer changes how you move: at low frame rates your movement now runs in small steps (g_playerMaxStep), so jumps and landings match high frame rates. Force regen no longer slows down at low frame rates
+Ledge assist: hold jump and forward into a ledge just out of reach and you get lifted onto it (g_ledgeAssist)
+Note: savegames from before this update won't load
 
 
 HEAVY ATTACKS
 --------------------------------------
 Saber-capable enemies can now telegraph a heavy attack: a visibly slowed windup into a normal-speed strike, so you get a real tell instead of every swing looking the same -- one enemy can only do this once every 7 seconds (g_heavyAttackCooldown)
-Blocking a heavy attack without perfect timing still staggers you, but damage is halved compared to a normal mistimed block -- rewards at least trying to block a heavy swing even if the timing's off
+Only a perfect parry stops a heavy attack cleanly -- perfectly parrying one breaks the enemy's guard outright. Blocking it with bad timing breaks your block: a long stagger where you can't block or attack (0.9s, g_heavyBlockStagger), most of the damage still gets through (x0.75, g_heavyBlockDamage) and it costs Force (g_heavyBlockForceCost). Not blocking at all takes the full hit
+Heavy attacks now have a sound on the windup as well as the glow (g_heavyAttackSound) so you can time the parry by ear
+Enemies pick their moment for a heavy attack instead of rolling dice: when you're recovering or off balance, low on Force, mid-swing or backing off -- and they avoid throwing one into a ready guard. Better fighters (higher blockSkill) read it better (g_heavyAttackThreshold)
 A Force push/pull/repulse/grip that actually staggers someone now locks out the caster's own follow-up attack for a share of the victim's recovery time (g_forceStaggerLockoutScale, 60%) so you can't just push someone down and get a free hit every time
-Katas now count as heavy attacks too -- mistiming a block against one gets the same heavy-attack stagger treatment
+Katas now count as heavy attacks too -- mistiming a block against one gets the same broken-block treatment
 
 
 SABER DAMAGE
