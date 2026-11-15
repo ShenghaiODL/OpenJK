@@ -209,7 +209,7 @@ static void Brain_BuildContext( aiContext_t *ctx, const aiProfile_t *prof, qbool
 		}
 	}
 	ctx->health			= NPC->max_health > 0 ? (float)NPC->health / (float)NPC->max_health : 1.0f;
-	ctx->underFire		= !TIMER_Done( NPC, "underFire" ) ? 1.0f : ( !TIMER_Done( NPC, "nrv5" ) ? 0.5f : 0.0f );//nrv5 = the near-miss debounce
+	ctx->underFire		= !TIMER_Done( NPC, "underFire" ) ? 1.0f : ( !TIMER_Done( NPC, va( "nrv%d", NE_NEAR_MISS ) ) ? 0.5f : 0.0f );//the near-miss debounce (AI_Nerve.cpp Nerve_Apply)
 	ctx->nerve			= AI_NerveEffective( NPC );
 	ctx->nerveTier		= AI_NerveTier( NPC );
 	ctx->intelligence	= NPCInfo->stats.intelligence;
@@ -410,6 +410,10 @@ static float Score_Suppress( const aiContext_t *ctx )
 
 static float Score_Retreat( const aiContext_t *ctx )
 {
+	if ( !TIMER_Done( NPC, "retreatFail" ) )
+	{//just found nowhere to go: don't search again every rescore
+		return 0;
+	}
 	if ( ctx->nerveTier >= NT_BREAKING )
 	{
 		return 0.8f + ( ctx->nerveTier == NT_BROKEN ? 0.15f : 0.0f );
@@ -427,7 +431,7 @@ static float Score_Retreat( const aiContext_t *ctx )
 
 static float Score_Flee( const aiContext_t *ctx )
 {
-	if ( !ctx->canFlee )
+	if ( !ctx->canFlee || !TIMER_Done( NPC, "fleeFail" ) )
 	{
 		return 0;
 	}
@@ -634,8 +638,23 @@ static qboolean Brain_Enter( int action, const aiContext_t *ctx )
 
 	case AA_STRAFE:
 		{
+			//only toward a side with floor under it (a strafe at full speed covers ~150 units: off a
+			//ledge or into a lift shaft, otherwise)
+			vec3_t	right, sideEnd[2];
+			const vec3_t yawOnly = { 0, NPC->client->ps.viewangles[YAW], 0 };
+			AngleVectors( yawOnly, NULL, right, NULL );
+			VectorMA( NPC->currentOrigin, -128.0f, right, sideEnd[0] );
+			VectorMA( NPC->currentOrigin, 128.0f, right, sideEnd[1] );
+			const qboolean leftOk = NPC_GroundAlongPath( NPC, NPC->currentOrigin, sideEnd[0] );
+			const qboolean rightOk = NPC_GroundAlongPath( NPC, NPC->currentOrigin, sideEnd[1] );
+			if ( !leftOk && !rightOk )
+			{
+				TIMER_Set( NPC, "strafeDebounce", Q_irand( 1000, 2000 ) );
+				return qfalse;
+			}
+			const qboolean goLeft = ( leftOk && rightOk ) ? (qboolean)Q_irand( 0, 1 ) : leftOk;
 			const int strafeTime = Q_irand( 400, 900 );
-			TIMER_Set( NPC, Q_irand( 0, 1 ) ? "strafeLeft" : "strafeRight", strafeTime );
+			TIMER_Set( NPC, goLeft ? "strafeLeft" : "strafeRight", strafeTime );
 			TIMER_Set( NPC, "strafeDebounce", strafeTime + Q_irand( 1000, 2000 ) );
 		}
 		return qtrue;
@@ -655,6 +674,7 @@ static qboolean Brain_Enter( int action, const aiContext_t *ctx )
 			else
 			{
 				TIMER_Set( NPC, "relocateFail", 3000 );
+				TIMER_Set( NPC, "retreatFail", 3000 );
 				return qfalse;
 			}
 		}
@@ -668,7 +688,12 @@ static qboolean Brain_Enter( int action, const aiContext_t *ctx )
 		{
 			return qfalse;
 		}
-		return NPC_StartFlee( NPC->enemy, NPC->enemy->currentOrigin, AEL_DANGER_GREAT, 4000, 8000 );
+		if ( !NPC_StartFlee( NPC->enemy, NPC->enemy->currentOrigin, AEL_DANGER_GREAT, 4000, 8000 ) )
+		{//(script forbids it, or a flee script took over): don't try again every rescore
+			TIMER_Set( NPC, "fleeFail", 3000 );
+			return qfalse;
+		}
+		return qtrue;
 
 	case AA_SEEK_WEAPON:
 		return qtrue;	// NPC_CheckGetNewWeapon already set the pickup goal
@@ -893,32 +918,30 @@ void AI_Brain_Think( gentity_t *npc, qboolean enemyLOS, qboolean enemyCS, qboole
 		}
 		if ( canSwitch )
 		{
-			if ( cur != AA_NONE )
-			{
-				Brain_Exit( cur );
-			}
+			//start the new action first, and only leave the old one once it's underway: a failed start
+			//used to exit and re-enter the current action, which restarted a cover hold (and its duck)
+			//every rescore while a failing retreat kept winning
 			if ( Brain_Enter( best, &ctx ) )
 			{
+				if ( cur != AA_NONE )
+				{
+					Brain_Exit( cur );
+				}
 				Brain_Log( NPC, scores, cur, best );
 				NPCInfo->aiAction = best;
 				NPCInfo->aiActionStart = level.time;
 				NPCInfo->aiActionHoldUntil = level.time + actionDefs[best].minHoldMs;
 				dbg->lastSwitchTime = level.time;
 			}
-			else
-			{//couldn't start it; fall back to standing and shooting rather than freezing
-				if ( cur == AA_NONE || cur == best )
-				{
-					Brain_Enter( AA_STAND_FIRE, &ctx );
-					NPCInfo->aiAction = AA_STAND_FIRE;
-					NPCInfo->aiActionStart = level.time;
-					NPCInfo->aiActionHoldUntil = level.time + actionDefs[AA_STAND_FIRE].minHoldMs;
-				}
-				else
-				{//keep doing what we were doing
-					Brain_Enter( cur, &ctx );
-				}
+			else if ( cur == AA_NONE )
+			{//couldn't start it, and nothing running: stand and shoot rather than freeze
+				Brain_Enter( AA_STAND_FIRE, &ctx );
+				Brain_Log( NPC, scores, cur, AA_STAND_FIRE );
+				NPCInfo->aiAction = AA_STAND_FIRE;
+				NPCInfo->aiActionStart = level.time;
+				NPCInfo->aiActionHoldUntil = level.time + actionDefs[AA_STAND_FIRE].minHoldMs;
 			}
+			//else: keep doing what we were doing, untouched
 		}
 	}
 

@@ -335,6 +335,8 @@ extern void NPC_SetMoveGoal( gentity_t *ent, vec3_t point, int radius, qboolean 
 
 extern void NPC_ApplyWeaponFireDelay(void);
 
+extern qboolean NPC_GroundAlongPath( gentity_t *self, const vec3_t from, const vec3_t to );
+
 //NPC_FaceXXX suite
 extern qboolean NPC_FacePosition( vec3_t position, qboolean doPitch = qtrue );
 extern qboolean NPC_FaceEntity( gentity_t *ent, qboolean doPitch = qtrue );

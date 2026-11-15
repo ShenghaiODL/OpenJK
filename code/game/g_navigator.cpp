@@ -4447,15 +4447,24 @@ void			STEER::DeActivate(gentity_t* actor, usercmd_t* ucmd)
 					// Opportunistic obstacle climb: if a short structure is directly ahead, hop to its top
 					bool climbAttempted = false;
 					vec3_t forward;
-					AngleVectors( actor->client->ps.viewangles, forward, NULL, NULL );
+					//the way we're actually trying to go (the view can be on the enemy while we strafe)
+					VectorSet( forward, actor->client->ps.velocity[0], actor->client->ps.velocity[1], 0 );
+					if ( VectorNormalize( forward ) < 1.0f )
+					{
+						const vec3_t yawOnly = { 0, actor->client->ps.viewangles[YAW], 0 };
+						AngleVectors( yawOnly, forward, NULL, NULL );
+					}
 					vec3_t checkFrom, checkTo;
 					VectorMA( actor->currentOrigin, 80, forward, checkFrom );
 					checkFrom[2] = actor->currentOrigin[2] + 80;
 					VectorCopy( checkFrom, checkTo );
 					checkTo[2] = actor->currentOrigin[2] - 10;
 					trace_t climbTrace;
-					gi.trace( &climbTrace, checkFrom, vec3_origin, vec3_origin, checkTo, actor->s.number, actor->clipmask, (EG2_Collision)0, 0 );
-					if ( !climbTrace.startsolid && climbTrace.fraction < 1.0f )
+					//solid geometry only: a squadmate or the player in the way is not "a short structure"
+					//to hop onto (actor->clipmask includes bodies)
+					gi.trace( &climbTrace, checkFrom, vec3_origin, vec3_origin, checkTo, actor->s.number, MASK_SOLID, (EG2_Collision)0, 0 );
+					if ( !climbTrace.startsolid && climbTrace.fraction < 1.0f
+						&& ( climbTrace.entityNum >= ENTITYNUM_WORLD || !g_entities[climbTrace.entityNum].client ) )
 					{
 						float topHeight = climbTrace.endpos[2] - actor->currentOrigin[2];
 						if ( topHeight > 8.0f && topHeight < 80.0f )

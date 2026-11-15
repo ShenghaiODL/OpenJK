@@ -1961,7 +1961,7 @@ void Think_SetupTrainTargets( gentity_t *ent ) {
 		return;
 	}
 
-	//FIXME: this can go into an infinite loop if last path_corner doesn't link to first
+	//(an infinite loop if the last path_corner doesn't link to the first is capped below)
 	//path_corner, like so:
 	// t1---->t2---->t3
 	//         ^      |
@@ -1971,8 +1971,9 @@ void Think_SetupTrainTargets( gentity_t *ent ) {
 	int iterations = 2000;	//max attempts to find our path start
 	for ( path = ent->nextTrain ; path != start ; path = next ) {
 		if (!iterations--)
-		{
-			G_Error( "Think_SetupTrainTargets:  last path_corner doesn't link back to first on func_train(%s)", vtos(ent->absmin) );
+		{//JKEnhanced: a warning, not G_Error - a bad path_corner chain in a map shouldn't end the game
+			gi.Printf( S_COLOR_RED"Think_SetupTrainTargets: last path_corner doesn't link back to first on func_train(%s)\n", vtos(ent->absmin) );
+			break;
 		}
 		if (!start)
 		{

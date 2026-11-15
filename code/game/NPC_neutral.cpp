@@ -135,6 +135,9 @@ void G_ReviveNeutralized( gentity_t *npc, gentity_t *reviver )
 	ni->neutralState = NS_NONE;
 	ni->neutralHow = NH_NONE;
 	ni->neutralFlags &= ~NF_DOWNED;
+	//they'll pick a gun up again: if they're taken out a second time it has to drop (targets,
+	//scripts and the subdued count stay once-only)
+	ni->neutralFlags &= ~NF_DROPPED_INV;
 	ni->neutralTime = 0;
 	TIMER_Remove( npc, "CheckForWeaponToPickup" );
 	TIMER_Remove( npc, "maimed" );
@@ -434,9 +437,15 @@ void G_Neutralize( gentity_t *npc, gentity_t *attacker, int how )
 // an ordinary death anim, frozen on its last frame: the same pose a corpse ends in, so the
 // body lies on the floor properly (the crosshair still reads them as a live enemy, which is
 // the tell that they're only out cold)
+static int s_downedAnim[MAX_GENTITIES];	//the pose they went down in, so a bump puts them back in the same one
 static void Neutral_SetDownedAnim( gentity_t *npc )
 {
-	const int anim = PM_PickAnim( npc, BOTH_DEATH1, BOTH_DEATH25 );
+	int anim = s_downedAnim[npc->s.number];
+	if ( npc->NPC->neutralTime == level.time || anim < BOTH_DEATH1 || anim > BOTH_DEATH25 )
+	{//just went down (or after a load): pick one
+		anim = PM_PickAnim( npc, BOTH_DEATH1, BOTH_DEATH25 );
+		s_downedAnim[npc->s.number] = anim;
+	}
 	NPC_SetAnim( npc, SETANIM_BOTH, anim, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
 	npc->client->ps.torsoAnimTimer = npc->client->ps.legsAnimTimer = Q3_INFINITE;
 }
@@ -560,6 +569,10 @@ static qboolean Neutral_MaimedThink( void )
 
 static qboolean Neutral_FleeingThink( void )
 {
+	if ( !TIMER_Done( NPC, "fleeScript" ) )
+	{//their flee script is running (NPC_StartFlee): let it drive them
+		return qfalse;
+	}
 	if ( NPCInfo->surrenderTime > level.time )
 	{//the flee logic gave up and put its hands up
 		NPCInfo->neutralState = NS_SURRENDERED;

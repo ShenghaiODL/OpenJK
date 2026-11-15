@@ -1021,19 +1021,17 @@ void NPC_BSSearch (void)
 {
 	NPC_CheckAlertEvents(qtrue, qtrue, -1, qfalse, AEL_DANGER, qfalse);
 
+	if ( TIMER_Exists( NPC, "searchGiveUp" ) && NPCInfo->tempBehavior != BS_SEARCH )
+	{//the timer belongs to a temporary search (NPC_BSSearchStart) that's over: a scripted
+	 //behaviorState BS_SEARCH searches for as long as the designer wants
+		TIMER_Remove( NPC, "searchGiveUp" );
+	}
 	if ( TIMER_Exists( NPC, "searchGiveUp" ) && TIMER_Done( NPC, "searchGiveUp" ) )
 	{//looked long enough: back to whatever we were doing (it used to go on forever)
 		TIMER_Remove( NPC, "searchGiveUp" );
 		AI_AwarenessReset( NPC, 0.2f );
 		G_AddVoiceEvent( NPC, Q_irand( EV_GIVEUP1, EV_GIVEUP4 ), 3000 );
-		if ( NPCInfo->tempBehavior == BS_SEARCH )
-		{
-			NPCInfo->tempBehavior = BS_DEFAULT;
-		}
-		else
-		{
-			NPCInfo->behaviorState = BS_DEFAULT;
-		}
+		NPCInfo->tempBehavior = BS_DEFAULT;
 		NPC_UpdateAngles( qtrue, qtrue );
 		return;
 	}
@@ -1808,6 +1806,10 @@ qboolean NPC_FindFleeSpot( const vec3_t dangerPosIn, vec3_t outPos )
 		{
 			continue;
 		}
+		if ( !NPC_GroundAlongPath( NPC, NPC->currentOrigin, candidate ) )
+		{//...and all the way there (a pit or shaft in between)
+			continue;
+		}
 
 		float score = run * ( 0.5f + 0.5f * dot );
 		if ( score > bestScore )
@@ -2067,8 +2069,8 @@ qboolean NPC_BSFlee( void )
 	return qfalse;
 }
 
-//returns qfalse when it couldn't start a flee at all (script forbids it, or a flee script took
-//over instead), so callers can do something else rather than leaving the NPC frozen
+//returns qfalse when it couldn't start a flee at all (a scripted move pending, or SCF_DONT_FLEE), so
+//callers can do something else rather than leaving the NPC frozen. A flee script counts as fleeing.
 qboolean NPC_StartFlee( gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, int fleeTimeMin, int fleeTimeMax )
 {
 	if ( Q3_TaskIDPending( NPC, TID_MOVE_NAV ) )
@@ -2092,12 +2094,14 @@ qboolean NPC_StartFlee( gentity_t *enemy, vec3_t dangerPoint, int dangerLevel, i
 
 	//if have a fleescript, run that instead
 	if ( G_ActivateBehavior( NPC, BSET_FLEE ) )
-	{
+	{//the designer's flee: that IS the flee (returning qfalse here made callers put their hands up
+	 //instead, freezing the script). "fleeScript" tells the neutral code to leave them to it.
 		if ( debugNPCAI->integer )
 		{
 			gi.Printf( "%s: flee script ran instead of fleeing\n", NPC->NPC_type );
 		}
-		return qfalse;
+		TIMER_Set( NPC, "fleeScript", Q_irand( fleeTimeMin, fleeTimeMax ) );
+		return qtrue;
 	}
 
 	//FIXME: play a flee sound?  Appropriate to situation?

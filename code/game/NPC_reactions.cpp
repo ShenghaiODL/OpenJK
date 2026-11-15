@@ -109,15 +109,20 @@ static void NPC_CheckAttacker( gentity_t *other, int mod )
 	if ( other == NPC->enemy )
 		return;
 
-	if ( other->s.number >= MAX_CLIENTS && other->client && G_ValidEnemy( NPC, other ) )
+	extern qboolean G_IsSaberBoss( const gentity_t *ent, qboolean includeElites );
+	if ( other->s.number >= MAX_CLIENTS && other->client && G_ValidEnemy( NPC, other )
+		&& NPC->client->ps.weapon != WP_SABER && !G_IsSaberBoss( NPC, qtrue ) )
 	{//shot by an enemy NPC (the player's allies) while busy with someone else: they get our
-	 //attention if our current target is out of sight or further away, or just by being persistent
+	 //attention if our current target is out of sight or further away. (Saber fighters and bosses
+	 //stay on their duel - they use the Jedi rules below. A plain 1-in-3 roll used to pull them off
+	 //the player mid-fight for any companion hit.)
 		const float dOther = DistanceSquared( NPC->currentOrigin, other->currentOrigin );
 		const float dCur   = DistanceSquared( NPC->currentOrigin, NPC->enemy->currentOrigin );
+		const qboolean fightingPlayer = (qboolean)( NPC->enemy->s.number == 0 );
 		if ( !gi.inPVS( NPC->currentOrigin, NPC->enemy->currentOrigin )
 			|| ( NPC->NPC && level.time - NPC->NPC->enemyLastSeenTime > 2000 )
 			|| dOther < dCur
-			|| !Q_irand( 0, 2 ) )
+			|| ( !fightingPlayer && !Q_irand( 0, 2 ) ) )
 		{
 			NPC->lastEnemy = NPC->enemy;
 			G_ClearEnemy( NPC );

@@ -430,10 +430,6 @@ void G_SetEnemy( gentity_t *self, gentity_t *enemy )
 	if ( enemy == NULL )
 		return;
 
-	if ( self->NPC && self->enemy != enemy )
-	{//however we got here, we're onto them now
-		AI_AwarenessSetAlert( self );
-	}
 
 	//Must be valid
 	if ( enemy->inuse == 0 )
@@ -512,12 +508,22 @@ void G_SetEnemy( gentity_t *self, gentity_t *enemy )
 		//FIXME: Have to do this to prevent alert cascading
 		G_ClearEnemy( self );
 		self->enemy = enemy;
+		AI_AwarenessSetAlert( self );//onto them now (only once they're really our enemy: an early return above leaves awareness alone)
 		if ( self->client && WP_UsesWeaponProfile( self->client->ps.weapon ) )
 		{// reaction time before the first shot at a new enemy: 900ms at weapon skill 1 .. 200ms at skill 5
 			const int reaction = 900 - ( WP_NPCWeaponSkill( self ) - 1 ) * 175;
 			self->NPC->shotTime = Q_max( self->NPC->shotTime, level.time + reaction );
 		}
-		if (self->client && self->client->NPC_class == CLASS_SABOTEUR)
+		extern cvar_t *g_saboteurCloakV2;
+		extern void Saboteur_StartEngage( gentity_t *self );
+		if ( self->client && self->client->NPC_class == CLASS_SABOTEUR && g_saboteurCloakV2->integer )
+		{//JKEnhanced: hit-and-fade (AI_Stormtrooper.cpp) opens with a fade
+			if ( self->NPC && (self->NPC->aiFlags&NPCAI_SHIELDS) )
+			{
+				Saboteur_StartEngage( self );
+			}
+		}
+		else if (self->client && self->client->NPC_class == CLASS_SABOTEUR)
 		{
 			Saboteur_Cloak(NPC);					// Cloak
 			TIMER_Set(self, "decloakwait", 12000);	// Stay cloaked for ~12s before attacking
@@ -674,6 +680,7 @@ void G_SetEnemy( gentity_t *self, gentity_t *enemy )
 	//Take the enemy
 	G_ClearEnemy(self);
 	self->enemy = enemy;
+	AI_AwarenessSetAlert( self );//onto them now
 }
 
 

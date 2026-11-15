@@ -274,11 +274,13 @@ void NPC_BSHuntAndKill( void )
 			//FIXME, use IdealDistance to determin if we need to close distance
 			VectorSubtract(NPC->enemy->currentOrigin, NPC->currentOrigin, vec);
 			enemyDist = VectorLength(vec);
-			qboolean hasRangedWeapon = (qboolean)( NPC->s.weapon != WP_SABER && NPC->s.weapon != WP_MELEE && NPC->s.weapon != WP_NONE );
+			//(staff, stun baton and fists are melee: ST_IsMeleeWeapon)
+			extern qboolean ST_IsMeleeWeapon( int weapon );
+			qboolean hasRangedWeapon = (qboolean)( NPC->s.weapon != WP_SABER && NPC->s.weapon != WP_NONE && !ST_IsMeleeWeapon( NPC->s.weapon ) );
 			if( enemyDist > 48
 				&& ( !hasRangedWeapon || enemyDist > 150 )
 				&& ((enemyDist*1.5)*(enemyDist*1.5) >= NPC_MaxDistSquaredForWeapon() ||
-				( hasRangedWeapon ? oEVis < VIS_FOV : oEVis != VIS_SHOOT ) ||
+				oEVis != VIS_SHOOT ||//no clear shot (behind cover too): close in
 				enemyDist > IdealDistance(NPC)*3 ) )
 			{//We should close in?
 				NPCInfo->goalEntity = NPC->enemy;

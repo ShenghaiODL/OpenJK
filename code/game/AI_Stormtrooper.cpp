@@ -81,6 +81,20 @@ void NPC_Saboteur_Precache( void )
 	G_SoundIndex( "sound/chars/shadowtrooper/decloak.wav" );
 }
 
+/*
+G_CloakTransitionMs (JKEnhanced): how long PW_UNCLOAKING lasts. Saboteurs under g_saboteurCloakV2 snap in/out in
+0.75 s; everything else keeps the stock 2 s. cg_players.cpp reads it too (same DLL) to time the fade.
+*/
+extern cvar_t *g_saboteurCloakV2;
+int G_CloakTransitionMs( const gentity_t *ent )
+{
+	if ( ent && ent->client && ent->client->NPC_class == CLASS_SABOTEUR && g_saboteurCloakV2 && g_saboteurCloakV2->integer )
+	{
+		return 750;
+	}
+	return 2000;
+}
+
 void Saboteur_Decloak( gentity_t *self, int uncloakTime )
 {
 	if ( self && self->client )
@@ -88,7 +102,7 @@ void Saboteur_Decloak( gentity_t *self, int uncloakTime )
 		if ( self->client->ps.powerups[PW_CLOAKED] && TIMER_Done(self, "decloakwait"))
 		{//Uncloak
 			self->client->ps.powerups[PW_CLOAKED] = 0;
-			self->client->ps.powerups[PW_UNCLOAKING] = level.time + 2000;
+			self->client->ps.powerups[PW_UNCLOAKING] = level.time + G_CloakTransitionMs( self );
 			//FIXME: temp sound
 			G_SoundOnEnt( self, CHAN_ITEM, "sound/chars/shadowtrooper/decloak.wav" );
 			TIMER_Set( self, "nocloak", uncloakTime );
@@ -112,12 +126,183 @@ void Saboteur_Cloak( gentity_t *self )
 			else if ( !self->client->ps.powerups[PW_CLOAKED] )
 			{//cloak
 				self->client->ps.powerups[PW_CLOAKED] = Q3_INFINITE;
-				self->client->ps.powerups[PW_UNCLOAKING] = level.time + 2000;
+				self->client->ps.powerups[PW_UNCLOAKING] = level.time + G_CloakTransitionMs( self );
 				//FIXME: debounce attacks?
 				//FIXME: temp sound
 				G_SoundOnEnt( self, CHAN_ITEM, "sound/chars/shadowtrooper/cloak.wav" );
 			}
 		}
+	}
+}
+
+/*
+Saboteur hit-and-fade (JKEnhanced, g_saboteurCloakV2; 2 = debug lines)
+
+FADE: cloaked, holding fire, slipping to a flanking combat point (3-5 s).
+STRIKE: the first shot comes from cloak (a brief shimmer, cgame "cloakReveal"), then the cloak drops
+for the rest of the burst (2.5-4 s, or until hurt for 15% of max health), then back to FADE.
+RETREAT: under 35% health or nerve below 30, cloak and break contact (flee) for 7 s, once per 25 s.
+Phases live in TIMERs ("sabFade", "sabStrike", "sabRetreat"), so they save; s_sabStrikeHealth doesn't
+(a stale value only ends one strike early).
+*/
+extern cvar_t	*g_saboteurCloakV2;
+static int		s_sabStrikeHealth[MAX_GENTITIES];
+
+static void Saboteur_Debug( const char *msg )
+{
+	if ( g_saboteurCloakV2->integer > 1 )
+	{
+		gi.Printf( "SABOTEUR %s#%d: %s\n", NPC->NPC_type ? NPC->NPC_type : "?", NPC->s.number, msg );
+	}
+}
+
+static void Saboteur_StartFade( void )
+{
+	TIMER_Remove( NPC, "sabStrike" );
+	TIMER_Remove( NPC, "sabDropCloak" );
+	TIMER_Set( NPC, "sabFade", Q_irand( 3000, 5000 ) );
+	TIMER_Remove( NPC, "nocloak" );
+	Saboteur_Cloak( NPC );
+	TIMER_Set( NPC, "cloakReposition", 0 );
+	Saboteur_Debug( "FADE - cloaked, relocating" );
+}
+
+static void Saboteur_StartStrike( void )
+{
+	TIMER_Remove( NPC, "sabFade" );
+	TIMER_Remove( NPC, "sabDropCloak" );
+	TIMER_Set( NPC, "sabStrike", Q_irand( 2500, 4000 ) );
+	s_sabStrikeHealth[NPC->s.number] = NPC->health;
+	Saboteur_Debug( "STRIKE - opening from cloak" );
+}
+
+static void Saboteur_Reposition( void )
+{
+	if ( !NPC->enemy || !TIMER_Done( NPC, "cloakReposition" ) )
+	{
+		return;
+	}
+	TIMER_Set( NPC, "cloakReposition", Q_irand( 2000, 4000 ) );
+	int cpFlags = CP_FLANK | CP_APPROACH_ENEMY | CP_HAS_ROUTE | CP_AVOID_ENEMY;
+	vec3_t dummy;
+	const int cp = NPC_FindCombatPointRetry( NPC->currentOrigin, NPC->currentOrigin, dummy, &cpFlags, 128, NPCInfo->lastFailedCombatPoint );
+	if ( cp != -1 )
+	{
+		NPC_SetCombatPoint( cp );
+		NPC_SetMoveGoal( NPC, level.combatPoints[cp].origin, 8, qtrue, cp );
+	}
+	else
+	{
+		NPC_SetMoveGoal( NPC, NPCInfo->enemyLastSeenLocation, 64, qfalse, -1 );
+	}
+}
+
+void Saboteur_StartEngage( gentity_t *self )
+{//NPC_combat.cpp G_SetEnemy: open with a fade instead of the stock 12 s cloak
+	gentity_t *saved = NPC;
+	NPC = self;
+	NPCInfo = self->NPC;
+	Saboteur_StartFade();
+	NPC = saved;
+	NPCInfo = saved ? saved->NPC : NULL;
+}
+
+static void Saboteur_HitAndFade( qboolean *shoot )
+{
+	playerState_t	*ps = &NPC->client->ps;
+	const qboolean	cloaked = (qboolean)( ps->powerups[PW_CLOAKED] != 0 );
+	if ( !(NPCInfo->aiFlags&NPCAI_SHIELDS) )
+	{//not allowed to cloak: a plain trooper
+		return;
+	}
+
+	if ( NPC->enemy && TIMER_Done( NPC, "sabRetreatCD" )
+		&& ( NPC->health < NPC->max_health * 0.35f || AI_NerveEffective( NPC ) < 30 ) )
+	{
+		TIMER_Set( NPC, "sabRetreatCD", 25000 );
+		TIMER_Set( NPC, "sabRetreat", 7000 );
+		TIMER_Remove( NPC, "sabStrike" );
+		TIMER_Remove( NPC, "sabFade" );
+		TIMER_Remove( NPC, "nocloak" );
+		Saboteur_Cloak( NPC );
+		if ( !NPC_StartFlee( NPC->enemy, NPC->enemy->currentOrigin, AEL_DANGER, 5000, 7000 ) )
+		{//nowhere to flee to: at least get off the line of fire
+			int cpFlags = CP_RETREAT | CP_AVOID_ENEMY | CP_HAS_ROUTE;
+			vec3_t dummy;
+			const int cp = NPC_FindCombatPointRetry( NPC->currentOrigin, NPC->currentOrigin, dummy, &cpFlags, 256, NPCInfo->lastFailedCombatPoint );
+			if ( cp != -1 )
+			{
+				NPC_SetCombatPoint( cp );
+				NPC_SetMoveGoal( NPC, level.combatPoints[cp].origin, 8, qtrue, cp );
+			}
+		}
+		Saboteur_Debug( va( "RETREAT - health %d/%d, nerve %d", NPC->health, NPC->max_health, AI_NerveEffective( NPC ) ) );
+	}
+	if ( !TIMER_Done( NPC, "sabRetreat" ) )
+	{
+		*shoot = qfalse;
+		if ( !cloaked )
+		{
+			Saboteur_Cloak( NPC );
+		}
+		return;
+	}
+
+	if ( !TIMER_Done( NPC, "sabStrike" ) )
+	{
+		if ( NPC->health < s_sabStrikeHealth[NPC->s.number] - NPC->max_health * 0.15f )
+		{
+			Saboteur_Debug( "hurt mid-strike" );
+			Saboteur_StartFade();
+			*shoot = qfalse;
+			return;
+		}
+		if ( cloaked )
+		{
+			if ( *shoot && TIMER_Done( NPC, "attackDelay" ) && !TIMER_Exists( NPC, "sabDropCloak" ) )
+			{//the opening shot: a shimmer gives them away, and the cloak drops just after
+				TIMER_Set( NPC, "cloakReveal", 500 );
+				TIMER_Set( NPC, "sabDropCloak", 300 );
+			}
+			else if ( TIMER_Exists( NPC, "sabDropCloak" ) && TIMER_Done( NPC, "sabDropCloak" ) )
+			{
+				TIMER_Remove( NPC, "sabDropCloak" );
+				TIMER_Remove( NPC, "decloakwait" );
+				Saboteur_Decloak( NPC, 1500 );
+				Saboteur_Debug( "decloaked for the burst" );
+			}
+		}
+		return;
+	}
+
+	if ( !TIMER_Done( NPC, "sabFade" ) )
+	{
+		*shoot = qfalse;
+		if ( !cloaked )
+		{
+			TIMER_Remove( NPC, "nocloak" );
+			Saboteur_Cloak( NPC );
+		}
+		Saboteur_Reposition();
+		return;
+	}
+
+	//the phase ran out: a fade ends in a strike, a strike in a fade
+	if ( cloaked && !TIMER_Exists( NPC, "sabStrike" ) )
+	{
+		Saboteur_StartStrike();
+	}
+	else if ( cloaked )
+	{//a strike that never got its shot off (no line or clear shot the whole time): fade and move,
+	 //don't start another strike from the same spot (they used to stand there cloaked forever)
+		Saboteur_Debug( "strike timed out with no shot - repositioning" );
+		Saboteur_StartFade();
+		*shoot = qfalse;
+	}
+	else
+	{
+		Saboteur_StartFade();
+		*shoot = qfalse;
 	}
 }
 
@@ -490,7 +675,7 @@ qboolean NPC_CheckEnemiesInSpotlight( void )
 
 	for ( i = 0; i < numListedEntities; i++ )
 	{
-		if(!PInUse(i))
+		if ( !entityList[i] || !entityList[i]->inuse )//(was PInUse(i): that tests g_entities[i], not the i-th entity in this list)
 			continue;
 
 		enemy = entityList[i];
@@ -597,7 +782,14 @@ static qboolean NPC_ST_InvestigateEvent( int eventID, bool extraSuspicious )
 				{//a dead or knocked-out buddy: always worth walking over to (a KO'd one gets shaken awake,
 				 //NPC_BSST_Investigate); a second one, or one found while already on edge, means someone's
 				 //here -- call it in as well
-					const qboolean secondBody = (qboolean)( TIMER_Exists( NPC, "bodySeen" ) || NPCInfo->awareState >= AW_SUSPICIOUS );
+					//(a body re-posts its sight alert every alert cycle with a new ID: seeing the same one
+					//again is not a second body, and the awareness it raised the first time doesn't count)
+					static int s_bodySeenEnt[MAX_GENTITIES];
+					const int bodyNum = level.alertEvents[eventID].owner->s.number + 1;
+					const qboolean sameBody = (qboolean)( TIMER_Exists( NPC, "bodySeen" ) && s_bodySeenEnt[NPC->s.number] == bodyNum );
+					const qboolean secondBody = (qboolean)( !sameBody
+						&& ( TIMER_Exists( NPC, "bodySeen" ) || NPCInfo->awareState >= AW_SUSPICIOUS ) );
+					s_bodySeenEnt[NPC->s.number] = bodyNum;
 					TIMER_Set( NPC, "bodySeen", 60000 );
 					AI_AwarenessNoise( NPC, AEL_DISCOVERED, level.alertEvents[eventID].position, NULL );
 					if ( secondBody && TIMER_Done( NPC, "bodyFoundBroadcast" ) )
@@ -814,6 +1006,27 @@ static void ST_LookAround( void )
 }
 
 /*
+ST_EndReviveKneel (JKEnhanced)
+
+The revive kneel holds BOTH_CROUCH3 with infinite anim timers. Anything that ends it early (the
+downed buddy is gone, the trooper spots the player, takes a hit, leaves investigate) has to let go
+of the pose too, or they fight on frozen in the kneel.
+*/
+void ST_EndReviveKneel( void )
+{
+	if ( !TIMER_Exists( NPC, "reviveKneel" ) && !TIMER_Exists( NPC, "reviveStand" ) )
+	{
+		return;
+	}
+	TIMER_Remove( NPC, "reviveKneel" );
+	TIMER_Remove( NPC, "reviveStand" );
+	if ( NPC->client->ps.torsoAnim == BOTH_CROUCH3 || NPC->client->ps.legsAnim == BOTH_CROUCH3 )
+	{
+		NPC->client->ps.torsoAnimTimer = NPC->client->ps.legsAnimTimer = 0;
+	}
+}
+
+/*
 -------------------------
 NPC_BSST_Investigate
 -------------------------
@@ -871,6 +1084,8 @@ void NPC_BSST_Investigate( void )
 	//If we're done looking, then just return to what we were doing
 	if ( ( NPCInfo->investigateDebounceTime + NPCInfo->pauseTime ) < level.time )
 	{
+		ST_EndReviveKneel();
+		NPCInfo->localState = LSTATE_NONE;
 		NPCInfo->tempBehavior = BS_DEFAULT;
 		NPCInfo->goalEntity = UpdateGoal();
 
@@ -907,6 +1122,7 @@ void NPC_BSST_Investigate( void )
 		gentity_t *downed = G_FindDownedAllyNear( NPC, 128.0f );
 		if ( downed )
 		{
+			NPCInfo->pauseTime = level.time;//tending to them isn't "found nothing": don't give up mid-kneel
 			const float reach = NPC->maxs[0] + downed->maxs[0] + 8.0f;//right beside them
 			if ( !TIMER_Exists( NPC, "reviveKneel" )
 				&& DistanceHorizontalSquared( NPC->currentOrigin, downed->currentOrigin ) > reach * reach )
@@ -953,8 +1169,7 @@ void NPC_BSST_Investigate( void )
 			NPC_UpdateAngles( qtrue, qtrue );
 			return;
 		}
-		TIMER_Remove( NPC, "reviveKneel" );
-		TIMER_Remove( NPC, "reviveStand" );
+		ST_EndReviveKneel();//(they came round, or someone else dealt with them: get up)
 
 		//Otherwise we're done or have given up
 		//Say something
@@ -971,6 +1186,102 @@ void NPC_BSST_Investigate( void )
 NPC_BSST_Patrol
 -------------------------
 */
+
+/*
+ST_SeekDownedAlly (JKEnhanced)
+
+A trooper with nothing to fight who sees a squadmate lying out cold walks over and shakes them awake
+(NPC_BSST_Investigate kneels and revives once they're beside the body). One helper per body at a
+time. Before this a revive only happened when an alert they investigated happened to land near the body.
+*/
+static int s_reviveClaim[MAX_GENTITIES];		// [downed]: reviver number + 1
+static int s_reviveClaimTime[MAX_GENTITIES];
+static qboolean ST_SeekDownedAlly( void )
+{
+	if ( !(NPCInfo->scriptFlags&SCF_CHASE_ENEMIES) || (NPCInfo->scriptFlags&SCF_IGNORE_ALERTS)
+		|| NPCInfo->confusionTime > level.time || NPCInfo->insanityTime > level.time
+		|| G_IsNeutralized( NPC ) || Q3_TaskIDPending( NPC, TID_MOVE_NAV )
+		|| ( NPCInfo->tempBehavior != BS_DEFAULT && NPCInfo->tempBehavior != BS_INVESTIGATE ) )
+	{
+		return qfalse;
+	}
+	if ( !TIMER_Done( NPC, "downedScan" ) )
+	{
+		return qfalse;
+	}
+	TIMER_Set( NPC, "downedScan", Q_irand( 800, 1200 ) );
+
+	const float	radius = 768.0f;
+	gentity_t	*list[MAX_GENTITIES];
+	vec3_t		mins, maxs;
+	for ( int k = 0; k < 3; k++ )
+	{
+		mins[k] = NPC->currentOrigin[k] - radius;
+		maxs[k] = NPC->currentOrigin[k] + radius;
+	}
+	const int	n = gi.EntitiesInBox( mins, maxs, list, MAX_GENTITIES );
+	gentity_t	*best = NULL;
+	float		bestDist = radius * radius;
+	for ( int k = 0; k < n; k++ )
+	{
+		gentity_t *e = list[k];
+		if ( e == NPC || !e->inuse || !e->client || !e->NPC || e->health <= 0
+			|| e->NPC->neutralState != NS_OUT_COLD || e->client->playerTeam != NPC->client->playerTeam
+			|| e->client->ps.heldByClient < ENTITYNUM_WORLD || (e->s.eFlags&EF_NODRAW) )
+		{
+			continue;
+		}
+		const int claim = s_reviveClaim[e->s.number] - 1;
+		if ( claim >= 0 && claim != NPC->s.number && level.time - s_reviveClaimTime[e->s.number] < 20000 )
+		{
+			const gentity_t *other = &g_entities[claim];
+			if ( other->inuse && other->health > 0 && other->NPC && !other->enemy && !G_IsNeutralized( (gentity_t *)other ) )
+			{//someone's already on their way
+				continue;
+			}
+		}
+		const float dist = DistanceSquared( e->currentOrigin, NPC->currentOrigin );
+		if ( dist >= bestDist )
+		{
+			continue;
+		}
+		//close by they notice from any side; further out it has to be in front of them
+		if ( dist > 192.0f * 192.0f && !InFOV( e->currentOrigin, NPC, 100, 60 ) )
+		{
+			continue;
+		}
+		if ( !G_ClearLOS( NPC, e ) )
+		{
+			continue;
+		}
+		best = e;
+		bestDist = dist;
+	}
+	if ( !best )
+	{
+		return qfalse;
+	}
+	s_reviveClaim[best->s.number] = NPC->s.number + 1;
+	s_reviveClaimTime[best->s.number] = level.time;
+	if ( NPCInfo->tempBehavior == BS_INVESTIGATE && NPCInfo->localState == LSTATE_INVESTIGATE && NPCInfo->goalEntity
+		&& DistanceSquared( NPCInfo->investigateGoal, best->currentOrigin ) < 64.0f * 64.0f )
+	{//already headed there
+		return qfalse;
+	}
+	VectorCopy( best->currentOrigin, NPCInfo->investigateGoal );
+	NPC_SetMoveGoal( NPC, NPCInfo->investigateGoal, 32, qtrue );
+	NPCInfo->localState = LSTATE_INVESTIGATE;
+	NPCInfo->tempBehavior = BS_INVESTIGATE;
+	NPCInfo->investigateDebounceTime = 10000;
+	NPCInfo->pauseTime = level.time;
+	AI_AwarenessNoise( NPC, AEL_SUSPICIOUS, best->currentOrigin, NULL );//on edge now
+	ST_Speech( NPC, SPEECH_SUSPICIOUS, 0.5f );
+	if ( d_aiLog && d_aiLog->integer && ( d_aiLog->integer < 0 || d_aiLog->integer == NPC->s.number ) )
+	{
+		gi.Printf( "%s (%d) going to wake %s (%d)\n", NPC->NPC_type, NPC->s.number, best->NPC_type, best->s.number );
+	}
+	return qtrue;
+}
 
 void NPC_BSST_Patrol( void )
 {//FIXME: pick up on bodies of dead buddies?
@@ -1032,6 +1343,12 @@ void NPC_BSST_Patrol( void )
 				}
 			}
 		}
+	}
+
+	if ( ST_SeekDownedAlly() )
+	{//a buddy out cold in sight: go and wake them (NPC_BSST_Investigate)
+		NPC_UpdateAngles( qtrue, qtrue );
+		return;
 	}
 
 	if ( !(NPCInfo->scriptFlags&SCF_IGNORE_ALERTS) )
@@ -1498,6 +1815,11 @@ qboolean ST_FindGeoCover( vec3_t outPos )
 		if ( DotProduct( toCandidate, toEnemy ) > 0.5f )
 			continue;
 
+		// Floor all the way there: across a shaft or a pit the waist trace hits the far wall, and the
+		// spot in front of it is mid-air (they walked straight off the ledge to reach it)
+		if ( !NPC_GroundAlongPath( NPC, NPC->currentOrigin, candidate ) )
+			continue;
+
 		// Spacing: skip if a squad member is already within 100 units.
 		bool tooClose = false;
 		if ( NPCInfo->group )
@@ -1512,9 +1834,14 @@ qboolean ST_FindGeoCover( vec3_t outPos )
 		}
 		if ( tooClose ) continue;
 
-		// Cover: check solid world geometry only (not entity bodies) from the player's eye.
+		// Cover: check solid world geometry only (not entity bodies) from the player's eye, to where
+		// our crouched head would be (as ST_SpotHiddenFromEnemy does) - testing the feet counted a
+		// knee-high crate as cover.
+		vec3_t candidateEye;
+		VectorCopy( candidate, candidateEye );
+		candidateEye[2] += 24.0f;
 		trace_t losTrace;
-		gi.trace( &losTrace, playerEye, vec3_origin, vec3_origin, candidate,
+		gi.trace( &losTrace, playerEye, vec3_origin, vec3_origin, candidateEye,
 		          NPC->enemy->s.number, CONTENTS_SOLID, (EG2_Collision)0, 0 );
 		if ( losTrace.fraction >= 1.0f )
 			continue;
@@ -1630,7 +1957,6 @@ FIXME: work in pairs?
 void ST_Commander( void )
 {
 	AIGroupInfo_t	*group = NPCInfo->group;
-	qboolean	enemyLost = qfalse;
 
 	group->processed = qtrue;
 
@@ -1665,18 +1991,19 @@ void ST_Commander( void )
 		NPCInfo->blockedSpeechDebounceTime = level.time + 3000;
 	}
 
-	if ( group->lastSeenEnemyTime < level.time - 7000 )
-	{//no-one has seen the enemy for at least 10 seconds!  Should send a scout
-		enemyLost = qtrue;
-	}
-
 	// The leader's nerve tier changed: they say so (steadier -> push them, shakier -> take cover).
 	// Last-announced tier per squad slot isn't saved; after a load the first change just re-announces.
 	if ( group->commander && group->commander->NPC )
 	{
 		static int s_announcedTier[MAX_FRAME_GROUPS] = { 0 };
+		static int s_announcedFormed[MAX_FRAME_GROUPS] = { 0 };
 		const int slot = (int)( group - level.groups );
 		const int newTier = AI_NerveTier( group->commander );//NT_STEADY 0 .. NT_BROKEN 3
+		if ( slot >= 0 && slot < MAX_FRAME_GROUPS && s_announcedFormed[slot] != group->formedTime )
+		{//a new squad in this slot: start from where its leader is now, don't announce a change it never had
+			s_announcedFormed[slot] = group->formedTime;
+			s_announcedTier[slot] = newTier;
+		}
 		if ( slot >= 0 && slot < MAX_FRAME_GROUPS && newTier != s_announcedTier[slot] )
 		{
 			if ( d_aiDebug->integer )
@@ -1700,7 +2027,6 @@ void ST_Commander( void )
 	//the per-member combat-point assignment that used to live here is each member's own
 	//decision now (AI_Brain_Think, called from NPC_BSST_Attack); the squad only tracks who's
 	//moving and who wants covering fire (AI_SquadUpdate)
-	(void)enemyLost;
 
 	RestoreNPCGlobals();
 	return;
@@ -1745,11 +2071,12 @@ void Noghri_StickTrace( gentity_t* self )
 			if ( trace.fraction < 1.0f && trace.entityNum != lastHit )
 			{//hit something
 				gentity_t *traceEnt = &g_entities[trace.entityNum];
+				extern qboolean G_MeleeSwingHit( gentity_t *attacker, gentity_t *target );
 				if ( traceEnt->takedamage
-					&& (!traceEnt->client || traceEnt == self->enemy || traceEnt->client->NPC_class != self->client->NPC_class) )
-				{//smack
+					&& (!traceEnt->client || traceEnt == self->enemy || traceEnt->client->NPC_class != self->client->NPC_class)
+					&& G_MeleeSwingHit( self, traceEnt ) )
+				{//smack (once per target per swing, G_MeleeSwingHit)
 					int dmg = Q_irand( 12, 20 );//FIXME: base on skill!
-					//FIXME: debounce?
 					G_Sound( traceEnt, G_SoundIndex( va( "sound/weapons/tusken_staff/stickhit%d.wav", Q_irand( 1, 4 ) ) ) );
 					G_Damage( traceEnt, self, self, vec3_origin, trace.endpos, dmg, DAMAGE_NO_KNOCKBACK, MOD_MELEE );
 					if ( traceEnt->health > 0 && dmg > 17 )
@@ -1883,12 +2210,21 @@ void NPC_BSST_Attack( void )
 			(NPCInfo->scriptFlags & SCF_ALT_FIRE) )
 		{//shooting an explosive, but enemy too close, switch to primary fire
 			NPCInfo->scriptFlags &= ~SCF_ALT_FIRE;
-			//FIXME: we can never go back to alt-fire this way since, after this, we don't know if we were initially supposed to use alt-fire or not...
+			//JKEnhanced: remember it, so they go back to the explosive once there's room again
+			//(vanilla FIXME: "we can never go back to alt-fire this way")
+			TIMER_Set( NPC, "altFireSuspended", Q3_INFINITE );
 		}
 	}
 	else if ( enemyDist > 65536 )//256 squared
 	{
-		if ( NPC->client->ps.weapon == WP_DISRUPTOR )
+		if ( (NPC->client->ps.weapon == WP_FLECHETTE || NPC->client->ps.weapon == WP_REPEATER)
+			&& TIMER_Exists( NPC, "altFireSuspended" ) )
+		{//they've backed off: back to the explosive alt-fire we dropped up close
+			TIMER_Remove( NPC, "altFireSuspended" );
+			NPCInfo->scriptFlags |= SCF_ALT_FIRE;
+			NPC_ChangeWeapon( NPC->client->ps.weapon );
+		}
+		if ( NPC->client->ps.weapon == WP_DISRUPTOR || NPC->client->ps.weapon == WP_CYCLER_RIFLE )
 		{//sniping...
 			if ( !(NPCInfo->scriptFlags&SCF_ALT_FIRE) )
 			{//use primary fire
@@ -2263,13 +2599,16 @@ void NPC_BSST_Attack( void )
 			shoot = qfalse;
 		}
 	}
-	// Saboteurs can fire while cloaked (see NPC_combat.cpp's cloaked-fire exemption for
-	// CLASS_SABOTEUR), but still need to actually decloak once their "decloakwait" timer
-	// (set in NPC_combat.cpp when they engaged) expires. Nothing else polls this once
-	// combat is ongoing, so try every think tick - Saboteur_Decloak() itself no-ops until
-	// the timer's ready, so this is safe/cheap to call unconditionally.
-	if ( NPC->client->NPC_class == CLASS_SABOTEUR )
-	{
+	if ( NPC->client->NPC_class == CLASS_SABOTEUR && g_saboteurCloakV2->integer )
+	{//JKEnhanced: hit-and-fade cycle
+		Saboteur_HitAndFade( &shoot );
+	}
+	else if ( NPC->client->NPC_class == CLASS_SABOTEUR )
+	{//V1: Saboteurs can fire while cloaked (see NPC_combat.cpp's cloaked-fire exemption for
+	 //CLASS_SABOTEUR), but still need to actually decloak once their "decloakwait" timer
+	 //(set in NPC_combat.cpp when they engaged) expires. Nothing else polls this once
+	 //combat is ongoing, so try every think tick - Saboteur_Decloak() itself no-ops until
+	 //the timer's ready, so this is safe/cheap to call unconditionally.
 		if ( TIMER_Done( NPC, "nocloak" ) && !TIMER_Done( NPC, "decloakwait" ) )
 		{
 			Saboteur_Cloak( NPC );
@@ -2370,7 +2709,7 @@ void NPC_BSST_Attack( void )
 	{
 		if ( NPC->attackDebounceTime < level.time )
 		{
-			if ( NPC->client->NPC_class == CLASS_SABOTEUR )
+			if ( NPC->client->NPC_class == CLASS_SABOTEUR && !g_saboteurCloakV2->integer )
 			{
 				Saboteur_Cloak( NPC );
 			}
@@ -2398,6 +2737,11 @@ extern qboolean G_TuskenAttackAnimDamage( gentity_t *self );
 extern void Tusken_StaffTrace( gentity_t *self );
 void NPC_BSST_Default( void )
 {
+	if ( NPC->enemy || NPCInfo->localState != LSTATE_INVESTIGATE || NPC->painDebounceTime > level.time )
+	{//a revive kneel cut short (spotted someone, got hit, stopped investigating): stand up
+		ST_EndReviveKneel();
+	}
+
 	if( NPCInfo->scriptFlags & SCF_FIRE_WEAPON )
 	{
 		WeaponThink( qtrue );

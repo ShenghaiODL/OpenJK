@@ -74,6 +74,7 @@ cvar_t		*d_noGroupAI;
 cvar_t		*d_aiDebug;				// draw nerve / decision info over NPC heads
 cvar_t		*d_nerveLog;			// print nerve events (-1 all, else entity number)
 cvar_t		*d_aiLog;				// print brain decisions (-1 all, else entity number)
+cvar_t		*d_jediStall;			// print why a saber NPC in reach has stopped swinging/moving (Release-safe)
 cvar_t		*d_slowmodeath;
 
 extern qboolean	stop_icarus;
@@ -2408,6 +2409,11 @@ void NPC_Think ( gentity_t *self)//, int msec )
 		return;
 	}
 
+	{//JKEnhanced: a boss stage break queued its Repulse (g_combat.cpp)
+		extern void G_BossStageRepulseThink( gentity_t *self );
+		G_BossStageRepulseThink( self );
+	}
+
 	// TODO! Tauntaun's (and other creature vehicles?) think, we'll need to make an exception here to allow that.
 
 	if ( self->client
@@ -2489,16 +2495,60 @@ void NPC_Think ( gentity_t *self)//, int msec )
 		}
 		else
 		{
-			// Scale think rate by reactions stat (1-5): higher reactions = faster decisions.
-			// reactions 1 → ~190ms, reactions 3 → ~130ms, reactions 5 → ~70ms
+			// Scale think rate by reactions stat (1-5): higher reactions = faster decisions, centred on
+			// vanilla's FRAMETIME (100 ms) at the default reactions 3 (it was 130 ms there: every NPC slower)
+			// reactions 1 → 140ms, reactions 3 → 100ms, reactions 5 → 60ms
 			int reactionMs = NPCInfo->stats.reactions > 0
-				? ( 220 - NPCInfo->stats.reactions * 30 )
+				? Q_max( 50, 160 - NPCInfo->stats.reactions * 20 )
 				: FRAMETIME;
 			NPCInfo->nextBStateThink = level.time + reactionMs;
 		}
 
 		//nextthink is set before this so something in here can override it
 		NPC_ExecuteBState( self );
+
+		{//JKEnhanced d_jediStall: a saber NPC with an enemy in reach that hasn't swung or moved for
+		 //2 s prints everything that could be holding it (Release-safe; repeats every 2 s while stuck)
+			extern cvar_t *d_jediStall;
+			extern qboolean PM_SaberInAttack( int move );
+			static int s_jediActive[MAX_GENTITIES];
+			static int s_jediStallPrint[MAX_GENTITIES];
+			const int n = NPC->s.number;
+			if ( d_jediStall && d_jediStall->integer && NPC->client->ps.weapon == WP_SABER
+				&& NPC->enemy && NPC->enemy->client && NPC->health > 0 )
+			{
+				if ( ucmd.forwardmove || ucmd.rightmove || ( ucmd.buttons & ( BUTTON_ATTACK | BUTTON_ALT_ATTACK ) )
+					|| PM_SaberInAttack( NPC->client->ps.saberMove )
+					|| !TIMER_Done( NPC, "bossStageRecover" )//a boss stage transition stands still on purpose
+					|| level.time < s_jediActive[n] || s_jediActive[n] == 0
+					|| Distance( NPC->currentOrigin, NPC->enemy->currentOrigin ) > 200 )
+				{
+					s_jediActive[n] = level.time;
+				}
+				else if ( level.time - s_jediActive[n] > 2000 && level.time - s_jediStallPrint[n] > 2000 )
+				{
+					s_jediStallPrint[n] = level.time;
+					extern qboolean AI_JediEnemyOpen( const gentity_t *npc );
+					const playerState_t *ps = &NPC->client->ps;
+					gi.Printf( S_COLOR_YELLOW "STALL %s (%d) %d ms: bState %d tempB %d duelRole %d agg %d enemyOpen %d dist %.0f\n",
+						NPC->NPC_type, n, level.time - s_jediActive[n], NPCInfo->behaviorState, NPCInfo->tempBehavior,
+						NPCInfo->duelRole, NPCInfo->stats.aggression, AI_JediEnemyOpen( NPC ),
+						Distance( NPC->currentOrigin, NPC->enemy->currentOrigin ) );
+					gi.Printf( S_COLOR_YELLOW "  torso %s (%d ms) legs %s (%d ms) saberMove %d blocked %d weaponTime %d pm_flags 0x%x pm_time %d\n",
+						animTable[ps->torsoAnim].name, ps->torsoAnimTimer, animTable[ps->legsAnim].name, ps->legsAnimTimer,
+						ps->saberMove, ps->saberBlocked, ps->weaponTime, ps->pm_flags, ps->pm_time );
+					gi.Printf( S_COLOR_YELLOW "  guard %d/%d break %d | parryStaggered %d attackDelay %d noRetreat %d | scriptFlags 0x%x neutral %d stasis %d pain %d | ground %d\n",
+						NPCInfo->guard, NPCInfo->guardMax, NPCInfo->guardBreakTime > level.time,
+						!TIMER_Done( NPC, "parryStaggered" ), !TIMER_Done( NPC, "attackDelay" ), !TIMER_Done( NPC, "noRetreat" ),
+						NPCInfo->scriptFlags, NPCInfo->neutralState, ps->stasisTime > level.time,
+						NPC->painDebounceTime > level.time, ps->groundEntityNum );
+				}
+			}
+			else
+			{
+				s_jediActive[n] = 0;
+			}
+		}
 
 #if	AI_TIMERS
 		int addTime = GetTime( startTime );
@@ -2551,6 +2601,7 @@ void NPC_InitAI ( void )
 	d_aiDebug = gi.cvar ( "d_aiDebug", "0", CVAR_CHEAT );
 	d_nerveLog = gi.cvar ( "d_nerveLog", "0", CVAR_CHEAT );
 	d_aiLog = gi.cvar ( "d_aiLog", "0", CVAR_CHEAT );
+	d_jediStall = gi.cvar ( "d_jediStall", "0", 0 );//JKEnhanced: 1 = report saber NPCs stuck in reach for 2 s+
 
 	//0 = never (BORING)
 	//1 = kyle only

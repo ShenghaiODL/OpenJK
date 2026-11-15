@@ -26,6 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../cgame/cg_local.h"
 #include "Q3_Interface.h"
 #include "b_local.h"
+#include "g_difficulty.h"
 #include "anims.h"
 #include "g_functions.h"
 #include "wp_saber.h"
@@ -707,7 +708,7 @@ NPC_WeaponsForTeam
 -------------------------
 */
 
-int NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type )
+uint64_t NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type )
 {
 	//*** not sure how to handle this, should I pass in class instead of team and go from there? - dmv
 	switch(team)
@@ -720,54 +721,54 @@ int NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type )
 			Q_stricmpn( "reborn", NPC_type, 6 ) == 0 ||
 			Q_stricmp( "desann", NPC_type ) == 0 ||
 			Q_stricmpn( "shadowtrooper", NPC_type, 13 ) == 0 )
-			return ( 1 << WP_SABER);
-//			return ( 1 << WP_IMPERIAL_BLADE);
+			return ( 1ULL << WP_SABER );
+//			return ( 1ULL << WP_IMPERIAL_BLADE );
 		//NOTENOTE: Falls through if not a knife user
 
 		//FIXME: default weapon in npc config?
 		if ( Q_stricmpn( "stofficer", NPC_type, 9 ) == 0 )
 		{
-			return ( 1 << WP_FLECHETTE);
+			return ( 1ULL << WP_FLECHETTE );
 		}
 		if ( Q_stricmp( "stcommander", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_REPEATER);
+			return ( 1ULL << WP_REPEATER );
 		}
 		if ( Q_stricmp( "swamptrooper", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_FLECHETTE);
+			return ( 1ULL << WP_FLECHETTE );
 		}
 		if ( Q_stricmp( "swamptrooper2", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_REPEATER);
+			return ( 1ULL << WP_REPEATER );
 		}
 		if ( Q_stricmp( "rockettrooper", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_ROCKET_LAUNCHER);
+			return ( 1ULL << WP_ROCKET_LAUNCHER );
 		}
 		if ( Q_stricmpn( "shadowtrooper", NPC_type, 13 ) == 0 )
 		{
-			return ( 1 << WP_SABER);//|( 1 << WP_RAPID_CONCUSSION)?
+			return ( 1ULL << WP_SABER );//|( 1ULL << WP_RAPID_CONCUSSION )?
 		}
 		if ( Q_stricmp( "imperial", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_BLASTER_PISTOL);
+			return ( 1ULL << WP_BLASTER_PISTOL );
 		}
 		if ( Q_stricmpn( "impworker", NPC_type, 9 ) == 0 )
 		{
-			return ( 1 << WP_BLASTER_PISTOL);
+			return ( 1ULL << WP_BLASTER_PISTOL );
 		}
 		if ( Q_stricmp( "stormpilot", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_BLASTER_PISTOL);
+			return ( 1ULL << WP_BLASTER_PISTOL );
 		}
 		if ( Q_stricmp( "galak", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_BLASTER);
+			return ( 1ULL << WP_BLASTER );
 		}
 		if ( Q_stricmp( "galak_mech", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_REPEATER);
+			return ( 1ULL << WP_REPEATER );
 		}
 		if ( Q_stricmpn( "ugnaught", NPC_type, 8 ) == 0 )
 		{
@@ -775,23 +776,23 @@ int NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type )
 		}
 		if ( Q_stricmp( "granshooter", NPC_type ) == 0 )
 		{
-			return (( 1 << WP_BLASTER)|( 1 << WP_Z6_ROTARY));
+			return (( 1ULL << WP_BLASTER )|( 1ULL << WP_Z6_ROTARY));
 		}
 		if ( Q_stricmp( "granboxer", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_MELEE);
+			return ( 1ULL << WP_MELEE );
 		}
 		if ( Q_stricmpn( "gran", NPC_type, 4 ) == 0 )
 		{
-			return (( 1 << WP_THERMAL)|( 1 << WP_MELEE));
+			return (( 1ULL << WP_THERMAL )|( 1ULL << WP_MELEE ));
 		}
 		if ( Q_stricmp( "rodian", NPC_type ) == 0 )
 		{
-			return (( 1 << WP_CYCLER_RIFLE)|( 1 << WP_Z6_ROTARY));
+			return (( 1ULL << WP_CYCLER_RIFLE )|( 1ULL << WP_Z6_ROTARY));
 		}
 		if ( Q_stricmp( "rodian2", NPC_type ) == 0 )
 		{
-			return (( 1 << WP_BLASTER)|( 1 << WP_Z6_ROTARY));
+			return (( 1ULL << WP_BLASTER )|( 1ULL << WP_Z6_ROTARY));
 		}
 
 		if (( Q_stricmp( "interrogator",NPC_type) == 0) || ( Q_stricmp( "sentry",NPC_type) == 0) || (Q_stricmpn( "protocol",NPC_type,8) == 0) )
@@ -801,62 +802,62 @@ int NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type )
 
 		if ( Q_stricmpn( "weequay", NPC_type, 7 ) == 0 )
 		{
-			return ( 1 << WP_BOWCASTER);//|( 1 << WP_STAFF )(FIXME: new weap?)
+			return ( 1ULL << WP_BOWCASTER );//|( 1ULL << WP_STAFF )(FIXME: new weap?)
 		}
 		if ( Q_stricmp( "impofficer", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_BLASTER);
+			return ( 1ULL << WP_BLASTER );
 		}
 		if ( Q_stricmp( "impcommander", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_BLASTER);
+			return ( 1ULL << WP_BLASTER );
 		}
 		if (( Q_stricmp( "probe", NPC_type ) == 0 ) || ( Q_stricmp( "seeker", NPC_type ) == 0 ))
 		{
-			return ( 1 << WP_BOT_LASER);
+			return ( 1ULL << WP_BOT_LASER );
 		}
 		if ( Q_stricmpn( "remote", NPC_type, 6 ) == 0 )
 		{
-			return ( 1 << WP_BOT_LASER );
+			return ( 1ULL << WP_BOT_LASER );
 		}
 		if ( Q_stricmp( "trandoshan", NPC_type ) == 0 )
 		{
-			return (( 1 << WP_REPEATER)|( 1 << WP_Z6_ROTARY));
+			return (( 1ULL << WP_REPEATER )|( 1ULL << WP_Z6_ROTARY));
 		}
 		if ( Q_stricmp( "atst", NPC_type ) == 0 )
 		{
-			return (( 1 << WP_ATST_MAIN)|( 1 << WP_ATST_SIDE));
+			return (( 1ULL << WP_ATST_MAIN )|( 1ULL << WP_ATST_SIDE ));
 		}
 		if ( Q_stricmp( "mark1", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_BOT_LASER);
+			return ( 1ULL << WP_BOT_LASER );
 		}
 		if ( Q_stricmp( "mark2", NPC_type ) == 0 )
 		{
-			return ( 1 << WP_BOT_LASER);
+			return ( 1ULL << WP_BOT_LASER );
 		}
 		if ( Q_stricmp( "minemonster", NPC_type ) == 0 )
 		{
-			return (( 1 << WP_MELEE));
+			return (( 1ULL << WP_MELEE ));
 		}
 		if ( Q_stricmp( "howler", NPC_type ) == 0 )
 		{
-			return (( 1 << WP_MELEE));
+			return (( 1ULL << WP_MELEE ));
 		}
 		//Stormtroopers, etc.
-		return ( 1 << WP_BLASTER);
+		return ( 1ULL << WP_BLASTER );
 		break;
 
 	case TEAM_PLAYER:
 
 		if(spawnflags & SFB_RIFLEMAN)
-			return ( 1 << WP_REPEATER);
+			return ( 1ULL << WP_REPEATER );
 
 		if(spawnflags & SFB_PHASER)
-			return ( 1 << WP_BLASTER_PISTOL);
+			return ( 1ULL << WP_BLASTER_PISTOL );
 
 		if ( Q_stricmpn( "jedi", NPC_type, 4 ) == 0 || Q_stricmp( "luke", NPC_type ) == 0 )
-			return ( 1 << WP_SABER);
+			return ( 1ULL << WP_SABER );
 
 		if ( Q_stricmpn( "prisoner", NPC_type, 8 ) == 0
 			|| Q_stricmpn( "elder", NPC_type, 5 ) == 0 )
@@ -866,7 +867,7 @@ int NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type )
 
 		if ( Q_stricmpn( "bespincop", NPC_type, 9 ) == 0 )
 		{
-			return ( 1 << WP_BLASTER_PISTOL);
+			return ( 1ULL << WP_BLASTER_PISTOL );
 		}
 
 		if ( Q_stricmp( "MonMothma", NPC_type ) == 0 )
@@ -875,7 +876,7 @@ int NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type )
 		}
 
 		//rebel
-		return ( 1 << WP_BLASTER);
+		return ( 1ULL << WP_BLASTER );
 		break;
 
 	case TEAM_NEUTRAL:
@@ -905,11 +906,11 @@ int NPC_WeaponsForTeam( team_t team, int spawnflags, const char *NPC_type )
 
 	// these no longer exist
 //	case TEAM_FORGE:
-//		return ( 1 << WP_MELEE);
+//		return ( 1ULL << WP_MELEE );
 //		break;
 
 //	case TEAM_STASIS:
-//		return ( 1 << WP_MELEE);
+//		return ( 1ULL << WP_MELEE );
 //		break;
 
 //	case TEAM_PARASITE:
@@ -936,18 +937,16 @@ NPC_SetWeapons
 void NPC_SetWeapons( gentity_t *ent )
 {
 	int			bestWeap = WP_NONE;
-	int			weapons = NPC_WeaponsForTeam( ent->client->playerTeam, ent->spawnflags, ent->NPC_type );
+	uint64_t	weapons = NPC_WeaponsForTeam( ent->client->playerTeam, ent->spawnflags, ent->NPC_type );
 
 	for ( int i = 0; i < MAX_WEAPONS; i++ )
 	{
 		ent->client->ps.weapons[i] = 0;
 	}
-	// "weapons" is a 32-bit int bitmask (see NPC_WeaponsForTeam) - shifting by >=32 is UB and
-	// aliases back to a low bit on x86 (e.g. 1<<35 behaves as 1<<3/WP_BLASTER), so the loop
-	// must never reach weapon_t values at or above 32.
-	for ( int curWeap = WP_SABER; curWeap < WP_NUM_WEAPONS && curWeap < 32; curWeap++ )
+	// "weapons" is a 64-bit bitmask (see NPC_WeaponsForTeam; was a 32-bit int, so Z-6/cycler/custom never worked)
+	for ( int curWeap = WP_SABER; curWeap < WP_NUM_WEAPONS && curWeap < 64; curWeap++ )
 	{
-		if ( (weapons & ( 1 << curWeap )) )
+		if ( (weapons & ( 1ULL << curWeap )) )
 		{
 			ent->client->ps.weapons[curWeap] = 1;
 			RegisterItem( FindItemForWeapon( (weapon_t)(curWeap) ) );	//precache the weapon
@@ -1074,7 +1073,7 @@ void NPC_Begin (gentity_t *ent)
 				|| !Q_stricmp("alora_dual", ent->NPC_type )
 				|| !Q_stricmp("alora_boss", ent->NPC_type ) )
 			{//bosses are a bit different
-				ent->NPC->stats.health = ceil((float)ent->NPC->stats.health*0.75f + ((float)ent->NPC->stats.health/4.0f*g_spskill->value)); // 75% on easy, 100% on medium, 125% on hard
+				ent->NPC->stats.health = ceil((float)ent->NPC->stats.health*0.75f + ((float)ent->NPC->stats.health/4.0f*(float)G_DifficultyLevel())); // 75% on easy, 100% on medium, 125% on hard, 150% on Jedi Master
 			}
 			//everyone else keeps their .npc health on every difficulty (was +25% per difficulty level);
 			//difficulty works through NPC damage (g_npcDamage*) and weapon skill instead
@@ -1467,6 +1466,8 @@ NPC_Spawn_Go
 -------------------------
 */
 
+static gentity_t *s_consoleSpawner = NULL;	//the "npc spawn" command's spawner, until it spawns
+
 gentity_t *NPC_Spawn_Do( gentity_t *ent, qboolean fullSpawnNow )
 {
 	gentity_t	*newent;
@@ -1727,6 +1728,10 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent, qboolean fullSpawnNow )
 	newent->target3 = G_NewString(ent->target3);//???
 	newent->target4 = G_NewString(ent->target4);//ffire death
 	newent->NPC_subduetarget = G_NewString(ent->NPC_subduetarget);//taken alive
+	newent->bossbar = G_NewString(ent->bossbar);//boss bar + stage events (JKEnhanced 4B.9)
+	newent->stage1target = G_NewString(ent->stage1target);
+	newent->stage2target = G_NewString(ent->stage2target);
+	newent->stage3target = G_NewString(ent->stage3target);
 	newent->squadname = G_NewString(ent->squadname);
 	newent->nonlethal = ent->nonlethal;
 	newent->paintarget = G_NewString(ent->paintarget);
@@ -1823,6 +1828,11 @@ gentity_t *NPC_Spawn_Do( gentity_t *ent, qboolean fullSpawnNow )
 	if ( fullSpawnNow )
 	{
 		NPC_Begin( newent );
+	}
+	if ( ent == s_consoleSpawner )
+	{//"npc spawn": say which entity it is, for the per-NPC debug cvars (d_aiLog, d_nerveLog...)
+		gi.Printf( "spawned %s as entity %d\n", newent->NPC_type ? newent->NPC_type : "NPC", newent->s.number );
+		s_consoleSpawner = NULL;
 	}
 	return newent;
 }
@@ -2658,7 +2668,10 @@ void SP_NPC_Jedi( gentity_t *self)
 				{ "jedi_kdm1", 1 }, { "jedi_kdm2", 1 }, { "jedi_rm1", 1 }, { "jedi_rm2", 1 },
 				{ "jedi_tf1", 1 }, { "jedi_tf2", 1 }, { "jedi_zf1", 1 }, { "jedi_zf2", 1 } };
 			static npcRandomPool_t pool;
-			NPC_LoadRandomPool( "jedi_random.cfg", &pool, fallback, ARRAY_LEN( fallback ) );
+			if ( !pool.count )
+			{//once (the file was re-read and re-parsed on every random spawner)
+				NPC_LoadRandomPool( "jedi_random.cfg", &pool, fallback, ARRAY_LEN( fallback ) );
+			}
 			self->NPC_type = (char *)NPC_PickFromRandomPool( &pool, g_char_model->string );
 		}
 		else if ( self->spawnflags & 2 )
@@ -2875,7 +2888,10 @@ void SP_NPC_StormtrooperRandom( gentity_t *self )
 		{ "stormtrooper_rifle", 5 }, { "stormtrooper_heavy", 2 },
 		{ "stormtrooper_officer", 2 }, { "stormtrooper_grenadier", 1 } };
 	static npcRandomPool_t pool;
-	NPC_LoadRandomPool( "stormtrooper_random.cfg", &pool, fallback, ARRAY_LEN( fallback ) );
+	if ( !pool.count )
+	{//once (the file was re-read and re-parsed on every random spawner)
+		NPC_LoadRandomPool( "stormtrooper_random.cfg", &pool, fallback, ARRAY_LEN( fallback ) );
+	}
 
 	self->NPC_type = (char *)NPC_PickFromRandomPool( &pool, NULL );
 	SP_NPC_spawner( self );
@@ -4194,6 +4210,33 @@ void SP_NPC_Droid_Saber( gentity_t *self)
 NPC_Spawn_f
 */
 
+/*
+NPC_SandboxSpawn (JKEnhanced, forcesandbox)
+
+Spawns an NPC type at a spot, facing yaw, right away (the vehicle path's NPC_Spawn_Do fullSpawnNow)
+and returns it so the caller can adjust it. NULL if it couldn't.
+*/
+gentity_t *NPC_SandboxSpawn( const char *npcType, const vec3_t origin, float yaw )
+{
+	gentity_t *spawner = G_Spawn();
+	if ( !spawner )
+	{
+		return NULL;
+	}
+	spawner->e_ThinkFunc = thinkF_G_FreeEntity;
+	spawner->nextthink = level.time + FRAMETIME;
+	G_SetOrigin( spawner, origin );
+	VectorCopy( spawner->currentOrigin, spawner->s.origin );
+	spawner->s.angles[YAW] = yaw;
+	gi.linkentity( spawner );
+	spawner->NPC_type = Q_strlwr( G_NewString( npcType ) );
+	spawner->count = 1;
+	spawner->wait = 500;
+	spawner->spawnflags |= NSF_DROP_TO_FLOOR;
+	NPC_PrecacheByClassName( spawner->NPC_type );
+	return NPC_Spawn_Do( spawner, qtrue );
+}
+
 static void NPC_Spawn_f(void)
 {
 	gentity_t		*NPCspawner = G_Spawn();
@@ -4288,6 +4331,7 @@ static void NPC_Spawn_f(void)
 	}
 	else
 	{
+		s_consoleSpawner = NPCspawner;
 		NPC_Spawn( NPCspawner, NPCspawner, NPCspawner );
 	}
 }

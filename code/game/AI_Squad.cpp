@@ -90,12 +90,17 @@ qboolean AI_SquadEligible( gentity_t *ent )
 
 static const char *Squad_NameOf( const AIGroupInfo_t *group )
 {
-	if ( !group->numGroup )
+	//any named member (slot 0 alone lost the name once the founder died and an unnamed
+	//joiner moved up, so later spawns of that squadname started a squad of their own)
+	for ( int i = 0; i < group->numGroup; i++ )
 	{
-		return NULL;
+		const gentity_t *member = &g_entities[group->member[i].number];
+		if ( member->squadname && member->squadname[0] )
+		{
+			return member->squadname;
+		}
 	}
-	const gentity_t *first = &g_entities[group->member[0].number];
-	return ( first->squadname && first->squadname[0] ) ? first->squadname : NULL;
+	return NULL;
 }
 
 static qboolean Squad_HasMemberNear( const AIGroupInfo_t *group, const gentity_t *ent, float *outDist2 )
@@ -281,6 +286,19 @@ qboolean AI_SquadUpdate( AIGroupInfo_t *group )
 	{
 		group->enemy = NULL;
 	}
+	if ( group->enemy )
+	{//anyone still seeing them keeps the squad on them (only the trooper attack loop used to refresh
+	 //this, so Reborn / Hazard / Mando squads stood down 60 s into every fight)
+		for ( i = 0; i < group->numGroup; i++ )
+		{
+			const gentity_t *member = &g_entities[group->member[i].number];
+			if ( member->enemy == group->enemy && member->NPC->enemyLastSeenTime > group->lastSeenEnemyTime
+				&& member->NPC->enemyLastSeenTime <= level.time )
+			{
+				group->lastSeenEnemyTime = member->NPC->enemyLastSeenTime;
+			}
+		}
+	}
 	if ( !group->enemy )
 	{
 		gentity_t *enemy = group->commander ? group->commander->enemy : NULL;
@@ -297,6 +315,8 @@ qboolean AI_SquadUpdate( AIGroupInfo_t *group )
 	else if ( group->lastSeenEnemyTime < level.time - SQUAD_LOST_ENEMY_MS )
 	{//nobody's seen them in a minute: everyone goes looking, and the squad stands down
 		AI_DissolveGroup( group );
+		group->processed = qfalse;
+		return qtrue;//(nothing left to coordinate this frame; the next update re-picks an enemy if anyone still has one)
 	}
 
 	if ( group->coverRequestNum != ENTITYNUM_NONE

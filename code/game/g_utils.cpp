@@ -45,6 +45,20 @@ vec3_t g_playerUseForward = {1.0f, 0.0f, 0.0f};
 // Entity CanUseInfrontOf resolved this frame (ENTITYNUM_NONE if none) — read by
 // cgame (same module) to name the use target, e.g. the "Swap X for Y" hint.
 int    g_playerUseTargetEnt = ENTITYNUM_NONE;
+
+// The use ray: the crosshair's (cgame CG_UseIcon) for the player, else the eye. Until cgame has
+// written it (first frame after a load), or for anyone else, it's the eye and view angles.
+static void G_PlayerUseRay( gentity_t *ent, vec3_t org, vec3_t fwd )
+{
+	if ( ent->s.number == 0 && !VectorCompare( g_playerUseOrigin, vec3_origin ) )
+	{
+		VectorCopy( g_playerUseOrigin, org );
+		VectorCopy( g_playerUseForward, fwd );
+		return;
+	}
+	VectorCopy( ent->client->renderInfo.eyePoint, org );
+	AngleVectors( ent->client->ps.viewangles, fwd, NULL, NULL );
+}
 /*
 =========================================================================
 
@@ -878,6 +892,21 @@ Marks the entity as free
 =================
 */
 void G_FreeEntity( gentity_t *ed ) {
+	if ( ed->client && ed->activator && ed->activator->client
+		&& ( ed->client->NPC_class == CLASS_RANCOR || ed->client->NPC_class == CLASS_WAMPA ) )
+	{//JKEnhanced: removed (script, NPC_Remove) while holding someone: let go first, or the victim stays
+	 //locked in EF_HELD_BY_* for good (death already drops them, player_die)
+		extern void Rancor_DropVictim( gentity_t *self );
+		extern void Wampa_DropVictim( gentity_t *self );
+		if ( ed->client->NPC_class == CLASS_RANCOR )
+		{
+			Rancor_DropVictim( ed );
+		}
+		else
+		{
+			Wampa_DropVictim( ed );
+		}
+	}
 	gi.unlinkentity (ed);		// unlink from world
 
 	// Free the Game Element (the entity) and delete the Icarus ID.
@@ -1688,10 +1717,10 @@ qboolean CanUseInfrontOf(gentity_t *ent)
 
 	// Trace from camera in crosshair direction (full range); require hit to be within arm's reach of player.
 	// This works with orbital/offset cameras where camera direction != player body forward.
-	VectorCopy( g_playerUseForward, vf );
-	VectorMA( g_playerUseOrigin, 4096.0f, vf, dest );
+	G_PlayerUseRay( ent, src, vf );
+	VectorMA( src, 4096.0f, vf, dest );
 
-	gi.trace( &trace, g_playerUseOrigin, vec3_origin, vec3_origin, dest, ent->s.number, MASK_OPAQUE|CONTENTS_SOLID|CONTENTS_TERRAIN|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE , G2_NOCOLLIDE, 10);
+	gi.trace( &trace, src, vec3_origin, vec3_origin, dest, ent->s.number, MASK_OPAQUE|CONTENTS_SOLID|CONTENTS_TERRAIN|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE , G2_NOCOLLIDE, 10);
 
 	if ( trace.fraction == 1.0f || trace.entityNum >= ENTITYNUM_WORLD )
 	{
@@ -1820,10 +1849,10 @@ void TryUse( gentity_t *ent )
 	}
 
 	// Trace from camera in crosshair direction (full range); then verify hit is within reach of player.
-	VectorCopy( g_playerUseForward, vf );
-	VectorMA( g_playerUseOrigin, 4096.0f, vf, dest );
+	G_PlayerUseRay( ent, src, vf );
+	VectorMA( src, 4096.0f, vf, dest );
 
-	gi.trace( &trace, g_playerUseOrigin, vec3_origin, vec3_origin, dest, ent->s.number, MASK_OPAQUE|CONTENTS_SOLID|CONTENTS_TERRAIN|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE , G2_NOCOLLIDE, 10);
+	gi.trace( &trace, src, vec3_origin, vec3_origin, dest, ent->s.number, MASK_OPAQUE|CONTENTS_SOLID|CONTENTS_TERRAIN|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE , G2_NOCOLLIDE, 10);
 
 	if ( trace.fraction == 1.0f || trace.entityNum  >= ENTITYNUM_WORLD )
 	{
