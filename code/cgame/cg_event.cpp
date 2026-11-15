@@ -730,7 +730,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 				}
 				else
 				{
-					cent->gent->owner->s.eFlags = disintEffect;//FIXME: |= ?
+					cent->gent->owner->s.eFlags |= disintEffect;//(was =, which wiped the owner's other flags)
 					cent->gent->owner->delay = cg.time + disintLength;
 				}
 			}

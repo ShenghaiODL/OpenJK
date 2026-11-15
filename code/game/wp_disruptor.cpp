@@ -25,6 +25,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_functions.h"
 #include "wp_saber.h"
 #include "w_local.h"
+#include "../cgame/cg_local.h"
 
 //---------------------
 //	Tenloss Disruptor
@@ -39,16 +40,19 @@ static void WP_DisruptorMainFire( gentity_t *ent )
 //---------------------------------------------------------
 {
 	vec3_t	start;
+	// the sonic blaster's primary shares this bolt (and its disruptor visuals) but keeps its own profile
+	const int	weapon = ( ent->s.weapon == WP_SONIC_BLASTER ) ? WP_SONIC_BLASTER : WP_DISRUPTOR;
 	// same damage as the player, scaled by difficulty for NPCs
-	int		damage = WP_ShooterDamage( ent, weaponData[WP_DISRUPTOR].damage );
+	int		damage = WP_ShooterDamage( ent, weaponData[weapon].damage );
+	const float	velocity = weaponData[weapon].velocity > 0 ? weaponData[weapon].velocity : weaponData[WP_DISRUPTOR].velocity;
 
 	VectorCopy( muzzle, start );
 	WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );
 
-	WP_ApplyWeaponSpread( ent, WP_DISRUPTOR, qfalse, 1.0f, forwardVec );
+	WP_ApplyWeaponSpread( ent, weapon, qfalse, 1.0f, forwardVec );
 	WP_MissileTargetHint(ent, start, forwardVec);
 
-	gentity_t *missile = CreateMissile( start, forwardVec, WP_ShooterVelocity( ent, weaponData[WP_DISRUPTOR].velocity ), 10000, ent );
+	gentity_t *missile = CreateMissile( start, forwardVec, WP_ShooterVelocity( ent, velocity ), 10000, ent );
 
 	missile->classname = "disruptor_proj";
 	missile->s.weapon = WP_DISRUPTOR;
@@ -81,8 +85,20 @@ void WP_DisruptorAltFire( gentity_t *ent )
 	}
 	else
 	{
-		VectorCopy( ent->client->renderInfo.eyePoint, start );
-		AngleVectors( ent->client->renderInfo.eyeAngles, dir, NULL, NULL );
+		//not renderInfo.eyePoint: in third person that's been the camera, which put a real (travel-time)
+		//bolt behind the player or inside whatever the camera clipped into
+		if ( ent->s.number < MAX_CLIENTS && cg.zoomMode == 2 )
+		{//scoped: from the eye, so it lands on the scope's centre
+			VectorCopy( ent->currentOrigin, start );
+			start[2] += ent->client->ps.viewheight;
+		}
+		else
+		{
+			VectorCopy( muzzle, start );
+		}
+		WP_TraceSetStart( ent, start, vec3_origin, vec3_origin );
+		VectorCopy( forwardVec, dir );
+		WP_MissileTargetHint( ent, start, dir );
 
 		int count = ( level.time - ent->client->ps.weaponChargeTime - 50 ) / DISRUPTOR_CHARGE_UNIT;
 

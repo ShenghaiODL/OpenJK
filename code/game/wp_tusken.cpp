@@ -121,7 +121,7 @@ void WP_FireCyclerRifle( gentity_t *ent, int chargeLevel )
 	missile->damage = weaponData[WP_CYCLER_RIFLE].damage;
 	if ( chargeLevel > 0 )
 	{
-		missile->damage = missile->damage * ( 1 + chargeLevel / 5 );
+		missile->damage = (int)( missile->damage * ( 1.0f + chargeLevel / 5.0f ) );//x1 .. x3 over 3 s (integer maths stepped it: nothing until 1.5 s)
 	}
 	missile->damage = WP_ShooterDamage( ent, missile->damage );
 	missile->dflags = DAMAGE_DEATH_KNOCKBACK;

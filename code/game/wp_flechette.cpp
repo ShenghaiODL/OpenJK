@@ -65,9 +65,8 @@ static void WP_FlechetteMainFire( gentity_t *ent )
 		}
 
 		AngleVectors( angs, fwd, NULL, NULL );
-		// NPC aim error on top (skill + warm-up); uses the alt spread slot, which is 0, so only the
-		// NPC part applies
-		WP_ApplyWeaponSpread( ent, WP_FLECHETTE, qtrue, 1.0f, fwd );
+		// NPC aim error on top (skill + warm-up) - not the weapon spread again: the pattern above is it
+		WP_ApplyNPCAimSpread( ent, WP_FLECHETTE, fwd );
 
 		WP_MissileTargetHint(ent, start, fwd);
 

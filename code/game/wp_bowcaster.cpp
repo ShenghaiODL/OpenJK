@@ -59,7 +59,7 @@ static void WP_BowcasterMainFire( gentity_t *ent )
 	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
 	missile->methodOfDeath = MOD_BOWCASTER;
 	missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
-	missile->splashDamage = weaponData[WP_BOWCASTER].splashDamage;
+	missile->splashDamage = WP_ShooterDamage( ent, weaponData[WP_BOWCASTER].splashDamage );
 	missile->splashRadius = weaponData[WP_BOWCASTER].splashRadius;
 
 	missile->bounceCount = 0;
@@ -111,13 +111,11 @@ static void WP_BowcasterAltFire( gentity_t *ent )
 	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
 	missile->methodOfDeath = MOD_BOWCASTER_ALT;
 	missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
-	missile->splashDamage = weaponData[WP_BOWCASTER].altSplashDamage;
+	missile->splashDamage = WP_ShooterDamage( ent, weaponData[WP_BOWCASTER].altSplashDamage );
 	missile->splashRadius = weaponData[WP_BOWCASTER].altSplashRadius;
 	missile->splashMethodOfDeath = MOD_BOWCASTER_ALT;
 
 	missile->bounceCount = 0;
-
-	ent->client->sess.missionStats.shotsFired++;
 }
 
 //---------------------------------------------------------

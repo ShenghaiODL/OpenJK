@@ -271,7 +271,7 @@ void WP_ThermalThink( gentity_t *ent )
 					&& ent_list[i]->client->NPC_class != CLASS_SAND_CREATURE//ignore sand creatures
 					&& ent_list[i]->health > 0 )
 				{
-					//FIXME! sometimes the ent_list order changes, so we should make sure that the player isn't anywhere in this list
+					//(the player check above wins whichever order the list comes in: it breaks out with blow = qfalse)
 					blow = qtrue;
 				}
 			}

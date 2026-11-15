@@ -163,10 +163,13 @@ void laserTrapThink( gentity_t *ent )
 		WP_Explode( ent );
 		ent->s.eFlags &= ~EF_FIRING; // don't draw beam if we are dead
 	}
-	else
-	{
-		AddSoundEvent( ent->owner, ent->currentOrigin, ent->splashRadius*2, AEL_DANGER );
-		AddSightEvent( ent->owner, ent->currentOrigin, ent->splashRadius*2, AEL_DANGER, 50 );
+	else if ( TIMER_Done( ent, "mineAlert" ) )
+	{//JKEnhanced: the mine itself is the danger (NPCs still avoid it), not whoever placed it - with the
+	 //placer as owner, any NPC near a mine "heard" the player and went straight to combat. Once a
+	 //second, not every frame, so live mines don't crowd every other alert out of the list.
+		TIMER_Set( ent, "mineAlert", 1000 );
+		AddSoundEvent( ent, ent->currentOrigin, ent->splashRadius*2, AEL_DANGER );
+		AddSightEvent( ent, ent->currentOrigin, ent->splashRadius*2, AEL_DANGER, 50 );
 	}
 }
 

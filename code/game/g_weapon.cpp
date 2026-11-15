@@ -32,6 +32,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_vehicles.h"
 #include "w_local.h"
 #include "../cgame/cg_local.h"
+#include "g_difficulty.h"
 
 vec3_t	forwardVec, vrightVec, up;
 vec3_t	muzzle;
@@ -449,7 +450,7 @@ int WP_NPCWeaponSkill( const gentity_t *ent )
 	{
 		skill = g_npcWeaponSkill->integer;
 	}
-	skill += g_spskill->integer - 1;
+	skill += G_Difficulty()->weaponSkillShift;	//ext_data/difficulty.cfg
 	return Com_Clampi( 1, 5, skill );
 }
 
@@ -457,7 +458,20 @@ int WP_NPCWeaponSkill( const gentity_t *ent )
 // the existing dynamic aim loss (currentAim below their aim stat: still warming up, morale
 // broken, lost sight), capped so a broken squad isn't spraying wildly. Force Sight 2+ and
 // vehicles stay perfectly accurate.
+static void WP_ApplySpread( gentity_t *ent, int weapon, qboolean alt, float scale, vec3_t dir, qboolean weaponSpread );
 void WP_ApplyWeaponSpread( gentity_t *ent, int weapon, qboolean alt, float scale, vec3_t dir )
+{
+	WP_ApplySpread( ent, weapon, alt, scale, dir, qtrue );
+}
+
+// only the NPC's aim error (skill + aim loss), not the weapon's own spread: for weapons whose pattern is
+// built separately (the flechette's pellets)
+void WP_ApplyNPCAimSpread( gentity_t *ent, int weapon, vec3_t dir )
+{
+	WP_ApplySpread( ent, weapon, qfalse, 1.0f, dir, qfalse );
+}
+
+static void WP_ApplySpread( gentity_t *ent, int weapon, qboolean alt, float scale, vec3_t dir, qboolean weaponSpread )
 {
 	if ( ent->client )
 	{
@@ -472,7 +486,7 @@ void WP_ApplyWeaponSpread( gentity_t *ent, int weapon, qboolean alt, float scale
 		}
 	}
 
-	float spread = alt ? weaponData[weapon].altSpread : weaponData[weapon].spread;
+	float spread = !weaponSpread ? 0.0f : ( alt ? weaponData[weapon].altSpread : weaponData[weapon].spread );
 	if ( WP_IsNPCShooter( ent ) )
 	{
 		spread += weaponData[weapon].npcSpread * ( 5 - WP_NPCWeaponSkill( ent ) ) * 0.25f;
@@ -509,12 +523,7 @@ int WP_ShooterDamage( const gentity_t *ent, int damage )
 	float scale = 1.0f;
 	if ( ent->client->NPC_class != CLASS_BOBAFETT )
 	{
-		switch ( g_spskill->integer )
-		{
-		case 0:		scale = g_npcDamageEasy->value;		break;
-		case 1:		scale = g_npcDamageNormal->value;	break;
-		default:	scale = g_npcDamageHard->value;		break;
-		}
+		scale = G_Difficulty()->npcBoltDamage;	//ext_data/difficulty.cfg (was g_npcDamageEasy/Normal/Hard)
 	}
 	scale *= weaponData[ent->s.weapon].npcDamageScale;
 	return Q_max( 1, (int)( damage * scale + 0.5f ) );
@@ -559,7 +568,7 @@ void WP_FireGenericBolt( gentity_t *ent, qboolean alt_fire )
 	missile->dflags = DAMAGE_DEATH_KNOCKBACK;
 	missile->methodOfDeath = alt_fire ? MOD_BLASTER_ALT : MOD_BLASTER;
 	missile->clipmask = MASK_SHOT | CONTENTS_LIGHTSABER;
-	missile->splashDamage = alt_fire ? wd->altSplashDamage : wd->splashDamage;
+	missile->splashDamage = WP_ShooterDamage( ent, alt_fire ? wd->altSplashDamage : wd->splashDamage );//NPC-scaled like the rocket/conc/flechette splash
 	missile->splashRadius = alt_fire ? wd->altSplashRadius : wd->splashRadius;
 	if ( missile->splashDamage )
 	{

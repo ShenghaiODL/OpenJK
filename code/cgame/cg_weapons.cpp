@@ -675,7 +675,7 @@ void CG_RegisterWeapon( int weaponNum ) {
 		break;
 
 	case WP_DC15S_CARBINE:
-		cgs.effects.cloneBlasterShotEffect		= theFxScheduler.RegisterEffect( "z6/shot" );
+		cgs.effects.cloneBlasterShotEffect		= theFxScheduler.RegisterEffect( "clone/shot" );//same handle as the DC-15A: both must register the same trail
 		cgs.effects.cloneBlasterWallImpactEffect		= theFxScheduler.RegisterEffect( "blaster/wall_impact" );
 		cgs.effects.cloneBlasterFleshImpactEffect	= theFxScheduler.RegisterEffect( "blaster/flesh_impact" );
 		break;
@@ -694,6 +694,8 @@ void CG_RegisterWeapon( int weaponNum ) {
 		break;
 
 	case WP_SONIC_BLASTER:
+		// its primary fires the disruptor's travel-time bolt (wp_disruptor.cpp): register the trail too
+		cgs.effects.blasterShotEffect			= theFxScheduler.RegisterEffect( "blaster/shot" );
 		theFxScheduler.RegisterEffect( "disruptor/wall_impact" );
 		theFxScheduler.RegisterEffect( "disruptor/flesh_impact" );
 		theFxScheduler.RegisterEffect( "disruptor/line_cap" );
@@ -2648,11 +2650,16 @@ extern qboolean Q3_TaskIDPending( gentity_t *ent, taskID_t taskType );
 CG_NextWeapon_f
 ===============
 */
+extern qboolean WP_GripScroll( gentity_t *self, int dir );
 void CG_NextWeapon_f( void ) {
 	int		i;
 	int		original;
 
 	if ( !cg.snap ) {
+		return;
+	}
+	if ( WP_GripScroll( &g_entities[0], -1 ) )
+	{//JKEnhanced: carrying something with Grip 3 - the wheel brings it closer
 		return;
 	}
 	/*
@@ -2857,6 +2864,10 @@ void CG_PrevWeapon_f( void ) {
 	int		original;
 
 	if ( !cg.snap ) {
+		return;
+	}
+	if ( WP_GripScroll( &g_entities[0], 1 ) )
+	{//JKEnhanced: carrying something with Grip 3 - the wheel moves it farther out
 		return;
 	}
 	/*

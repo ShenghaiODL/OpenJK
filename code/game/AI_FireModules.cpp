@@ -201,8 +201,8 @@ static void Sniper_Think( float enemyDistSq )
 		NPC->count = 0;
 	}
 
-	// a disruptor up close is just a rifle (the long-range switch back to alt is in NPC_BSST_Attack)
-	if ( enemyDistSq < 16384 && NPC->client->ps.weapon == WP_DISRUPTOR && (NPCInfo->scriptFlags & SCF_ALT_FIRE) )
+	// a disruptor or cycler rifle up close is just a rifle (the long-range switch back to alt is in NPC_BSST_Attack)
+	if ( enemyDistSq < 16384 && ( NPC->client->ps.weapon == WP_DISRUPTOR || NPC->client->ps.weapon == WP_CYCLER_RIFLE ) && (NPCInfo->scriptFlags & SCF_ALT_FIRE) )
 	{
 		trace_t	trace;
 		gi.trace ( &trace, NPC->enemy->currentOrigin, NPC->enemy->mins, NPC->enemy->maxs, NPC->currentOrigin, NPC->enemy->s.number, NPC->enemy->clipmask, (EG2_Collision)0, 0 );
@@ -294,6 +294,30 @@ static void NPC_Tusken_Taunt( void )
 	TIMER_Set( NPC, "duck", -1 );
 }
 
+/*
+G_MeleeSwingHit (JKEnhanced)
+
+The staff/stick traces run every think through the anim's damage window, so a target in the arc
+used to be hit 3-4 times per swing (the same bug the scepter beam had). One hit per target per
+swing: the swing is over when the attack anim that landed the hit runs out.
+*/
+static int s_meleeHitTarget[MAX_GENTITIES];
+static int s_meleeHitUntil[MAX_GENTITIES];
+
+qboolean G_MeleeSwingHit( gentity_t *attacker, gentity_t *target )
+{
+	const int n = attacker->s.number;
+	const int until = s_meleeHitUntil[n];
+	if ( s_meleeHitTarget[n] == target->s.number + 1
+		&& until > level.time && until - level.time <= 5000 )//(further out: stale, from before a load)
+	{
+		return qfalse;
+	}
+	s_meleeHitTarget[n] = target->s.number + 1;
+	s_meleeHitUntil[n] = level.time + Q_max( 100, attacker->client ? attacker->client->ps.torsoAnimTimer : 500 );
+	return qtrue;
+}
+
 void Tusken_StaffTrace( gentity_t *self )
 {
 	if ( !self->ghoul2.size()
@@ -334,7 +358,8 @@ void Tusken_StaffTrace( gentity_t *self )
 			{//hit something
 				gentity_t *traceEnt = &g_entities[trace.entityNum];
 				if ( traceEnt->takedamage
-					&& (!traceEnt->client || traceEnt == self->enemy || traceEnt->client->NPC_class != self->client->NPC_class) )
+					&& (!traceEnt->client || traceEnt == self->enemy || traceEnt->client->NPC_class != self->client->NPC_class)
+					&& G_MeleeSwingHit( self, traceEnt ) )
 				{//smack
 					int dmg = Q_irand( 5, 10 ) * (g_spskill->integer+1);
 
