@@ -455,6 +455,12 @@ typedef struct {
 	float		damageTime;
 	float		damageX, damageY, damageValue;
 
+	// JKEnhanced hit indicator: the world yaw each recent hit came from (ring of 4)
+	float		damageIndYaw[4];
+	int			damageIndTime[4];
+	int			damageIndAmount[4];
+	int			damageIndNext;
+
 	// status bar head
 	float		headYaw;
 	float		headEndPitch;
@@ -518,11 +524,11 @@ Ghoul2 Insert End
 } cg_t;
 
 
-#define MAX_SHOWPOWERS 15
+#define MAX_SHOWPOWERS 16	//JKEnhanced 4B: +Repulse
 extern int showPowers[MAX_SHOWPOWERS];
 extern const char *showPowersName[MAX_SHOWPOWERS];
 extern int force_icons[NUM_FORCE_POWERS];
-#define MAX_DPSHOWPOWERS 18
+#define MAX_DPSHOWPOWERS 19	//JKEnhanced 4B: +Repulse
 
 //==============================================================================
 
@@ -581,6 +587,8 @@ extern	vmCvar_t		cg_drawAmmoWarning;
 extern	vmCvar_t		cg_drawCrosshair;
 extern	vmCvar_t		cg_drawAwareness;
 extern	vmCvar_t		cg_drawLightMeter;
+extern	vmCvar_t		cg_damageIndicator;
+extern	vmCvar_t		cg_threatCues;
 extern	vmCvar_t		cg_dynamicCrosshair;
 extern	vmCvar_t		cg_crosshairForceHint;
 extern	vmCvar_t		cg_crosshairIdentifyTarget;
@@ -690,6 +698,19 @@ extern	vmCvar_t		cg_truefov;
 extern  vmCvar_t        cg_truebobbing;
 
 extern	vmCvar_t		cg_hudRatio;
+extern	vmCvar_t		cg_statusBarX;
+extern	vmCvar_t		cg_statusBarY;
+extern	vmCvar_t		cg_statusBarSize;
+extern	vmCvar_t		cg_statusBarDir;
+extern	vmCvar_t		cg_bossBar;
+extern	vmCvar_t		cg_bossBarY;
+extern	vmCvar_t		cg_bossBarWidth;
+extern	vmCvar_t		cg_cloakRefraction;
+extern	vmCvar_t		cg_cloakRefractMin;
+extern	vmCvar_t		cg_cloakRefractMax;
+extern	vmCvar_t		cg_cloakRefractSpeed;
+extern	vmCvar_t		cg_cloakShimmer;
+extern	vmCvar_t		cg_cloakDebug;
 
 void CG_NewClientinfo( int clientNum );
 //

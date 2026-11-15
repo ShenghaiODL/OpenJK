@@ -988,6 +988,27 @@ static void CG_OffsetThirdPersonView( void )
 		}
 	}
 
+	{//JKEnhanced saber rules: in a saber lock the mouse orbits the camera (PM_AdjustAnglesForSaberLock,
+	 //bg_pangles.cpp); once the lock is over the offsets ease back out
+		extern float	g_saberLockCamYaw, g_saberLockCamPitch;
+		extern int		g_saberLockCamTime;
+		if ( g_saberLockCamYaw || g_saberLockCamPitch )
+		{
+			if ( cg.time - g_saberLockCamTime > 200 || cg.time < g_saberLockCamTime - 200 )
+			{
+				const float keep = pow( 0.5f, cg.frametime / 120.0f );
+				g_saberLockCamYaw *= keep;
+				g_saberLockCamPitch *= keep;
+				if ( fabs( g_saberLockCamYaw ) < 0.5f && fabs( g_saberLockCamPitch ) < 0.5f )
+				{
+					g_saberLockCamYaw = g_saberLockCamPitch = 0.0f;
+				}
+			}
+			cameraFocusAngles[YAW] += g_saberLockCamYaw;
+			cameraFocusAngles[PITCH] += g_saberLockCamPitch;
+		}
+	}
+
 	if ( !cg.renderingThirdPerson && (cg.snap->ps.weapon == WP_SABER||cg.snap->ps.weapon == WP_MELEE) )
 	{// First person saber
 		// FIXME: use something network-friendly

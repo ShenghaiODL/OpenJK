@@ -29,6 +29,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "cg_media.h"
 #include "../game/objectives.h"
 #include "../game/g_vehicles.h"
+#include "../game/wp_saber.h"
+#include "../game/g_boss.h"
 
 extern vmCvar_t	cg_debugHealthBars;
 
@@ -508,8 +510,9 @@ static void CG_DrawArmor(const int x,const int y,const int w,const int h, const 
 	// Print all the tics of the armor graphic
 	// Look at the amount of armor left and show only as much of the graphic as there is armor.
 	// Use alpha to fade out partial section of armor
-	// Scale to 200 — the new shield cap (pickups can push above the base 100)
-	float inc = 200.0f / MAX_HUD_TICS;
+	// Scale to the shield cap (STAT_MAX_ARMOR: 200, or 100 on Jedi Master)
+	const float maxArmor = ps->stats[STAT_MAX_ARMOR] > 0 ? (float)ps->stats[STAT_MAX_ARMOR] : 200.0f;
+	float inc = maxArmor / MAX_HUD_TICS;
 	float currValue = ps->stats[STAT_ARMOR];
 
 	memcpy(calcColor, colorTable[CT_WHITE], sizeof(vec4_t));
@@ -574,7 +577,7 @@ static void CG_DrawArmor(const int x,const int y,const int w,const int h, const 
 	// If armor is low, flash a graphic to warn the player
 	if (ps->stats[STAT_ARMOR])	// Is there armor? Draw the HUD Armor TIC
 	{
-		float quarterArmor = 50.0f; // 25% of 200 shield cap
+		float quarterArmor = ( ps->stats[STAT_MAX_ARMOR] > 0 ? ps->stats[STAT_MAX_ARMOR] : 200 ) / 4.0f; // 25% of the shield cap
 
 		// Make tic flash if armor is at 25% of full armor
 		if (ps->stats[STAT_ARMOR] < quarterArmor)		// Do whatever the flash timer says
@@ -1827,6 +1830,211 @@ static void CG_DrawSimpleForcePower( const centity_t *cent )
 CG_DrawHUD
 ================
 */
+/*
+JKEnhanced status bar: a row of small icons for states that have nothing else on screen saying they're
+on. Add an entry in CG_GatherStatusIcons; the bar lays them out in order.
+Placement (so a new HUD can move it without code): cg_statusBarX / cg_statusBarY, the first icon's
+top-left in 640x480 HUD units (-1 = default: just up and left of the Force number), cg_statusBarSize
+(icon height, 20), cg_statusBarDir (0 = grows left, 1 = grows right).
+
+- Protect 3 toggle (no shell while idle): dims at 0 Force (it blocks nothing), brightens as it blocks.
+*/
+typedef struct
+{
+	qhandle_t	icon;
+	vec4_t		color;
+	char		text[8];	// small, bottom right of the icon ("" = none)
+} statusIcon_t;
+
+extern qboolean G_ForceShieldIsToggle( const gentity_t *ent, int power );
+extern float CG_ForceShieldFlash( const gentity_t *ent, int power );
+static int CG_GatherStatusIcons( const centity_t *cent, statusIcon_t *out, int max )
+{
+	int n = 0;
+	if ( !cent->gent || !cent->gent->client )
+	{
+		return 0;
+	}
+	const playerState_t *ps = &cent->gent->client->ps;
+
+	if ( n < max && force_icons[FP_PROTECT] && G_ForceShieldIsToggle( cent->gent, FP_PROTECT ) )
+	{
+		statusIcon_t *s = &out[n++];
+		s->icon = force_icons[FP_PROTECT];
+		s->text[0] = 0;
+		if ( ps->forcePower <= 0 )
+		{
+			s->color[0] = s->color[1] = s->color[2] = 0.5f;
+			s->color[3] = 0.4f;
+		}
+		else
+		{
+			s->color[0] = s->color[1] = s->color[2] = 1.0f;
+			s->color[3] = Q_min( 1.0f, 0.75f + 0.25f * CG_ForceShieldFlash( cent->gent, FP_PROTECT ) );
+		}
+	}
+
+	if ( n < max && force_icons[FP_SPEED] && ( ps->forcePowersActive & ( 1 << FP_SPEED ) ) && ps->forcePowerDuration[FP_SPEED] > level.time )
+	{//Speed (4B.6): tinted by level (Burst white, Flow blue, Focus gold), seconds left on it
+		extern cvar_t *g_timescale;
+		statusIcon_t *s = &out[n++];
+		s->icon = force_icons[FP_SPEED];
+		const int lvl = ps->forcePowerLevel[FP_SPEED];
+		s->color[0] = ( lvl >= FORCE_LEVEL_3 ) ? 1.0f : ( lvl == FORCE_LEVEL_2 ) ? 0.6f : 1.0f;
+		s->color[1] = ( lvl >= FORCE_LEVEL_3 ) ? 0.85f : ( lvl == FORCE_LEVEL_2 ) ? 0.8f : 1.0f;
+		s->color[2] = ( lvl >= FORCE_LEVEL_3 ) ? 0.3f : 1.0f;
+		s->color[3] = 0.9f;
+		float left = (float)( ps->forcePowerDuration[FP_SPEED] - level.time );
+		if ( cent->gent->s.number == 0 && g_timescale && g_timescale->value > 0.01f && g_timescale->value < 1.0f )
+		{//the player's own slow-mo runs game time slow: real seconds
+			left /= g_timescale->value;
+		}
+		Com_sprintf( s->text, sizeof( s->text ), "%d", (int)ceil( left / 1000.0f ) );
+	}
+	return n;
+}
+
+#define MAX_STATUS_ICONS	8
+static void CG_DrawStatusBar( const centity_t *cent, float defaultX, float defaultY )
+{
+	statusIcon_t	icons[MAX_STATUS_ICONS];
+	const int		num = CG_GatherStatusIcons( cent, icons, MAX_STATUS_ICONS );
+	if ( !num )
+	{
+		return;
+	}
+	const float	h = ( cg_statusBarSize.value > 0 ) ? cg_statusBarSize.value : 20.0f;
+	const float	w = h * cgs.widthRatioCoef;	//square on any aspect
+	const float	step = w + 2.0f * cgs.widthRatioCoef;
+	const float	x = ( cg_statusBarX.value >= 0 ) ? cg_statusBarX.value : defaultX;
+	const float	y = ( cg_statusBarY.value >= 0 ) ? cg_statusBarY.value : defaultY;
+	const float	dir = cg_statusBarDir.integer ? 1.0f : -1.0f;
+	for ( int i = 0; i < num; i++ )
+	{
+		const float ix = x + dir * i * step;
+		cgi_R_SetColor( icons[i].color );
+		CG_DrawPic( ix, y, w, h, icons[i].icon );
+		if ( icons[i].text[0] )
+		{
+			const int	cw = (int)( 6 * cgs.widthRatioCoef ), ch = 8;
+			const int	len = (int)strlen( icons[i].text );
+			CG_DrawStringExt( (int)( ix + w - len * cw ), (int)( y + h - ch ), icons[i].text, colorTable[CT_WHITE], qtrue, qtrue, cw, ch );
+		}
+	}
+	cgi_R_SetColor( NULL );
+}
+
+/*
+================
+CG_DrawBossBar (JKEnhanced 4B.9)
+
+Top center: the boss's name, their health split at the stage lines (a pale trail shows recent damage),
+and a thin guard bar under it that flashes when the guard breaks. It shimmers while they're
+untouchable mid stage break. The game side (G_BossBarInfo) picks who to show; it fades in and out.
+cg_bossBar 0 hides it; cg_bossBarY (top, HUD units), cg_bossBarWidth (bar width at 4:3).
+================
+*/
+static void CG_DrawBossBar( void )
+{
+	static bossBarInfo_t	last;
+	static float			alpha = 0.0f;
+	static float			trail = 0.0f;	//health shown by the damage trail
+	static int				lastEnt = -1;
+
+	bossBarInfo_t	info;
+	const qboolean	have = (qboolean)( cg_bossBar.integer && G_BossBarInfo( &info ) );
+	const float		fadeStep = cg.frametime / 300.0f;
+	if ( have )
+	{
+		if ( info.entNum != lastEnt || alpha <= 0.0f )
+		{//someone new: no trail from the last one
+			trail = (float)info.health;
+			lastEnt = info.entNum;
+		}
+		last = info;
+		alpha = Q_min( 1.0f, alpha + fadeStep );
+	}
+	else
+	{
+		alpha = Q_max( 0.0f, alpha - fadeStep );
+		if ( alpha <= 0.0f )
+		{
+			lastEnt = -1;
+			return;
+		}
+	}
+	const bossBarInfo_t	*b = &last;
+
+	//the trail catches up with a short pause's worth of lag
+	if ( trail < b->health )
+	{
+		trail = (float)b->health;
+	}
+	else if ( trail > b->health )
+	{
+		trail = Q_max( (float)b->health, trail - b->maxHealth * cg.frametime / 1500.0f );
+	}
+
+	const float	barW = ( cg_bossBarWidth.value > 0 ? cg_bossBarWidth.value : 240.0f ) * cgs.widthRatioCoef;
+	const float	barH = 8.0f;
+	const float	x = ( SCREEN_WIDTH - barW ) * 0.5f;
+	const float	y = ( cg_bossBarY.value >= 0 ) ? cg_bossBarY.value + 12.0f : 36.0f;	//the name sits above
+
+	vec4_t	back = { 0.0f, 0.0f, 0.0f, 0.55f * alpha };
+	vec4_t	frame = { 0.8f, 0.8f, 0.8f, 0.6f * alpha };
+	vec4_t	fill = { 0.72f, 0.1f, 0.08f, 0.95f * alpha };
+	vec4_t	trailCol = { 0.95f, 0.85f, 0.55f, 0.75f * alpha };
+	vec4_t	tick = { 1.0f, 1.0f, 1.0f, 0.7f * alpha };
+	vec4_t	nameCol = { 1.0f, 1.0f, 1.0f, alpha };
+
+	if ( b->recovering )
+	{//untouchable: the fill shimmers
+		const float s = 0.5f + 0.5f * sin( cg.time * 0.012f );
+		fill[0] = 0.72f + 0.28f * s;
+		fill[1] = 0.1f + 0.5f * s;
+		fill[2] = 0.08f + 0.5f * s;
+	}
+
+	CG_DrawProportionalString( (int)( SCREEN_WIDTH * 0.5f ), (int)( y - 14.0f ), b->name, UI_CENTER|UI_SMALLFONT|UI_DROPSHADOW, nameCol, cgs.widthRatioCoef );
+
+	CG_FillRect( x, y, barW, barH, back );
+	const float healthFrac = Com_Clamp( 0.0f, 1.0f, (float)b->health / b->maxHealth );
+	const float trailFrac = Com_Clamp( 0.0f, 1.0f, trail / b->maxHealth );
+	if ( trailFrac > healthFrac )
+	{
+		CG_FillRect( x + barW * healthFrac, y, barW * ( trailFrac - healthFrac ), barH, trailCol );
+	}
+	CG_FillRect( x, y, barW * healthFrac, barH, fill );
+	for ( int k = 1; k < b->stages; k++ )
+	{//stage lines
+		const float f = (float)( b->maxHealth * ( b->stages - k ) / b->stages ) / b->maxHealth;
+		CG_FillRect( x + barW * f - 0.5f, y - 1.0f, 1.0f, barH + 2.0f, tick );
+	}
+	CG_DrawRect( x, y, barW, barH, 0.5f, frame );
+
+	if ( b->guardMax > 0 )
+	{//guard, just under it
+		const float	gy = y + barH + 2.0f;
+		const float	gh = 3.0f;
+		vec4_t		guardCol = { 0.55f, 0.75f, 1.0f, 0.9f * alpha };
+		if ( b->guardBroken )
+		{
+			const float s = 0.5f + 0.5f * sin( cg.time * 0.025f );
+			guardCol[0] = 1.0f;
+			guardCol[1] = 0.45f + 0.3f * s;
+			guardCol[2] = 0.1f;
+			guardCol[3] = ( 0.4f + 0.6f * s ) * alpha;
+			CG_FillRect( x, gy, barW, gh, guardCol );
+		}
+		else
+		{
+			CG_FillRect( x, gy, barW, gh, back );
+			CG_FillRect( x, gy, barW * Com_Clamp( 0.0f, 1.0f, (float)b->guard / b->guardMax ), gh, guardCol );
+		}
+	}
+	cgi_R_SetColor( NULL );
+}
+
 extern void WorkshopDrawClientsideInformation();
 static void CG_DrawHUD( centity_t *cent )
 {
@@ -1835,6 +2043,7 @@ static void CG_DrawHUD( centity_t *cent )
 	float hudRatio = cg_hudRatio.integer ? cgs.widthRatioCoef : 1.0f;
     
     WorkshopDrawClientsideInformation();
+	CG_DrawBossBar();
 
 	if ( cg_hudFiles.integer )
 	{
@@ -1846,6 +2055,7 @@ static void CG_DrawHUD( centity_t *cent )
 		SimpleHud_DrawString( x + cgs.widthRatioCoef * (18 + 14), y + 40 + 14, va( "%i", cg.snap->ps.stats[STAT_ARMOR] ), colorTable[CT_HUD_GREEN] );
 
 		CG_DrawSimpleForcePower( cent );
+		CG_DrawStatusBar( cent, SCREEN_WIDTH - cgs.widthRatioCoef * 28, SCREEN_HEIGHT - 104 );
 
 		if ( cent->currentState.weapon == WP_SABER )
 			CG_DrawSimpleSaberStyle( cent );
@@ -1935,6 +2145,17 @@ static void CG_DrawHUD( centity_t *cent )
 			);
 
 		CG_DrawForcePower(cent,sectionXPos,sectionYPos,hudRatio);
+		//JKEnhanced: just above the Force number (the righthud section rect can be the whole screen, which
+		//put this off the top)
+		if ( otherHUDBits[OHB_FORCEAMOUNT].yPos > 30 )
+		{
+			CG_DrawStatusBar( cent, SCREEN_WIDTH - ( SCREEN_WIDTH - otherHUDBits[OHB_FORCEAMOUNT].xPos ) * hudRatio - 22.0f * cgs.widthRatioCoef,
+				otherHUDBits[OHB_FORCEAMOUNT].yPos - 24 );//(one icon left of the number: right above it overlapped the HUD art)
+		}
+		else
+		{
+			CG_DrawStatusBar( cent, SCREEN_WIDTH - cgs.widthRatioCoef * 28, SCREEN_HEIGHT - 104 );
+		}
 
 		// Draw ammo tics or saber style
 		if ( cent->currentState.weapon == WP_SABER )
@@ -2490,7 +2711,9 @@ void CG_DrawHealthBar(centity_t *cent, float chX, float chY, float chW, float ch
 	CG_FillRect(x+(percent*chW), y+1.0f, chW-(percent*chW)-1.0f, chH-1.0f, cColor);
 
 	// Saber guard/composure bar — thinner orange bar just below health for saberist NPCs
-	if ( cent->gent->NPC && cent->gent->NPC->guardMax > 0 )
+	// (not with the saber rules: Force is the guard there, the bar below)
+	const qboolean guardBar = (qboolean)( cent->gent->NPC && cent->gent->NPC->guardMax > 0 && !WP_SaberRules() );
+	if ( guardBar )
 	{
 		const float gH = chH * 0.6f;
 		vec4_t gColor;
@@ -2510,20 +2733,29 @@ void CG_DrawHealthBar(centity_t *cent, float chX, float chY, float chW, float ch
 			gColor[2] = 0.1f;
 			gColor[3] = 0.5f;
 			CG_DrawRect( x, y+chH+1.0f, chW, gH, 1.0f, colorTable[CT_BLACK] );
-			CG_FillRect( x+1.0f, y+chH+2.0f, (gPercent*chW)-1.0f, gH-1.0f, gColor );
+			if ( gPercent > 0 )
+			{//(at 0 guard the width went negative)
+				CG_FillRect( x+1.0f, y+chH+2.0f, (gPercent*chW)-1.0f, gH-1.0f, gColor );
+			}
 		}
 	}
 
-	// Force pool — blue, under the guard bar, for saber fighters: their blocks cost Force now
-	// (wp_saber.cpp WP_SaberParry), so this is what tells you they're about to run dry
+	// Force pool — blue, under the guard bar, for saber fighters: what they have left for Force powers
+	// (their blocks are Force-free with g_npcForcePool - the guard bar above is what blocking wears down)
 	if ( cent->gent->NPC && cent->gent->client && cent->gent->client->ps.weapon == WP_SABER && cent->gent->client->ps.forcePowerMax > 0 )
 	{
 		const float fH = chH * 0.6f;
-		const float fY = y + chH + 1.0f + ( cent->gent->NPC->guardMax > 0 ? chH * 0.6f + 1.0f : 0.0f );
+		const float fY = y + chH + 1.0f + ( guardBar ? chH * 0.6f + 1.0f : 0.0f );
 		const float fPercent = Com_Clamp( 0.0f, 1.0f, (float)cent->gent->client->ps.forcePower / (float)cent->gent->client->ps.forcePowerMax );
 		vec4_t fColor = { 0.25f, 0.5f, 1.0f, 0.55f };
 		CG_DrawRect( x, fY, chW, fH, 1.0f, colorTable[CT_BLACK] );
-		if ( fPercent > 0 )
+		if ( WP_SaberRules() && WP_SaberOpenTime( cent->gent ) > 0 )
+		{//Open (off balance): flash white so the opening reads instantly
+			const float flash = ( cg.time % 300 < 150 ) ? 1.0f : 0.6f;
+			vec4_t oColor = { flash, flash, flash, 0.7f };
+			CG_FillRect( x+1.0f, fY+1.0f, chW-2.0f, fH-1.0f, oColor );
+		}
+		else if ( fPercent > 0 )
 		{
 			CG_FillRect( x+1.0f, fY+1.0f, (fPercent*chW)-1.0f, fH-1.0f, fColor );
 		}
@@ -2754,16 +2986,19 @@ CG_DrawLightMeter
   While crouched: how lit you are, as a bar above the bottom edge. Dark = safe.
 -------------------------
 */
+extern qboolean PM_InKnockDown( playerState_t *ps );
+extern qboolean PM_InRoll( playerState_t *ps );
 void CG_DrawLightMeter( void )
 {
-	const gentity_t *pl = &g_entities[0];
-	if ( !pl->client || !(pl->client->ps.pm_flags&PMF_DUCKED) || cg.zoomMode )
-	{
+	gentity_t *pl = &g_entities[0];
+	if ( !pl->client || !(pl->client->ps.pm_flags&PMF_DUCKED) || cg.zoomMode
+		|| PM_InKnockDown( &pl->client->ps ) || PM_InRoll( &pl->client->ps ) )
+	{//crouching only - a knockdown, get-up or roll also sets PMF_DUCKED
 		return;
 	}
 	const float frac = Com_Clamp( 0.0f, 1.0f, pl->lightLevel / 255.0f );
 	const float w = 80.0f, h = 6.0f;
-	const float x = 320.0f - w * 0.5f, y = 440.0f;
+	const float x = 320.0f - w * 0.5f, y = 450.0f;//(under the parry cooldown bar at 440, not on top of it)
 	vec4_t back = { 0.0f, 0.0f, 0.0f, 0.5f };
 	vec4_t fill = { 0.3f + 0.7f * frac, 0.9f - 0.6f * frac, 0.3f, 0.8f };
 	CG_FillRect( x - 1, y - 1, w + 2, h + 2, back );
@@ -4476,7 +4711,7 @@ static void CG_Draw2DScreenTints( void )
 		}
 	}
 
-	if (cg.snap->ps.forcePowersActive & (1 << FP_PROTECT))
+	if ((cg.snap->ps.forcePowersActive & (1 << FP_PROTECT)) && cg.snap->ps.forcePowerLevel[FP_PROTECT] < FORCE_LEVEL_3)//JKEnhanced 4B.3: L3 flashes instead (below)
 	{
 		if (!cgProtectTime)
 		{
@@ -4545,6 +4780,21 @@ static void CG_Draw2DScreenTints( void )
 		}
 	}
 
+	if ( !cg.renderingThirdPerson && cg_entities[cg.snap->ps.clientNum].gent
+		&& (cg.snap->ps.forcePowersActive & (1 << FP_PROTECT)) && cg.snap->ps.forcePowerLevel[FP_PROTECT] >= FORCE_LEVEL_3 )
+	{//JKEnhanced 4B.3: an L3 (toggle) Protect tints the screen only for a moment when it stops something
+		extern float CG_ForceShieldFlash( const gentity_t *ent, int power );
+		const float f = CG_ForceShieldFlash( cg_entities[cg.snap->ps.clientNum].gent, FP_PROTECT );
+		if ( f > 0.0f )
+		{
+			hcolor[0] = 0;
+			hcolor[1] = 0.7f;
+			hcolor[2] = 0;
+			hcolor[3] = 0.15f * f;
+			CG_FillRect( 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, hcolor );
+		}
+	}
+
 	if ( (cg.refdef.viewContents&CONTENTS_LAVA) )
 	{//tint screen red
 		float phase = cg.time / 1000.0 * WAVE_FREQUENCY * M_PI * 2;
@@ -4576,6 +4826,104 @@ static void CG_Draw2DScreenTints( void )
 		CG_FillRect( 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, hcolor  );
 	}
 }
+/*
+=================
+CG_DrawDamageIndicators (JKEnhanced, Step 3D)
+
+A red bar on a ring around the crosshair for each recent hit, on the side the hit came from. It
+follows the world direction, so turning toward the attacker swings it to the top. Fades over 1s;
+bigger hits draw longer bars. cg_damageIndicator 0 turns it off.
+=================
+*/
+static void CG_DrawDamageIndicators( void )
+{
+	if ( !cg_damageIndicator.integer )
+	{
+		return;
+	}
+	const int		fadeTime = 1000;
+	const float		radius = 56.0f;
+	for ( int k = 0; k < 4; k++ )
+	{
+		const int age = cg.time - cg.damageIndTime[k];
+		if ( !cg.damageIndTime[k] || age < 0 || age >= fadeTime )
+		{
+			continue;
+		}
+		const float rel = DEG2RAD( AngleNormalize180( cg.damageIndYaw[k] - cg.refdefViewAngles[YAW] ) );
+		const float x = 320.0f - radius * sinf( rel ) * cgs.widthRatioCoef;
+		const float y = 240.0f - radius * cosf( rel );
+		const float len = 24.0f + Q_min( 24, cg.damageIndAmount[k] );
+		vec4_t color = { 0.85f, 0.1f, 0.05f, 0.9f * ( 1.0f - (float)age / fadeTime ) };
+		cgi_R_SetColor( color );
+		//the bar's width axis turns to (cos a, sin a) on screen; the ring's tangent there is a = -rel
+		CG_DrawRotatePic2( x, y, len, 5.0f, -RAD2DEG( rel ), cgs.media.whiteShader, cgs.widthRatioCoef );
+	}
+	cgi_R_SetColor( NULL );
+}
+
+/*
+=================
+CG_DrawThreatMarkers (JKEnhanced, Step 3E)
+
+Enemy thermal detonators and det packs within 450 units: a pulsing red icon on the thing when it's
+on screen, an orange bar on the hit-indicator ring pointing at it when it isn't. Your own are
+ignored. cg_threatCues 0 turns it off.
+=================
+*/
+static void CG_DrawThreatMarkers( void )
+{
+	if ( !cg_threatCues.integer || !cg.snap )
+	{
+		return;
+	}
+	const float maxDist = 450.0f;
+	const float pulse = 0.6f + 0.4f * sinf( cg.time * 0.012f );
+	for ( int i = 0; i < cg.snap->numEntities; i++ )
+	{
+		centity_t *cent = &cg_entities[cg.snap->entities[i].number];
+		const int wp = cent->currentState.weapon;
+		if ( cent->currentState.eType != ET_MISSILE || ( wp != WP_THERMAL && wp != WP_DET_PACK ) )
+		{
+			continue;
+		}
+		if ( cent->gent && cent->gent->owner && cent->gent->owner->s.number == 0 )
+		{//ours
+			continue;
+		}
+		vec3_t delta;
+		VectorSubtract( cent->lerpOrigin, cg.refdef.vieworg, delta );
+		const float dist = VectorLength( delta );
+		if ( dist > maxDist )
+		{
+			continue;
+		}
+		const float closeness = 1.0f - dist / maxDist;
+		float x, y;
+		if ( DotProduct( delta, cg.refdef.viewaxis[0] ) > 0.0f
+			&& CG_WorldCoordToScreenCoordFloat( cent->lerpOrigin, &x, &y )
+			&& x >= 0.0f && x <= 640.0f && y >= 0.0f && y <= 480.0f )
+		{
+			const qhandle_t icon = cg_weapons[wp].weaponIcon ? cg_weapons[wp].weaponIcon : cgs.media.whiteShader;
+			const float size = 14.0f + 12.0f * closeness;
+			vec4_t color = { 1.0f, 0.2f, 0.1f, ( 0.5f + 0.5f * closeness ) * pulse };
+			cgi_R_SetColor( color );
+			CG_DrawPic( x - size * 0.5f * cgs.widthRatioCoef, y - size * 0.5f, size * cgs.widthRatioCoef, size, icon );
+		}
+		else
+		{//off screen: point at it from the ring around the crosshair
+			const float yaw = RAD2DEG( atan2( delta[1], delta[0] ) );
+			const float rel = DEG2RAD( AngleNormalize180( yaw - cg.refdefViewAngles[YAW] ) );
+			const float radius = 64.0f;
+			vec4_t color = { 1.0f, 0.55f, 0.1f, ( 0.4f + 0.6f * closeness ) * pulse };
+			cgi_R_SetColor( color );
+			CG_DrawRotatePic2( 320.0f - radius * sinf( rel ) * cgs.widthRatioCoef, 240.0f - radius * cosf( rel ),
+				18.0f, 4.0f, -RAD2DEG( rel ), cgs.media.whiteShader, cgs.widthRatioCoef );
+		}
+	}
+	cgi_R_SetColor( NULL );
+}
+
 /*
 =================
 CG_Draw2D
@@ -4694,6 +5042,8 @@ static void CG_Draw2D( void )
 		}
 		CG_DrawAmmoWarning();
 		CG_DrawParryCooldownBar( cent );
+		CG_DrawDamageIndicators();
+		CG_DrawThreatMarkers();
 
 		//CROSSHAIR is now done from the crosshair ent trace
 		//if ( !cg.renderingThirdPerson && !cg_dynamicCrosshair.integer ) // disruptor draws it's own crosshair artwork; binocs draw nothing; third person draws its own crosshair

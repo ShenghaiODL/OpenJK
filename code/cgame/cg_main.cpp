@@ -262,6 +262,8 @@ vmCvar_t	cg_drawAmmoWarning;
 vmCvar_t	cg_drawCrosshair;
 vmCvar_t	cg_drawAwareness;
 vmCvar_t	cg_drawLightMeter;
+vmCvar_t	cg_damageIndicator;
+vmCvar_t	cg_threatCues;
 vmCvar_t	cg_crosshairIdentifyTarget;
 vmCvar_t	cg_dynamicCrosshair;
 vmCvar_t	cg_crosshairForceHint;
@@ -394,6 +396,19 @@ vmCvar_t		cg_truefov;
 vmCvar_t        cg_truebobbing;
 
 vmCvar_t		cg_hudRatio;
+vmCvar_t		cg_statusBarX;
+vmCvar_t		cg_statusBarY;
+vmCvar_t		cg_statusBarSize;
+vmCvar_t		cg_statusBarDir;
+vmCvar_t		cg_bossBar;
+vmCvar_t		cg_bossBarY;
+vmCvar_t		cg_bossBarWidth;
+vmCvar_t		cg_cloakRefraction;
+vmCvar_t		cg_cloakRefractMin;
+vmCvar_t		cg_cloakRefractMax;
+vmCvar_t		cg_cloakRefractSpeed;
+vmCvar_t		cg_cloakShimmer;
+vmCvar_t		cg_cloakDebug;
 
 typedef struct {
 	vmCvar_t	*vmCvar;
@@ -424,6 +439,8 @@ static cvarTable_t cvarTable[] = {
 	{ &cg_drawCrosshair, "cg_drawCrosshair", "1", CVAR_ARCHIVE },
 	{ &cg_drawAwareness, "cg_drawAwareness", "1", CVAR_ARCHIVE },	// "?" / "!" over enemies who are onto you
 	{ &cg_drawLightMeter, "cg_drawLightMeter", "1", CVAR_ARCHIVE },	// how lit you are while crouched
+	{ &cg_damageIndicator, "cg_damageIndicator", "1", CVAR_ARCHIVE },	// JKEnhanced: red marks around the crosshair pointing at whoever just hit you
+	{ &cg_threatCues, "cg_threatCues", "1", CVAR_ARCHIVE },	// JKEnhanced: sniper laser while they charge a shot, markers on live grenades/mines near you
 	{ &cg_dynamicCrosshair, "cg_dynamicCrosshair", "0", 0 },
 	// NOTE : I also create this in UI_Init()
 	{ &cg_crosshairIdentifyTarget, "cg_crosshairIdentifyTarget", "1", CVAR_ARCHIVE },
@@ -562,6 +579,19 @@ static cvarTable_t cvarTable[] = {
 
 	{ &r_ratioFix, "r_ratioFix", "", 0},
 	{ &cg_hudRatio, "cg_hudRatio", "1", CVAR_ARCHIVE },
+	{ &cg_statusBarX, "cg_statusBarX", "-1", CVAR_ARCHIVE },	//JKEnhanced status bar (cg_draw.cpp CG_DrawStatusBar): -1 = default spot
+	{ &cg_statusBarY, "cg_statusBarY", "-1", CVAR_ARCHIVE },
+	{ &cg_statusBarSize, "cg_statusBarSize", "20", CVAR_ARCHIVE },
+	{ &cg_statusBarDir, "cg_statusBarDir", "0", CVAR_ARCHIVE },	//0 = grows left, 1 = right
+	{ &cg_bossBar, "cg_bossBar", "0", CVAR_ARCHIVE },	//JKEnhanced boss bar (off by default after the first test: looks rough) (cg_draw.cpp CG_DrawBossBar)
+	{ &cg_bossBarY, "cg_bossBarY", "24", CVAR_ARCHIVE },
+	{ &cg_bossBarWidth, "cg_bossBarWidth", "240", CVAR_ARCHIVE },
+	{ &cg_cloakRefraction, "cg_cloakRefraction", "1", CVAR_ARCHIVE },	//JKEnhanced: full cloaks drawn as rend2 refraction (CG_CloakRefraction)
+	{ &cg_cloakRefractMin, "cg_cloakRefractMin", "8", 0 },	//standing-still refraction (0-254; alpha/255 x 20 units)
+	{ &cg_cloakRefractMax, "cg_cloakRefractMax", "90", 0 },	//full-run refraction
+	{ &cg_cloakRefractSpeed, "cg_cloakRefractSpeed", "0.35", 0 },	//refraction gained per unit/s of their speed
+	{ &cg_cloakShimmer, "cg_cloakShimmer", "0.25", 0 },	//peak cloakedShader shimmer while cloaking / decloaking (0-1)
+	{ &cg_cloakDebug, "cg_cloakDebug", "0", 0 },	//1 = once a second per cloaked NPC: which cloak branch drew them, refraction strength, shimmer, reveal
 };
 
 static const size_t cvarTableSize = ARRAY_LEN( cvarTable );
@@ -2380,6 +2410,7 @@ void CG_Init( int serverCommandSequence ) {
 		"gfx/mp/f_icon_sight",			//FP_SEE,
 		"gfx/mp/f_icon_dk_insanity",		//FP_INSANITY,
 		"gfx/mp/f_icon_lt_stasis",			//FP_STASIS,
+		"gfx/mp/f_icon_repulse",		//FP_REPULSE (JKEnhanced, restored)
 	};
 
 	// Precache inventory icons
@@ -3930,6 +3961,7 @@ int showPowers[MAX_SHOWPOWERS] =
 	FP_SPEED,
 	FP_PUSH,
 	FP_PULL,
+	FP_REPULSE,//JKEnhanced 4B: neutral core power
 	FP_SEE,
 	FP_SABERTHROW,
 
@@ -3951,6 +3983,7 @@ const char *showPowersName[MAX_SHOWPOWERS] =
 	"SP_INGAME_SPEED2",
 	"SP_INGAME_PUSH2",
 	"SP_INGAME_PULL2",
+	"SPMOD_INGAME_REPULSE2",
 	"SP_INGAME_SEEING2",
 	"SP_INGAME_SABER_THROW2",
 
@@ -3976,6 +4009,7 @@ int showDataPadPowers[MAX_DPSHOWPOWERS] =
 	FP_SPEED,
 	FP_PUSH,
 	FP_PULL,
+	FP_REPULSE,//JKEnhanced 4B (keep the four desc tables below in this order)
 	FP_SABERTHROW,
 	FP_SABER_DEFENSE,
 	FP_SABER_OFFENSE,
@@ -4014,12 +4048,17 @@ qboolean ForcePower_Valid(int index)
 CG_NextForcePower_f
 ===============
 */
+extern qboolean WP_GripScroll( gentity_t *self, int dir );
 void CG_NextForcePower_f( void )
 {
 	int		i;
 
 	if ( !cg.snap || in_camera )
 	{
+		return;
+	}
+	if ( WP_GripScroll( &g_entities[0], -1 ) )
+	{//JKEnhanced: carrying something with Grip 3 - the wheel brings it closer
 		return;
 	}
 
@@ -4062,6 +4101,10 @@ void CG_PrevForcePower_f( void )
 
 	if ( !cg.snap || in_camera )
 	{
+		return;
+	}
+	if ( WP_GripScroll( &g_entities[0], 1 ) )
+	{//JKEnhanced: carrying something with Grip 3 - the wheel moves it farther out
 		return;
 	}
 
@@ -4354,6 +4397,7 @@ const char *forcepowerDesc[NUM_FORCE_POWERS] =
 "FORCE_SPEED_DESC",
 "FORCE_PUSH_DESC",
 "FORCE_PULL_DESC",
+"FORCE_REPULSE_DESC",
 "FORCE_SABER_THROW_DESC",
 "FORCE_SABER_DEFENSE_DESC",
 "FORCE_SABER_OFFENSE_DESC",
@@ -4381,6 +4425,7 @@ const char *forcepowerLvl1Desc[NUM_FORCE_POWERS] =
 "FORCE_SPEED_LVL1_DESC",
 "FORCE_PUSH_LVL1_DESC",
 "FORCE_PULL_LVL1_DESC",
+"FORCE_REPULSE_LVL1_DESC",
 "FORCE_SABER_THROW_LVL1_DESC",
 "FORCE_SABER_DEFENSE_LVL1_DESC",
 "FORCE_SABER_OFFENSE_LVL1_DESC",
@@ -4407,6 +4452,7 @@ const char *forcepowerLvl2Desc[NUM_FORCE_POWERS] =
 "FORCE_SPEED_LVL2_DESC",
 "FORCE_PUSH_LVL2_DESC",
 "FORCE_PULL_LVL2_DESC",
+"FORCE_REPULSE_LVL2_DESC",
 "FORCE_SABER_THROW_LVL2_DESC",
 "FORCE_SABER_DEFENSE_LVL2_DESC",
 "FORCE_SABER_OFFENSE_LVL2_DESC",
@@ -4433,6 +4479,7 @@ const char *forcepowerLvl3Desc[NUM_FORCE_POWERS] =
 "FORCE_SPEED_LVL3_DESC",
 "FORCE_PUSH_LVL3_DESC",
 "FORCE_PULL_LVL3_DESC",
+"FORCE_REPULSE_LVL3_DESC",
 "FORCE_SABER_THROW_LVL3_DESC",
 "FORCE_SABER_DEFENSE_LVL3_DESC",
 "FORCE_SABER_OFFENSE_LVL3_DESC",

@@ -128,6 +128,14 @@ void CG_DamageFeedback( int yawByte, int pitchByte, int damage ) {
 		AngleVectors( angles, dir, NULL, NULL );
 		VectorSubtract( vec3_origin, dir, dir );
 
+		{//JKEnhanced hit indicator: remember which way (world yaw) the hit came from
+			const int slot = cg.damageIndNext;
+			cg.damageIndNext = ( cg.damageIndNext + 1 ) % 4;
+			cg.damageIndYaw[slot] = RAD2DEG( atan2( dir[1], dir[0] ) );
+			cg.damageIndTime[slot] = cg.time;
+			cg.damageIndAmount[slot] = damage;
+		}
+
 		front = DotProduct (dir, cg.refdef.viewaxis[0] );
 		left = DotProduct (dir, cg.refdef.viewaxis[1] );
 		up = DotProduct (dir, cg.refdef.viewaxis[2] );

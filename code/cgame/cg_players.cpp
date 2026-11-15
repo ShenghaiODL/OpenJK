@@ -31,6 +31,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "../game/wp_saber.h"
 #include "../game/g_vehicles.h"
 #include "../game/NPC_neutral.h"
+#include "../game/g_force.h"
 #include "../Rufl/hstring.h"
 
 // dead, or knocked out and lying there (same pose, same no-head-tracking, eyes shut)
@@ -1182,6 +1183,32 @@ static void CG_PlayerAnimEventDo( centity_t *cent, animevent_t *animEvent )
 	}
 }
 
+//the model folder a G2 entity's model-specific animevents are keyed by: "stormtrooper" from
+//"models/players/stormtrooper/model.glm". Falls back to NPC_type (the old key) if there's no G2 model.
+static void CG_AnimEventModelName( const gentity_t *ent, char *out, int outSize )
+{
+	out[0] = 0;
+	if ( ent->ghoul2.size() && ent->playerModel >= 0 && ent->playerModel < ent->ghoul2.size() )
+	{
+		const char *file = ent->ghoul2[ent->playerModel].mFileName;
+		const char *start = strstr( file, "players/" );//(the engine builds it lowercase: models/players/%s/model.glm)
+		if ( start )
+		{
+			start += strlen( "players/" );
+			const char *end = strchr( start, '/' );
+			if ( end && end > start && end - start < outSize )
+			{
+				Q_strncpyz( out, start, (int)( end - start ) + 1 );
+				return;
+			}
+		}
+	}
+	if ( ent->NPC_type )
+	{
+		Q_strncpyz( out, ent->NPC_type, outSize );
+	}
+}
+
 static void CG_PlayerAnimEvents( int animFileIndex, qboolean torso, int oldFrame, int frame, int entNum )
 {
 	int		i;
@@ -1238,7 +1265,14 @@ static void CG_PlayerAnimEvents( int animFileIndex, qboolean torso, int oldFrame
 		}
 	}
 
-	hstring myModel = g_entities[entNum].NPC_type;		//apparently NPC_type is always the same as the model name???
+	//Model-specific events are stored under the model folder name (G_LoadAnimFileSet / G_ParseAnimFileSet).
+	//NPC_type is NOT always that ("stormtrooper2" uses the "stormtrooper" model; the player is "player"),
+	//so read the folder from the G2 model's file name, "models/players/<model>/model.glm" (it's saved, so
+	//this also holds after a load). Same fix as OpenJK PR #1333, without making every NPC type append
+	//its own copy of the model's events to the skeleton's event list.
+	char modelFolder[MAX_QPATH];
+	CG_AnimEventModelName( &g_entities[entNum], modelFolder, sizeof( modelFolder ) );
+	hstring myModel = modelFolder;
 
 	// Check for anim event
 	for ( i=0; i < MAX_ANIM_EVENTS; ++i )
@@ -4153,7 +4187,11 @@ static void CG_ForcePushRefraction( vec3_t org, centity_t *cent, float scaleFact
 	}
 
 	//scale from 1.0f to 0.1f then hold at 0.1 for the rest of the duration
-	if (cent->gent->client->ps.forcePowersActive & ( 1 << FP_PULL ) )
+	if (cent->gent->client->ps.forcePowersActive & ( 1 << FP_REPULSE ) )
+	{//JKEnhanced (restored)
+		scale = 1.0f;
+	}
+	else if (cent->gent->client->ps.forcePowersActive & ( 1 << FP_PULL ) )
 	{
 		scale = (float)(REFRACT_EFFECT_DURATION-tDif)*0.003f;
 	}
@@ -4171,6 +4209,11 @@ static void CG_ForcePushRefraction( vec3_t org, centity_t *cent, float scaleFact
 	}
 
 	//start alpha at 244, fade to 10
+	if (cent->gent->client->ps.forcePowersActive & ( 1 << FP_REPULSE ) )
+	{//JKEnhanced (restored)
+		alpha = 244.0f;
+	}
+	else
 	{
 		alpha = (float)tDif*0.488f;
 	}
@@ -4714,6 +4757,35 @@ static void CG_RGBForSaberColor( saber_colors_t color, vec3_t rgb )
 }
 
 /*
+JKEnhanced 4B.3: is this Protect / Absorb shell drawn? While on - except an L3 Protect (a toggle): only for
+CG_SHIELD_FLASH_MS after it stopped something (the game stamps G_ForceShieldFlash).
+*/
+#define CG_SHIELD_FLASH_MS	500
+extern int G_ForceShieldFlashTime( int entNum, int power );
+float CG_ForceShieldFlash( const gentity_t *ent, int power )
+{//1 right after a block, fading to 0
+	const int flash = G_ForceShieldFlashTime( ent->s.number, power );
+	if ( !flash || cg.time < flash || cg.time - flash >= CG_SHIELD_FLASH_MS )
+	{
+		return 0.0f;
+	}
+	return 1.0f - (float)( cg.time - flash ) / CG_SHIELD_FLASH_MS;
+}
+
+qboolean CG_ForceShieldShows( const gentity_t *ent, int power )
+{
+	if ( !ent || !ent->client || !( ent->client->ps.forcePowersActive & ( 1 << power ) ) )
+	{
+		return qfalse;
+	}
+	if ( power != FP_PROTECT || ent->client->ps.forcePowerLevel[power] < FORCE_LEVEL_3 )
+	{//only Protect L3 is a toggle (Absorb is stock)
+		return qtrue;
+	}
+	return (qboolean)( CG_ForceShieldFlash( ent, power ) > 0.0f );
+}
+
+/*
 ===============
 CG_AddRefEntityWithPowerups
 
@@ -4722,6 +4794,86 @@ Adds a piece with modifications or duplications for powerups
 */
 extern vmCvar_t	cg_thirdPersonAlpha;
 extern qboolean G_ControlledByPlayer(gentity_t* self);
+
+extern int G_CloakTransitionMs( const gentity_t *ent );	//AI_Stormtrooper.cpp
+
+//JKEnhanced: draw full cloaks as rend2 refraction (cg_cloakRefraction 1 and the rend2 renderer loaded)
+static qboolean CG_CloakRefraction( void )
+{
+	static cvar_t *renderer = NULL;
+	if ( !cg_cloakRefraction.integer )
+	{
+		return qfalse;
+	}
+	if ( !renderer )
+	{
+		renderer = gi.cvar( "cl_renderer", "", 0 );
+	}
+	return (qboolean)( renderer && strstr( renderer->string, "rend2" ) != NULL );
+}
+
+static float s_cloakLastStrength;	//for cg_cloakDebug
+
+//cg_cloakDebug 1: once a second per cloaked entity, what drew them
+static void CG_CloakDebugLine( const centity_t *cent, const char *branch, float perc, float shimmer )
+{
+	if ( !cg_cloakDebug.integer || !cent || !cent->gent )
+	{
+		return;
+	}
+	static int nextPrint[MAX_GENTITIES];
+	const int n = cent->currentState.number;
+	if ( cg.time < nextPrint[n] && nextPrint[n] - cg.time <= 1000 )
+	{
+		return;
+	}
+	nextPrint[n] = cg.time + 1000;
+	const qboolean reveal = (qboolean)( TIMER_Exists( cent->gent, "cloakReveal" ) && !TIMER_Done( cent->gent, "cloakReveal" ) );
+	CG_Printf( "CLOAK %s#%d: %s, perc %.2f, refraction %.0f (%.1f units), shimmer %.2f, reveal %d, rend2 %d\n",
+		cent->gent->NPC_type ? cent->gent->NPC_type : "?", n, branch, perc, s_cloakLastStrength,
+		s_cloakLastStrength * 20.0f / 255.0f, shimmer, reveal, CG_CloakRefraction() );
+}
+
+//a faint lens standing still, a clear warp on the move (rend2 tr_shade: alpha/255 x 20 units of refraction).
+//cg_cloakRefractMin / Max (0-254) and cg_cloakRefractSpeed (alpha per unit/s of their speed)
+static void CG_AddCloakRefraction( refEntity_t *ent, gentity_t *gent )
+{
+	const float speed = sqrtf( gent->client->ps.velocity[0] * gent->client->ps.velocity[0]
+		+ gent->client->ps.velocity[1] * gent->client->ps.velocity[1] );
+	const float lo = Com_Clamp( 0.0f, 254.0f, cg_cloakRefractMin.value );
+	const float hi = Com_Clamp( lo, 254.0f, cg_cloakRefractMax.value );
+	const float strength = Com_Clamp( lo, hi, lo + speed * cg_cloakRefractSpeed.value );
+	s_cloakLastStrength = strength;
+	if ( strength < 1.0f )
+	{//0 alpha would fall back to the stock 10 units in tr_shade
+		return;
+	}
+	ent->renderfx &= ~(RF_RGB_TINT|RF_ALPHA_FADE);
+	ent->renderfx |= RF_DISTORTION|RF_NOSHADOW;
+	ent->shaderRGBA[3] = (byte)strength;
+	ent->customShader = 0;
+	cgi_R_AddRefEntityToScene( ent );
+	ent->renderfx &= ~RF_DISTORTION;
+}
+
+//the stock cloak shimmer (gfx/effects/cloakedShader: scrolling chrome, DST_COLOR ONE, rgbGen entity) at 0-1
+//intensity. No RF_ALPHA_FADE - rend2 would swap its blend for an alpha blend and paint it solid white
+static void CG_AddCloakShimmer( refEntity_t *ent, float intensity )
+{
+	const byte c = (byte)Com_Clamp( 0.0f, 255.0f, 255.0f * intensity );
+	if ( !c )
+	{
+		return;
+	}
+	ent->renderfx &= ~(RF_RGB_TINT|RF_ALPHA_FADE|RF_DISTORTION);
+	ent->renderfx |= RF_NOSHADOW;
+	ent->shaderRGBA[0] = ent->shaderRGBA[1] = ent->shaderRGBA[2] = c;
+	ent->shaderRGBA[3] = 255;
+	ent->customShader = cgs.media.cloakedShader;
+	cgi_R_AddRefEntityToScene( ent );
+	ent->customShader = 0;
+}
+
 void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cent )
 {
 	if ( !cent )
@@ -4886,7 +5038,7 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 		}
 		else
 		{
-			float perc = (float)(gent->client->ps.powerups[PW_UNCLOAKING] - cg.time) / 2000.0f;
+			float perc = (float)(gent->client->ps.powerups[PW_UNCLOAKING] - cg.time) / (float)G_CloakTransitionMs( gent );
 			if (( powerups & ( 1 << PW_CLOAKED )))
 			{//actually cloaking, so reverse it
 				perc = 1.0f - perc;
@@ -4894,7 +5046,23 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 
 			if ( perc >= 0.0f && perc <= 1.0f )
 			{
-				if (cg_renderToTextureFX.integer)
+				if ( CG_CloakRefraction() )
+				{//JKEnhanced: the body fades in/out under the cloak's refraction instead of popping
+					const byte bodyAlpha = (byte)( 254.0f * ( 1.0f - perc ) );
+					CG_AddCloakRefraction( ent, gent );
+					if ( bodyAlpha > 0 )
+					{
+						ent->renderfx |= RF_ALPHA_FADE;
+						ent->shaderRGBA[0] = ent->shaderRGBA[1] = ent->shaderRGBA[2] = 255;
+						ent->shaderRGBA[3] = bodyAlpha;
+						cgi_R_AddRefEntityToScene( ent );
+					}
+					//the shimmer swells through the middle of the transition (peak at half way)
+					CG_AddCloakShimmer( ent, cg_cloakShimmer.value * sinf( perc * M_PI ) );
+					CG_CloakDebugLine( cent, ( powerups & ( 1 << PW_CLOAKED ) ) ? "cloaking in" : "decloaking",
+						perc, cg_cloakShimmer.value * sinf( perc * M_PI ) );
+				}
+				else if (cg_renderToTextureFX.integer)
 				{
 					ent->renderfx |= RF_DISTORTION;
 					cgi_R_AddRefEntityToScene( ent );
@@ -4919,6 +5087,20 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 			&& CG_PlayerCanSeeCent( cent ))
 		{//just draw him
 			cgi_R_AddRefEntityToScene( ent );
+		}
+		else if ( CG_CloakRefraction() )
+		{//JKEnhanced: rend2 refraction - a faint lens standing still, a clear warp on the move; a shot
+		 //or a hit makes the old cloak shader shimmer through ("cloakReveal", AI_Stormtrooper.cpp / g_combat.cpp)
+			CG_AddCloakRefraction( ent, gent );
+			CG_CloakDebugLine( cent, "fully cloaked", 1.0f, 0.0f );
+			if ( TIMER_Exists( gent, "cloakReveal" ) && !TIMER_Done( gent, "cloakReveal" ) )
+			{//a ghost of the real body flickers through (the stock chrome cloakedShader goes white on rend2)
+				ent->renderfx |= RF_ALPHA_FADE;
+				ent->shaderRGBA[0] = ent->shaderRGBA[1] = ent->shaderRGBA[2] = 255;
+				ent->shaderRGBA[3] = (byte)Q_irand( 50, 110 );
+				ent->customShader = 0;
+				cgi_R_AddRefEntityToScene( ent );
+			}
 		}
 		else
 		{
@@ -5119,8 +5301,10 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 	//FIXME: Tavion possessed effect?  White?
 	//For now, these two are using the old shield shader. This is just so that you
 	//can tell it apart from the JM/duel shaders, but it's still very obvious.
-	if ( (cent->gent->client->ps.forcePowersActive & (1 << FP_PROTECT))
-		&& (cent->gent->client->ps.forcePowersActive & (1 << FP_ABSORB)) )
+	//JKEnhanced 4B.3: an L3 (toggle) shield only shows for a moment after it stops something
+	const qboolean showProtect = CG_ForceShieldShows( cent->gent, FP_PROTECT );
+	const qboolean showAbsorb = CG_ForceShieldShows( cent->gent, FP_ABSORB );
+	if ( showProtect && showAbsorb )
 	{//using both at once, save ourselves some rendering
 		//protect+absorb is represented by cyan..
 		ent->shaderRGBA[0] = 0;
@@ -5142,7 +5326,7 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 
 		cgi_R_AddRefEntityToScene( ent );
 	}
-	else if ( cent->gent->client->ps.forcePowersActive & (1 << FP_PROTECT) )
+	else if ( showProtect )
 	{ //protect is represented by green..
 		ent->shaderRGBA[0] = 0;
 		ent->shaderRGBA[1] = 255;
@@ -5162,7 +5346,7 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 
 		cgi_R_AddRefEntityToScene( ent );
 	}
-	else if ( cent->gent->client->ps.forcePowersActive & (1 << FP_ABSORB))
+	else if ( showAbsorb )
 	{ //absorb is represented by blue..
 		ent->shaderRGBA[0] = 0;
 		ent->shaderRGBA[1] = 0;
@@ -5225,7 +5409,19 @@ void CG_AddRefEntityWithPowerups( refEntity_t *ent, int powerups, centity_t *cen
 		
 		ent->renderfx &= ~RF_RGB_TINT;
 		ent->customShader = cgs.media.playerShieldDamage;
-		
+
+		cgi_R_AddRefEntityToScene( ent );
+	}
+	else if ( G_StasisSlowScale( cent->gent ) < 1.0f )
+	{//JKEnhanced 4B.7: slowed by Stasis - a fainter version of the frozen grey
+		ent->shaderRGBA[0] = 70;
+		ent->shaderRGBA[1] = 70;
+		ent->shaderRGBA[2] = 80;
+		ent->shaderRGBA[3] = 254;
+
+		ent->renderfx &= ~RF_RGB_TINT;
+		ent->customShader = cgs.media.playerShieldDamage;
+
 		cgi_R_AddRefEntityToScene( ent );
 	}
 }
@@ -5739,6 +5935,49 @@ static void CG_StopWeaponSounds( centity_t *cent )
 	}
 }
 
+
+/*
+CG_SniperAimLine (JKEnhanced, Step 3E)
+
+An enemy sniper (disruptor or cycler rifle) charging a shot, or an NPC sniper lined up on you, shows a
+thin red laser from the muzzle along its aim, so it can be seen and dodged. NPC snipers fire alt
+without charging, so the alt-fire flag alone only lit it for the trigger frame. cg_threatCues 0 turns it off.
+*/
+static void CG_SniperAimLine( centity_t *cent )
+{
+	const int weapon = cent->currentState.weapon;
+	if ( !cg_threatCues.integer || cent->currentState.number == 0 || ( weapon != WP_DISRUPTOR && weapon != WP_CYCLER_RIFLE )
+		|| !cent->gent || !cent->gent->client
+		|| cent->gent->health <= 0 || cent->gent->client->playerTeam == TEAM_PLAYER )
+	{
+		return;
+	}
+	const qboolean npcSniping = (qboolean)( cent->gent->NPC && (cent->gent->NPC->scriptFlags&SCF_ALT_FIRE)
+		&& cent->gent->enemy && cent->gent->enemy->s.number == 0 );
+	if ( !( cent->currentState.eFlags & EF_ALT_FIRING ) && !npcSniping )
+	{
+		return;
+	}
+	const renderInfo_t *ri = &cent->gent->client->renderInfo;
+	vec3_t end;
+	VectorMA( ri->muzzlePoint, 8192.0f, ri->muzzleDir, end );
+	trace_t tr;
+	CG_Trace( &tr, ri->muzzlePoint, NULL, NULL, end, cent->currentState.number, MASK_SHOT );
+
+	refEntity_t line;
+	memset( &line, 0, sizeof( line ) );
+	line.reType = RT_LINE;
+	VectorCopy( ri->muzzlePoint, line.origin );
+	VectorCopy( tr.endpos, line.oldorigin );
+	line.radius = 0.4f;
+	line.customShader = cgs.media.whiteShader;
+	line.shaderTexCoord[0] = line.shaderTexCoord[1] = 1.0f;
+	line.shaderRGBA[0] = 255;
+	line.shaderRGBA[1] = 30;
+	line.shaderRGBA[2] = 20;
+	line.shaderRGBA[3] = 140;
+	cgi_R_AddRefEntityToScene( &line );
+}
 
 //--------------- SABER STUFF --------
 extern void CG_Smoke( vec3_t origin, vec3_t dir, float radius, float speed, qhandle_t shader, int flags);
@@ -9371,6 +9610,10 @@ SkipTrueView:
 			VectorScale(colorTable[CT_VLTORANGE], 255.0f, orange);
 			CG_ForcePushRefraction(cent->gent->client->renderInfo.muzzlePoint, cent, 1.0f, orange);
 		}
+		else if ( cent->gent->client->ps.powerups[PW_FORCE_REPULSE] > cg.time )
+		{//JKEnhanced (restored)
+			CG_ForcePushRefraction(cent->gent->client->renderInfo.crotchPoint, cent, 2.0f, NULL);
+		}
 		else
 		{
 			cent->gent->client->ps.forcePowersActive &= ~( 1 << FP_PULL );
@@ -9434,6 +9677,7 @@ Ghoul2 Insert End
 
 	// Weapon sounds may need to be stopped, so check now
 	CG_StopWeaponSounds( cent );
+	CG_SniperAimLine( cent );
 
 	//FIXME: pass in the axis/angles offset between the tag_torso and the tag_head?
 	// get the rotation information
