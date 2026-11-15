@@ -6591,6 +6591,7 @@ static const char *g_bindCommands[] = {
 	"+strafe",
 	"+use",
 	"+useforce",
+	"+walk",					// JKEnhanced: hold to walk (quieter for stealth); was bindable only by console
 	"centerview",
 	"cg_thirdperson !",
 	"datapad",
@@ -6637,6 +6638,7 @@ static const char *g_bindCommands[] = {
 	"save quick",
 #endif
 	"taunt",
+	"uimenu camsp",				// JKEnhanced: camera settings menu (controls.menu has a bind item for it)
 	"uimenu ingameloadmenu",
 	"uimenu ingamesavemenu",
 	"use_bacta",
@@ -9414,6 +9416,32 @@ static void Item_PaintExtras( itemDef_t *item )
 
 
 /*
+UI_EffectSteps (JKEnhanced; the problem is OpenJK PR #1223)
+
+Menu transitions / fades / orbits move a fixed amount per step, and a step came every offsetTime ms
+or every frame, whichever was slower. offsetTime is usually tiny, so the effects ran faster the higher
+the frame rate. Now a step is at least a 60 fps frame (what the menus were made for), and a slow
+frame catches up on the steps it missed, so they run at the same speed at any frame rate. Called
+once nextTime has passed; returns how many steps to apply and moves nextTime on.
+(The PR's own version scales the steps by frame time and also stretches the step interval by it,
+and its orbit change moves the rotation centre; this keeps the stepping as it was meant.)
+*/
+#define UI_EFFECT_MIN_STEP_MS	(1000 / 60)
+static int UI_EffectSteps( int *nextTime, int offsetTime )
+{
+	const int stepMs = offsetTime > UI_EFFECT_MIN_STEP_MS ? offsetTime : UI_EFFECT_MIN_STEP_MS;
+	const int late = DC->realTime - *nextTime;
+	if ( *nextTime <= 0 || late < 0 || late > 500 )
+	{//first step, or a long pause (menu opened, hitch): one step, from now
+		*nextTime = DC->realTime + stepMs;
+		return 1;
+	}
+	const int steps = 1 + late / stepMs;
+	*nextTime += steps * stepMs;
+	return steps;
+}
+
+/*
 =================
 Item_Paint
 =================
@@ -9447,13 +9475,13 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 		if (DC->realTime > item->window.nextTime)
 		{
 			float rx, ry, a, c, s, w, h;
-			item->window.nextTime = DC->realTime + item->window.offsetTime;
+			const float uiSteps = (float)UI_EffectSteps( &item->window.nextTime, item->window.offsetTime );
 			// translate
 			w = item->window.rectClient.w / 2;
 			h = item->window.rectClient.h / 2;
 			rx = item->window.rectClient.x + w - item->window.rectEffects.x;
 			ry = item->window.rectClient.y + h - item->window.rectEffects.y;
-			a = (float) (3 * M_PI / 180);
+			a = (float) (3 * uiSteps * M_PI / 180);//3 degrees per step
   			c = cos(a);
 			s = sin(a);
 			item->window.rectClient.x = (rx * c - ry * s) + item->window.rectEffects.x - w;
@@ -9469,7 +9497,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 		if (DC->realTime > item->window.nextTime)
 		{
 			int done = 0;
-			item->window.nextTime = DC->realTime + item->window.offsetTime;
+			const float uiSteps = (float)UI_EffectSteps( &item->window.nextTime, item->window.offsetTime );
 
 			// transition the x,y
 			if (item->window.rectClient.x == item->window.rectEffects.x)
@@ -9480,7 +9508,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 			{
 				if (item->window.rectClient.x < item->window.rectEffects.x)
 				{
-					item->window.rectClient.x += item->window.rectEffects2.x;
+					item->window.rectClient.x += item->window.rectEffects2.x * uiSteps;
 					if (item->window.rectClient.x > item->window.rectEffects.x)
 					{
 						item->window.rectClient.x = item->window.rectEffects.x;
@@ -9489,7 +9517,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 				}
 				else
 				{
-					item->window.rectClient.x -= item->window.rectEffects2.x;
+					item->window.rectClient.x -= item->window.rectEffects2.x * uiSteps;
 					if (item->window.rectClient.x < item->window.rectEffects.x)
 					{
 						item->window.rectClient.x = item->window.rectEffects.x;
@@ -9506,7 +9534,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 			{
 				if (item->window.rectClient.y < item->window.rectEffects.y)
 				{
-					item->window.rectClient.y += item->window.rectEffects2.y;
+					item->window.rectClient.y += item->window.rectEffects2.y * uiSteps;
 					if (item->window.rectClient.y > item->window.rectEffects.y)
 					{
 						item->window.rectClient.y = item->window.rectEffects.y;
@@ -9515,7 +9543,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 				}
 				else
 				{
-					item->window.rectClient.y -= item->window.rectEffects2.y;
+					item->window.rectClient.y -= item->window.rectEffects2.y * uiSteps;
 					if (item->window.rectClient.y < item->window.rectEffects.y)
 					{
 						item->window.rectClient.y = item->window.rectEffects.y;
@@ -9532,7 +9560,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 			{
 				if (item->window.rectClient.w < item->window.rectEffects.w)
 				{
-					item->window.rectClient.w += item->window.rectEffects2.w;
+					item->window.rectClient.w += item->window.rectEffects2.w * uiSteps;
 					if (item->window.rectClient.w > item->window.rectEffects.w)
 					{
 						item->window.rectClient.w = item->window.rectEffects.w;
@@ -9541,7 +9569,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 				}
 				else
 				{
-					item->window.rectClient.w -= item->window.rectEffects2.w;
+					item->window.rectClient.w -= item->window.rectEffects2.w * uiSteps;
 					if (item->window.rectClient.w < item->window.rectEffects.w)
 					{
 						item->window.rectClient.w = item->window.rectEffects.w;
@@ -9558,7 +9586,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 			{
 				if (item->window.rectClient.h < item->window.rectEffects.h)
 				{
-					item->window.rectClient.h += item->window.rectEffects2.h;
+					item->window.rectClient.h += item->window.rectEffects2.h * uiSteps;
 					if (item->window.rectClient.h > item->window.rectEffects.h)
 					{
 						item->window.rectClient.h = item->window.rectEffects.h;
@@ -9567,7 +9595,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 				}
 				else
 				{
-					item->window.rectClient.h -= item->window.rectEffects2.h;
+					item->window.rectClient.h -= item->window.rectEffects2.h * uiSteps;
 					if (item->window.rectClient.h < item->window.rectEffects.h)
 					{
 						item->window.rectClient.h = item->window.rectEffects.h;
@@ -9602,7 +9630,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 			if (DC->realTime > item->window.nextTime)
 			{
 				int done = 0;
-				item->window.nextTime = DC->realTime + item->window.offsetTime;
+				const float uiSteps = (float)UI_EffectSteps( &item->window.nextTime, item->window.offsetTime );
 
 
 // transition the x,y,z max
@@ -9614,7 +9642,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 				{
 					if (modelptr->g2maxs[0] < modelptr->g2maxs2[0])
 					{
-						modelptr->g2maxs[0] += modelptr->g2maxsEffect[0];
+						modelptr->g2maxs[0] += modelptr->g2maxsEffect[0] * uiSteps;
 						if (modelptr->g2maxs[0] > modelptr->g2maxs2[0])
 						{
 							modelptr->g2maxs[0] = modelptr->g2maxs2[0];
@@ -9623,7 +9651,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 					}
 					else
 					{
-						modelptr->g2maxs[0] -= modelptr->g2maxsEffect[0];
+						modelptr->g2maxs[0] -= modelptr->g2maxsEffect[0] * uiSteps;
 						if (modelptr->g2maxs[0] < modelptr->g2maxs2[0])
 						{
 							modelptr->g2maxs[0] = modelptr->g2maxs2[0];
@@ -9640,7 +9668,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 				{
 					if (modelptr->g2maxs[1] < modelptr->g2maxs2[1])
 					{
-						modelptr->g2maxs[1] += modelptr->g2maxsEffect[1];
+						modelptr->g2maxs[1] += modelptr->g2maxsEffect[1] * uiSteps;
 						if (modelptr->g2maxs[1] > modelptr->g2maxs2[1])
 						{
 							modelptr->g2maxs[1] = modelptr->g2maxs2[1];
@@ -9649,7 +9677,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 					}
 					else
 					{
-						modelptr->g2maxs[1] -= modelptr->g2maxsEffect[1];
+						modelptr->g2maxs[1] -= modelptr->g2maxsEffect[1] * uiSteps;
 						if (modelptr->g2maxs[1] < modelptr->g2maxs2[1])
 						{
 							modelptr->g2maxs[1] = modelptr->g2maxs2[1];
@@ -9669,7 +9697,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 				{
 					if (modelptr->g2maxs[2] < modelptr->g2maxs2[2])
 					{
-						modelptr->g2maxs[2] += modelptr->g2maxsEffect[2];
+						modelptr->g2maxs[2] += modelptr->g2maxsEffect[2] * uiSteps;
 						if (modelptr->g2maxs[2] > modelptr->g2maxs2[2])
 						{
 							modelptr->g2maxs[2] = modelptr->g2maxs2[2];
@@ -9678,7 +9706,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 					}
 					else
 					{
-						modelptr->g2maxs[2] -= modelptr->g2maxsEffect[2];
+						modelptr->g2maxs[2] -= modelptr->g2maxsEffect[2] * uiSteps;
 						if (modelptr->g2maxs[2] < modelptr->g2maxs2[2])
 						{
 							modelptr->g2maxs[2] = modelptr->g2maxs2[2];
@@ -9696,7 +9724,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 				{
 					if (modelptr->g2mins[0] < modelptr->g2mins2[0])
 					{
-						modelptr->g2mins[0] += modelptr->g2minsEffect[0];
+						modelptr->g2mins[0] += modelptr->g2minsEffect[0] * uiSteps;
 						if (modelptr->g2mins[0] > modelptr->g2mins2[0])
 						{
 							modelptr->g2mins[0] = modelptr->g2mins2[0];
@@ -9705,7 +9733,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 					}
 					else
 					{
-						modelptr->g2mins[0] -= modelptr->g2minsEffect[0];
+						modelptr->g2mins[0] -= modelptr->g2minsEffect[0] * uiSteps;
 						if (modelptr->g2mins[0] < modelptr->g2mins2[0])
 						{
 							modelptr->g2mins[0] = modelptr->g2mins2[0];
@@ -9722,7 +9750,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 				{
 					if (modelptr->g2mins[1] < modelptr->g2mins2[1])
 					{
-						modelptr->g2mins[1] += modelptr->g2minsEffect[1];
+						modelptr->g2mins[1] += modelptr->g2minsEffect[1] * uiSteps;
 						if (modelptr->g2mins[1] > modelptr->g2mins2[1])
 						{
 							modelptr->g2mins[1] = modelptr->g2mins2[1];
@@ -9731,7 +9759,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 					}
 					else
 					{
-						modelptr->g2mins[1] -= modelptr->g2minsEffect[1];
+						modelptr->g2mins[1] -= modelptr->g2minsEffect[1] * uiSteps;
 						if (modelptr->g2mins[1] < modelptr->g2mins2[1])
 						{
 							modelptr->g2mins[1] = modelptr->g2mins2[1];
@@ -9751,7 +9779,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 				{
 					if (modelptr->g2mins[2] < modelptr->g2mins2[2])
 					{
-						modelptr->g2mins[2] += modelptr->g2minsEffect[2];
+						modelptr->g2mins[2] += modelptr->g2minsEffect[2] * uiSteps;
 						if (modelptr->g2mins[2] > modelptr->g2mins2[2])
 						{
 							modelptr->g2mins[2] = modelptr->g2mins2[2];
@@ -9760,7 +9788,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 					}
 					else
 					{
-						modelptr->g2mins[2] -= modelptr->g2minsEffect[2];
+						modelptr->g2mins[2] -= modelptr->g2minsEffect[2] * uiSteps;
 						if (modelptr->g2mins[2] < modelptr->g2mins2[2])
 						{
 							modelptr->g2mins[2] = modelptr->g2mins2[2];
@@ -9780,7 +9808,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 				{
 					if (modelptr->fov_x < modelptr->fov_x2)
 					{
-						modelptr->fov_x += modelptr->fov_Effectx;
+						modelptr->fov_x += modelptr->fov_Effectx * uiSteps;
 						if (modelptr->fov_x > modelptr->fov_x2)
 						{
 							modelptr->fov_x = modelptr->fov_x2;
@@ -9789,7 +9817,7 @@ static qboolean Item_Paint(itemDef_t *item, qboolean bDraw)
 					}
 					else
 					{
-						modelptr->fov_x -= modelptr->fov_Effectx;
+						modelptr->fov_x -= modelptr->fov_Effectx * uiSteps;
 						if (modelptr->fov_x < modelptr->fov_x2)
 						{
 							modelptr->fov_x = modelptr->fov_x2;
@@ -10063,10 +10091,10 @@ void Fade(int *flags, float *f, float clamp, int *nextTime, int offsetTime, qboo
 	{
 		if (DC->realTime > *nextTime)
 		{
-			*nextTime = DC->realTime + offsetTime;
+			const float uiSteps = (float)UI_EffectSteps( nextTime, offsetTime );
 			if (*flags & WINDOW_FADINGOUT)
 			{
-				*f -= fadeAmount;
+				*f -= fadeAmount * uiSteps;
 				if (bFlags && *f <= 0.0)
 				{
 					*flags &= ~(WINDOW_FADINGOUT | WINDOW_VISIBLE);
@@ -10074,7 +10102,7 @@ void Fade(int *flags, float *f, float clamp, int *nextTime, int offsetTime, qboo
 			}
 			else
 			{
-				*f += fadeAmount;
+				*f += fadeAmount * uiSteps;
 				if (*f >= clamp)
 				{
 				  *f = clamp;
