@@ -5602,6 +5602,11 @@ static qboolean Jedi_PhraseThink( qboolean tacticAllows, qboolean inRange )
 	{//stale (a load), stuck, or knocked out of it
 		s_phraseLen[n] = 0;
 	}
+	if ( s_noGuardUntil[n] && PM_InKnockDown( ps ) )
+	{//knocked down while following through: up again, they guard normally
+		s_noGuardUntil[n] = 0;
+		s_followHold[n] = 0;
+	}
 	if ( s_phraseLen[n] )
 	{
 		if ( inAttack && ps->saberMove != s_phraseLastMove[n] )

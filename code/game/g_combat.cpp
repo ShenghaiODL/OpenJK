@@ -6038,7 +6038,7 @@ static int G_BossGuardStages( const gentity_t *ent )
 	{//set by the .npc
 		return ent->NPC->guardStages;
 	}
-	return ( g_bossGuardStages && G_IsSaberBoss( ent, qfalse ) ) ? g_bossGuardStages->integer : 1;
+	return ( g_bossGuardStages && G_IsSaberBoss( ent, qfalse ) ) ? Q_max( 1, Q_min( 10, g_bossGuardStages->integer ) ) : 1;//(1-10, like the .npc key)
 }
 
 /*

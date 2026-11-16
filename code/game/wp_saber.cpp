@@ -1956,11 +1956,24 @@ qboolean WP_SaberGuardUp( gentity_t *ent )
 //when each fighter's current run of swings began (wind-up, strike or the transition between two
 //strikes); an NPC's guard reaction time counts from here. Not saved: it restarts with the next swing.
 static int s_swingRunStart[MAX_GENTITIES];
+//which swing each fighter is on: +1 every time a strike starts (a new attack move, or the same one
+//restarting), so attack -> transition -> the same attack is two swings. Transitions and returns keep
+//the strike's id, so contact that runs past the end of it is still that swing. Not saved.
+static int s_swingId[MAX_GENTITIES];
+static int s_swingLastMove[MAX_GENTITIES];
+static int s_swingLastTimer[MAX_GENTITIES];
 
 static void WP_SaberTrackSwingRun( gentity_t *self )
 {
 	const playerState_t *ps = &self->client->ps;
 	const int n = self->s.number;
+	const qboolean inAttack = (qboolean)( PM_SaberInAttack( ps->saberMove ) || PM_SaberInSpecialAttack( ps->torsoAnim ) );
+	if ( inAttack && ( ps->saberMove != s_swingLastMove[n] || ps->torsoAnimTimer > s_swingLastTimer[n] ) )
+	{//a new strike
+		s_swingId[n]++;
+	}
+	s_swingLastMove[n] = inAttack ? ps->saberMove : LS_NONE;
+	s_swingLastTimer[n] = ps->torsoAnimTimer;
 	if ( ps->weapon == WP_SABER && !ps->saberInFlight && self->health > 0
 		&& ( WP_SaberSwinging( ps ) || PM_SaberInTransition( ps->saberMove ) ) )
 	{
@@ -2290,7 +2303,8 @@ blade went through and where - not from a health number.
 A wound is a third of max health, so three finish anyone. A staged boss loses a third of a stage
 to a wound and the whole stage to a kill-grade cut (G_BossStageClamp holds them at the floor).
 The player is never maimed: graze 12%, limb 30%, torso/head by difficulty (coreCutToPlayer).
-One swing is one cut: later frames of the same swing only count if they make it worse.
+One swing is one cut: later frames of the same swing only count if they make it worse. A swing is
+the attacker's swing id (WP_SaberTrackSwingRun), so a quick repeat in the same direction is a new cut.
 Thrown sabers, finishers and ordinary troopers keep the older damage rules.
 */
 typedef enum
@@ -2327,18 +2341,18 @@ static qboolean WP_HitLocIsLimb( int hl )
 static saberCut_t WP_SaberCutResolve( gentity_t *attacker, gentity_t *victim, float depth, int hitLoc, qboolean through, int *damage )
 {
 	static int		s_by[MAX_GENTITIES];
-	static int		s_move[MAX_GENTITIES];
+	static int		s_id[MAX_GENTITIES];
 	static int		s_time[MAX_GENTITIES];
 	static int		s_level[MAX_GENTITIES];
 	static int		s_dealt[MAX_GENTITIES];
 	static float	s_depth[MAX_GENTITIES];
 	const int v = victim->s.number;
-	const int move = attacker->client->ps.saberMove;
-	if ( s_by[v] != attacker->s.number + 1 || s_move[v] != move
-		|| level.time < s_time[v] || level.time - s_time[v] > 600 )
+	const int id = s_swingId[attacker->s.number];
+	if ( s_by[v] != attacker->s.number + 1 || s_id[v] != id
+		|| level.time < s_time[v] || level.time - s_time[v] > 5000 )//(stale: a load or map change)
 	{//a new swing
 		s_by[v] = attacker->s.number + 1;
-		s_move[v] = move;
+		s_id[v] = id;
 		s_level[v] = CUT_NONE;
 		s_dealt[v] = 0;
 		s_depth[v] = 0.0f;
@@ -3396,22 +3410,23 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 						if ( saberFighter && !finisher && damage > 0 && cut == CUT_NONE )
 						{//JKEnhanced: one damaging hit per swing. The blade stays in contact for several
 						 //frames and each frame used to deal a full capped hit (2-5 x 100 from one swing).
-						 //A thrown saber counts as its own "swing" (key -1): once out, once on the way back.
+						 //The swing is the attacker's swing id (WP_SaberTrackSwingRun). A thrown saber counts
+						 //as its own "swing" (key -1, over 600 ms): once out, once on the way back.
 						 //Not saved: a stale entry after a load just expires.
 							static int s_swingHitBy[MAX_GENTITIES];
-							static int s_swingHitMove[MAX_GENTITIES];
+							static int s_swingHitKey[MAX_GENTITIES];
 							static int s_swingHitTime[MAX_GENTITIES];
 							const int v = victim->s.number;
-							const int swingKey = thrownSaber ? -1 : ent->client->ps.saberMove;
+							const int swingKey = thrownSaber ? -1 : s_swingId[ent->s.number];
 							if ( s_swingHitBy[v] == ent->s.number + 1
-								&& s_swingHitMove[v] == swingKey
+								&& s_swingHitKey[v] == swingKey
 								&& level.time >= s_swingHitTime[v]
-								&& level.time - s_swingHitTime[v] < 600 )
+								&& level.time - s_swingHitTime[v] < ( thrownSaber ? 600 : 5000 ) )
 							{
 								continue;
 							}
 							s_swingHitBy[v] = ent->s.number + 1;
-							s_swingHitMove[v] = swingKey;
+							s_swingHitKey[v] = swingKey;
 							s_swingHitTime[v] = level.time;
 						}
 						if ( victim->s.number == 0 && damage > 0 )

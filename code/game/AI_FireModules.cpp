@@ -299,23 +299,39 @@ G_MeleeSwingHit (JKEnhanced)
 
 The staff/stick traces run every think through the anim's damage window, so a target in the arc
 used to be hit 3-4 times per swing (the same bug the scepter beam had). One hit per target per
-swing: the swing is over when the attack anim that landed the hit runs out.
+swing: the swing is over when the attack anim that landed the first hit runs out. Each swing remembers
+every target it has hit (up to 4), so a second body stepping into the arc can't make it hit the first again.
 */
-static int s_meleeHitTarget[MAX_GENTITIES];
+#define MELEE_SWING_TARGETS	4
+static int s_meleeHitTarget[MAX_GENTITIES][MELEE_SWING_TARGETS];
 static int s_meleeHitUntil[MAX_GENTITIES];
 
 qboolean G_MeleeSwingHit( gentity_t *attacker, gentity_t *target )
 {
 	const int n = attacker->s.number;
 	const int until = s_meleeHitUntil[n];
-	if ( s_meleeHitTarget[n] == target->s.number + 1
-		&& until > level.time && until - level.time <= 5000 )//(further out: stale, from before a load)
-	{
-		return qfalse;
+	int *hit = s_meleeHitTarget[n];
+	if ( until <= level.time || until - level.time > 5000 )//(further out: stale, from before a load)
+	{//a new swing
+		for ( int i = 0; i < MELEE_SWING_TARGETS; i++ )
+		{
+			hit[i] = 0;
+		}
+		s_meleeHitUntil[n] = level.time + Q_max( 100, attacker->client ? attacker->client->ps.torsoAnimTimer : 500 );
 	}
-	s_meleeHitTarget[n] = target->s.number + 1;
-	s_meleeHitUntil[n] = level.time + Q_max( 100, attacker->client ? attacker->client->ps.torsoAnimTimer : 500 );
-	return qtrue;
+	for ( int i = 0; i < MELEE_SWING_TARGETS; i++ )
+	{
+		if ( hit[i] == target->s.number + 1 )
+		{
+			return qfalse;
+		}
+		if ( !hit[i] )
+		{
+			hit[i] = target->s.number + 1;
+			return qtrue;
+		}
+	}
+	return qtrue;//(more targets than slots in one swing: let it land)
 }
 
 void Tusken_StaffTrace( gentity_t *self )
