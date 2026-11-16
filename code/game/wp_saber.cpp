@@ -46,6 +46,7 @@ static float	dmgFraction[MAX_SABER_VICTIMS];
 static int		hitLoc[MAX_SABER_VICTIMS];
 static qboolean	hitDismember[MAX_SABER_VICTIMS];
 static int		hitDismemberLoc[MAX_SABER_VICTIMS];
+int				saberDismemberLoc = HL_NONE;
 static vec3_t	saberHitLocation, saberHitNormal={0,0,1.0};
 static float	saberHitFraction;
 static float	sabersCrossed;
@@ -171,10 +172,12 @@ qboolean FP_ForceDrainGrippableEnt( gentity_t *victim );
 
 extern cvar_t	*g_saberAutoBlocking;
 extern cvar_t	*g_saberRealisticCombat;
+extern cvar_t	*g_dismemberRealistic;
 extern cvar_t	*g_saberDamageCapping;
 extern cvar_t	*g_saberNewControlScheme;
 extern cvar_t	*g_flippedHolsters;
 extern cvar_t	*g_forceStaggerLockoutScale;
+extern cvar_t	*g_saberHolster;
 extern int g_crosshairEntNum;
 
 qboolean g_saberNoEffects = qfalse;
@@ -434,7 +437,7 @@ stringID_table_t SaberStyleTable[] =
 
 //SABER INITIALIZATION======================================================================
 
-void G_CreateG2HolsteredWeaponModel( gentity_t *ent, const char *psWeaponModel, int boltNum, int weaponNum, vec3_t angles, vec3_t offset )
+void G_CreateG2HolsteredWeaponModel( gentity_t *ent, const char *psWeaponModel, int boltNum, int weaponNum, vec3_t angles, vec3_t offset, qboolean useHolsterTag )
 {
 	if (!psWeaponModel)
 	{
@@ -475,7 +478,8 @@ void G_CreateG2HolsteredWeaponModel( gentity_t *ent, const char *psWeaponModel, 
 		if ( ent->holsterModel[weaponNum] != -1 )
 		{
 			// attach it to the hip. need some correction of rotation first though!
-			int holsterorigin = gi.G2API_AddBolt(&ent->ghoul2[ent->holsterModel[weaponNum]], "*holsterorigin", qfalse);
+			//*holsterorigin tags are made for the hips, so only use them there
+			int holsterorigin = useHolsterTag ? gi.G2API_AddBolt(&ent->ghoul2[ent->holsterModel[weaponNum]], "*holsterorigin", qfalse) : -1;
 			mdxaBone_t boltMatrix2;
 			if (holsterorigin != -1)
 			{
@@ -492,7 +496,7 @@ void G_CreateG2HolsteredWeaponModel( gentity_t *ent, const char *psWeaponModel, 
 			}
 			else
 			{
-				boltMatrix2.matrix[1][3] -= 1.0f;//TODO: this is no good for back holstered weapons
+				boltMatrix2.matrix[1][3] -= 1.0f;
 				gi.G2API_SetBoneAnglesMatrix(&ent->ghoul2[ent->holsterModel[weaponNum]], "ModView internal default", boltMatrix2, BONE_ANGLES_PREMULT,
 											 NULL, 0, 0);
 				
@@ -633,6 +637,221 @@ void WP_SaberAddG2SaberModels( gentity_t *ent, int specificSaberNum )
 	}
 }
 
+#define MAX_HILT_BOUNDS		64
+#define HOLSTER_HILT_TOP	6.0f	//how far above the hip holster offset a hilt's top end hangs - about where the stock hilts' pommels are
+
+typedef struct
+{
+	char		model[MAX_QPATH];
+	qboolean	valid;
+	vec3_t		mins, maxs;
+} hiltBounds_t;
+
+static hiltBounds_t	hiltBounds[MAX_HILT_BOUNDS];
+static int			numHiltBounds;
+
+//bounds of the visible surfaces in a hilt's top LOD, ignoring tags and surfaces that are off
+static qboolean WP_SaberReadHiltBounds( const char *model, vec3_t mins, vec3_t maxs )
+{
+	byte *buf = NULL;
+	const long len = gi.FS_ReadFile( model, (void **)&buf );
+	if ( len <= 0 || !buf )
+	{
+		return qfalse;
+	}
+
+	qboolean found = qfalse;
+	const mdxmHeader_t *header = (const mdxmHeader_t *)buf;
+	ClearBounds( mins, maxs );
+	if ( len >= (long)sizeof( mdxmHeader_t )
+		&& header->ident == MDXM_IDENT
+		&& header->version == MDXM_VERSION
+		&& header->numLODs > 0
+		&& header->numSurfaces > 0
+		&& (long)( sizeof( mdxmHeader_t ) + header->numSurfaces * sizeof( mdxmHierarchyOffsets_t ) ) <= len
+		&& header->ofsLODs > 0
+		&& header->ofsLODs + (long)( sizeof( mdxmLOD_t ) + header->numSurfaces * sizeof( mdxmLODSurfOffset_t ) ) <= len )
+	{
+		const mdxmHierarchyOffsets_t *surfIndexes = (const mdxmHierarchyOffsets_t *)( buf + sizeof( mdxmHeader_t ) );
+		const byte *lodSurfOffsets = buf + header->ofsLODs + sizeof( mdxmLOD_t );
+		for ( int i = 0; i < header->numSurfaces; i++ )
+		{
+			const long surfOfs = ( lodSurfOffsets - buf ) + ( (const mdxmLODSurfOffset_t *)lodSurfOffsets )->offsets[i];
+			if ( surfOfs < 0 || surfOfs + (long)sizeof( mdxmSurface_t ) > len )
+			{
+				continue;
+			}
+			const mdxmSurface_t *surf = (const mdxmSurface_t *)( buf + surfOfs );
+			if ( surf->thisSurfaceIndex < 0 || surf->thisSurfaceIndex >= header->numSurfaces )
+			{
+				continue;
+			}
+			const long infoOfs = sizeof( mdxmHeader_t ) + surfIndexes->offsets[surf->thisSurfaceIndex];
+			if ( infoOfs < 0 || infoOfs + (long)sizeof( mdxmSurfHierarchy_t ) > len )
+			{
+				continue;
+			}
+			const mdxmSurfHierarchy_t *surfInfo = (const mdxmSurfHierarchy_t *)( buf + infoOfs );
+			if ( surfInfo->name[0] == '*' || ( surfInfo->flags & ( G2SURFACEFLAG_ISBOLT | G2SURFACEFLAG_OFF ) ) )
+			{
+				continue;
+			}
+			if ( surf->numVerts <= 0 || surf->ofsVerts < 0
+				|| surfOfs + surf->ofsVerts + (long)( surf->numVerts * sizeof( mdxmVertex_t ) ) > len )
+			{
+				continue;
+			}
+			const mdxmVertex_t *v = (const mdxmVertex_t *)( (const byte *)surf + surf->ofsVerts );
+			for ( int j = 0; j < surf->numVerts; j++ )
+			{
+				AddPointToBounds( v[j].vertCoords, mins, maxs );
+			}
+			found = qtrue;
+		}
+	}
+	gi.FS_FreeFile( buf );
+	return found;
+}
+
+static qboolean WP_SaberGetHiltBounds( const char *model, vec3_t mins, vec3_t maxs )
+{
+	int i;
+	for ( i = 0; i < numHiltBounds; i++ )
+	{
+		if ( !Q_stricmp( hiltBounds[i].model, model ) )
+		{
+			break;
+		}
+	}
+	if ( i == numHiltBounds )
+	{
+		if ( numHiltBounds == MAX_HILT_BOUNDS )
+		{//full, start over
+			numHiltBounds = i = 0;
+		}
+		Q_strncpyz( hiltBounds[i].model, model, sizeof( hiltBounds[i].model ) );
+		hiltBounds[i].valid = WP_SaberReadHiltBounds( model, hiltBounds[i].mins, hiltBounds[i].maxs );
+		numHiltBounds++;
+	}
+	VectorCopy( hiltBounds[i].mins, mins );
+	VectorCopy( hiltBounds[i].maxs, maxs );
+	return hiltBounds[i].valid;
+}
+
+//hilts don't agree on where their origin is, so without a *holsterorigin tag center the hilt on the holster point
+//(and on the hips, hang it from the belt by its top end), instead of hanging it from its origin
+static void WP_SaberFitHolsterOffset( const char *model, const vec3_t angles, vec3_t offset, qboolean hangFromTop )
+{
+	vec3_t mins, maxs;
+	if ( !model || !WP_SaberGetHiltBounds( model, mins, maxs ) )
+	{
+		return;
+	}
+	//the same rotation G2API_SetBoneAnglesOffset makes for POSITIVE_X, NEGATIVE_Y, NEGATIVE_Z
+	const vec3_t boneAngles = { angles[PITCH], angles[ROLL], angles[YAW] };
+	vec3_t axis[3], center, halfSize, rotatedCenter;
+	AnglesToAxis( boneAngles, axis );
+	VectorAdd( mins, maxs, center );
+	VectorScale( center, 0.5f, center );
+	VectorSubtract( maxs, center, halfSize );
+	VectorClear( rotatedCenter );
+	float top = 0.0f;
+	for ( int i = 0; i < 3; i++ )
+	{
+		VectorMA( rotatedCenter, center[i], axis[i], rotatedCenter );
+		top += fabs( axis[i][2] ) * halfSize[i];
+	}
+	top += rotatedCenter[2];
+	offset[0] -= rotatedCenter[0];
+	offset[1] -= rotatedCenter[1];
+	if ( hangFromTop )
+	{
+		offset[2] += HOLSTER_HILT_TOP - top;
+	}
+	else
+	{
+		offset[2] -= rotatedCenter[2];
+	}
+}
+
+//where a saber is holstered: g_saberHolster overrides the .sab file's holsterPlace for everyone, and a pair of
+//sabers hangs one on each side, so each hand draws the saber on its own side
+holster_locations_t WP_SaberHolsterPlace( const playerState_t *ps, int saberNum )
+{
+	static const holster_locations_t holsterOverrides[] =
+	{
+		HOLSTER_INVALID,	//0: the .sab file's holsterPlace
+		HOLSTER_NONE,		//1: off
+		HOLSTER_LHIP,		//2: left hip
+		HOLSTER_HIPS,		//3: right hip
+		HOLSTER_LBACK,		//4: back, over the left shoulder
+		HOLSTER_RBACK,		//5: back, over the right shoulder
+	};
+	holster_locations_t holsterPlace = ps->saber[saberNum].holsterPlace;
+	if ( g_saberHolster && g_saberHolster->integer > 0 && g_saberHolster->integer < (int)ARRAY_LEN( holsterOverrides ) )
+	{
+		holsterPlace = holsterOverrides[g_saberHolster->integer];
+	}
+	if ( ps->dualSabers )
+	{
+		switch ( holsterPlace )
+		{
+		case HOLSTER_HIPS:
+		case HOLSTER_LHIP:
+			holsterPlace = saberNum ? HOLSTER_LHIP : HOLSTER_HIPS;
+			break;
+		case HOLSTER_BACK:
+		case HOLSTER_LBACK:
+		case HOLSTER_RBACK:
+			holsterPlace = saberNum ? HOLSTER_LBACK : HOLSTER_RBACK;
+			break;
+		default:
+			break;
+		}
+	}
+	return holsterPlace;
+}
+
+qboolean WP_SaberHolsteredOnBack( const playerState_t *ps )
+{
+	const holster_locations_t holsterPlace = WP_SaberHolsterPlace( ps, 0 );
+	return (qboolean)( holsterPlace == HOLSTER_BACK || holsterPlace == HOLSTER_LBACK || holsterPlace == HOLSTER_RBACK );
+}
+
+//re-holster everyone's sabers when a holster cvar changes, so the menu takes effect right away
+void WP_SaberCheckHolsterCvars( void )
+{
+	static int saberHolsterCount = -1, flippedHolstersCount = -1;
+	if ( g_saberHolster->modificationCount == saberHolsterCount
+		&& g_flippedHolsters->modificationCount == flippedHolstersCount )
+	{
+		return;
+	}
+	const qboolean firstCheck = (qboolean)( saberHolsterCount == -1 );
+	saberHolsterCount = g_saberHolster->modificationCount;
+	flippedHolstersCount = g_flippedHolsters->modificationCount;
+	if ( firstCheck )
+	{//everyone spawned with the current values
+		return;
+	}
+	for ( int i = 0; i < globals.num_entities; i++ )
+	{
+		if ( !PInUse( i ) )
+		{
+			continue;
+		}
+		gentity_t *ent = &g_entities[i];
+		if ( ent->client
+			&& ent->ghoul2.size()
+			&& ent->playerModel != -1
+			&& ent->client->ps.weapons[WP_SABER]
+			&& ent->client->ps.weapon != WP_SABER )
+		{//sabers are holstered
+			WP_SaberAddHolsteredG2SaberModels( ent );
+		}
+	}
+}
+
 void WP_SaberAddHolsteredG2SaberModels( gentity_t *ent, int specificSaberNum )
 {
 	int saberNum = 0, maxSaber = 1;
@@ -668,16 +887,17 @@ void WP_SaberAddHolsteredG2SaberModels( gentity_t *ent, int specificSaberNum )
 				continue;
 			}
 		}
-		else if ( ent->client->ps.saber[saberNum].holsterPlace == HOLSTER_NONE )
-		{
-			continue;
-		}
-		int handBolt = -1;
-		holster_locations_t holsterPlace = ent->client->ps.saber[saberNum].holsterPlace;
+		const char *boltName;
+		qboolean useHolsterTag = qfalse;
 		vec3_t offset = { 0.0f, 0.0f, 0.0f };
 		vec3_t angles = { 0.0f, 0.0f, 0.0f };
-		if ( (holsterPlace == HOLSTER_HIPS) || (holsterPlace == HOLSTER_LHIP) )
+		const holster_locations_t holsterPlace = WP_SaberHolsterPlace( &ent->client->ps, saberNum );
+		switch ( holsterPlace )
 		{
+		case HOLSTER_HIPS:
+		case HOLSTER_LHIP:
+			boltName = (holsterPlace == HOLSTER_LHIP) ? "*hip_l" : "*hip_r";
+			useHolsterTag = qtrue;
 			angles[PITCH] = 180.0f;
 			angles[YAW] = 0.0f;
 			angles[ROLL] = 180.0f;
@@ -686,51 +906,32 @@ void WP_SaberAddHolsteredG2SaberModels( gentity_t *ent, int specificSaberNum )
 				angles[YAW] = 180.0f;
 			}
 			VectorSet(offset, 0.0f, -1.0f, -5.0f);
-		}
-		else if ( holsterPlace == HOLSTER_BACK )
-		{
+			WP_SaberFitHolsterOffset( ent->client->ps.saber[saberNum].model, angles, offset, qtrue );
+			break;
+		case HOLSTER_BACK:
+			boltName = "*back";
 			angles[YAW] = 180.0f;
 			angles[PITCH] = 22.5f;
 			VectorSet(offset, 0.0f, -2.0f, 4.0f);
+			break;
+		case HOLSTER_LBACK:
+		case HOLSTER_RBACK:
+			//diagonally across the back with the top over the shoulder, centered on the spine
+			boltName = "*back";
+			angles[PITCH] = (holsterPlace == HOLSTER_RBACK) ? 40.0f : -40.0f;
+			angles[YAW] = 180.0f;
+			VectorSet(offset, 0.0f, -1.0f, 3.0f);
+			WP_SaberFitHolsterOffset( ent->client->ps.saber[saberNum].model, angles, offset, qfalse );
+			break;
+		default://HOLSTER_NONE
+			continue;
 		}
-		if ( saberNum == 0 )
-		{
-			if ( holsterPlace == HOLSTER_LHIP )
-			{
-				handBolt = gi.G2API_AddBolt( &ent->ghoul2[ent->playerModel], "*hip_l", qfalse );
-			}
-			else if ( holsterPlace == HOLSTER_HIPS )
-			{
-				handBolt = gi.G2API_AddBolt( &ent->ghoul2[ent->playerModel], "*hip_r", qfalse );
-			}
-			else if ( holsterPlace == HOLSTER_BACK )
-			{
-				handBolt = gi.G2API_AddBolt( &ent->ghoul2[ent->playerModel], "*back", qfalse );
-			}
+		const int handBolt = gi.G2API_AddBolt( &ent->ghoul2[ent->playerModel], boltName, qfalse );
+		G_CreateG2HolsteredWeaponModel( ent, ent->client->ps.saber[saberNum].model, handBolt, saberNum, angles, offset, useHolsterTag );
+		if ( ent->holsterModel[saberNum] <= 0 )
+		{//no such bolt on this model
+			continue;
 		}
-		else
-		{
-			if ( holsterPlace == HOLSTER_HIPS || holsterPlace == HOLSTER_LHIP )
-			{
-				if ( ent->client->ps.saber[0].holsterPlace == HOLSTER_LHIP )
-				{
-					handBolt = gi.G2API_AddBolt( &ent->ghoul2[ent->playerModel], "*hip_r", qfalse );
-				}
-				else
-				{
-					handBolt = gi.G2API_AddBolt( &ent->ghoul2[ent->playerModel], "*hip_l", qfalse );
-				}
-			}
-			else if ( holsterPlace == HOLSTER_BACK )
-			{
-				if ( ent->client->ps.saber[0].holsterPlace == HOLSTER_BACK )
-				{
-					continue;
-				}
-				handBolt = gi.G2API_AddBolt( &ent->ghoul2[ent->playerModel], "*back", qfalse );
-			}
-		}
-		G_CreateG2HolsteredWeaponModel( ent, ent->client->ps.saber[saberNum].model, handBolt, saberNum, angles, offset );
 		
         gi.G2API_SetTintType( &ent->ghoul2[ent->holsterModel[saberNum]], saberNum ? G2_TINT_SABER2 : G2_TINT_SABER );
         
@@ -3215,7 +3416,7 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 							}
 							else
 							{
-								if ( debug_subdivision->integer || g_saberRealisticCombat->integer )
+								if ( debug_subdivision->integer || g_saberRealisticCombat->integer || g_dismemberRealistic->integer )
 								{
 									dFlags |= DAMAGE_DISMEMBER;
 									if ( hitDismember[i] )
@@ -3452,7 +3653,9 @@ qboolean WP_SaberApplyDamage( gentity_t *ent, float baseDamage, int baseDFlags,
 								victim->s.number, hitLoc[i], g_saberRealisticCombat->integer ? 1.0f : saberLocationMod[hitLoc[i]],
 								rawContactDmg, damage, (dFlags&DAMAGE_NO_DAMAGE) ? " (no-damage brush: not in an attack)" : saberFighter ? "" : " (lethal-anywhere)", hitDismemberLoc[i] );
 						}
+						saberDismemberLoc = hitLoc[i];
 						G_Damage( victim, inflictor, ent, dmgDir[i], dmgSpot[i], damage, dFlags, MOD_SABER, hitDismemberLoc[i] );
+						saberDismemberLoc = HL_NONE;
 						if ( victim->s.number == 0 && victim->health > 0 && victim->client
 							&& ( PM_SaberInBrokenParry( victim->client->ps.saberMove ) || !TIMER_Done( victim, "parryStaggered" ) ) )
 						{//JKEnhanced 3C: a broken parry/stagger is punished once - the hit that lands ends it, so

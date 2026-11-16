@@ -42,6 +42,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "g_force.h"
 
 extern void WP_SaberLoadParms( void );
+extern void WP_SaberCheckHolsterCvars( void );
 extern qboolean G_PlayerSpawned( void );
 
 extern void Rail_Initialize( void );
@@ -272,6 +273,7 @@ cvar_t	*g_npcBoltSpeed;
 cvar_t	*g_saberRestrictForce;
 cvar_t	*g_saberPickuppableDroppedSabers;
 cvar_t	*g_dismemberProbabilities;
+cvar_t	*g_dismemberRealistic;
 
 cvar_t	*g_speederControlScheme;
 
@@ -317,6 +319,7 @@ cvar_t	*g_broadsword;
 
 cvar_t	*g_allowBunnyhopping;
 cvar_t	*g_flippedHolsters;
+cvar_t	*g_saberHolster;
 cvar_t	*g_noIgniteTwirl;
 
 cvar_t	*g_forceRegenTime;
@@ -704,6 +707,30 @@ void G_FindTeams( void ) {
 
 /*
 ============
+G_ValidateSkill
+
+Only g_spskill 0-2 is supported: spawnflags 256/512/1024 hide entities per skill, and
+the next bit (2048) is NO_EXPLOSION/SHY, so higher values would drop those entities and
+break AI tuning. Jedi Master is g_spskill 2 with handicap 50; older JAE menus set it as
+g_spskill 3, which also comes back from their savegames and configs.
+============
+*/
+static void G_ValidateSkill( void ) {
+	if ( g_spskill->integer > 2 )
+	{
+		gi.Printf( S_COLOR_YELLOW "g_spskill %s is not supported, using Jedi Master (g_spskill 2, handicap 50)\n", g_spskill->string );
+		gi.cvar_set( "g_spskill", "2" );
+		gi.cvar_set( "handicap", "50" );
+	}
+	else if ( g_spskill->integer < 0 )
+	{
+		gi.Printf( S_COLOR_YELLOW "g_spskill %s is not supported, using Jedi Padawan (g_spskill 0)\n", g_spskill->string );
+		gi.cvar_set( "g_spskill", "0" );
+	}
+}
+
+/*
+============
 G_InitCvars
 
 ============
@@ -816,6 +843,7 @@ void G_InitCvars( void ) {
 	g_saberRealisticCombat = gi.cvar( "g_saberMoreRealistic", "0", CVAR_ARCHIVE );//makes collision more precise, increases damage
 	debug_subdivision = gi.cvar( "debug_subdivision", "0", CVAR_ARCHIVE );//debug for dismemberment
 	g_dismemberProbabilities = gi.cvar ( "g_dismemberProbabilities", "1", CVAR_ARCHIVE );//0 = ignore probabilities, 1 = use probabilities
+	g_dismemberRealistic = gi.cvar ( "g_dismemberRealistic", "0", CVAR_ARCHIVE );//1 = any saber kill can dismember where it hit, 2 = corpses too; g_dismemberProbabilities becomes a percent chance (the default of 1 is 1%, so set it too), damage unchanged
 	g_saberDamageCapping = gi.cvar( "g_saberDamageCapping", "1", CVAR_CHEAT );//caps damage of sabers vs players and NPC who use sabers
 	g_saberMaxPlayerHitPct = gi.cvar( "g_saberMaxPlayerHitPct", "0.5", CVAR_ARCHIVE );//one saber hit takes at most this fraction of the player's max health (needs g_saberDamageCapping)
 	g_saberPlayerDamageScale = gi.cvar( "g_saberPlayerDamageScale", "1", CVAR_ARCHIVE );//JKEnhanced: x on the tiered NPC saber damage to the player (peon 20-25, Jedi 35-40, master 45, boss 55; heavy x1.5; Easy x0.75 / Hard x1.25)
@@ -902,6 +930,8 @@ void G_InitCvars( void ) {
 	gi.cvar( "g_clearstats", "1", CVAR_ROM|CVAR_NORESTART);
 	
 	g_flippedHolsters = gi.cvar( "g_flippedHolsters", "0", CVAR_ARCHIVE );//if 1, saber faces up when holstered not down
+
+	g_saberHolster = gi.cvar( "g_saberHolster", "0", CVAR_ARCHIVE );//where everyone's sabers are holstered: 0 = the .sab file's holsterPlace, 1 = off, 2 = left hip, 3 = right hip, 4 = back over the left shoulder, 5 = back over the right shoulder
 	
 	g_noIgniteTwirl = gi.cvar( "g_noIgniteTwirl", "0", CVAR_ARCHIVE );//if 1, don't do ignite twirl
 	
@@ -976,6 +1006,7 @@ void InitGame(  const char *mapname, const char *spawntarget, int checkSum, cons
 	srand( randomSeed );
 
 	G_InitCvars();
+	G_ValidateSkill();	// before any entities spawn
 
 	G_InitMemory();
 
@@ -2180,6 +2211,9 @@ void G_RunFrame( int levelTime ) {
 	level.framenum++;
 	level.previousTime = level.time;
 	level.time = levelTime;
+
+	G_ValidateSkill();	// g_spskill can be changed mid-level from the menu or console
+	WP_SaberCheckHolsterCvars();	// so are the holster cvars
 
 	//ResetTeamCounters();
 	NAV::DecayDangerSenses();

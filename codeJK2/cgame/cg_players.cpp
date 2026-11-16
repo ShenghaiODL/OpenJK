@@ -5016,7 +5016,7 @@ Ghoul2 Insert End
 
 					fx->mShader = cgs.media.saberBlurShader;
 					//				fx->SetFlags( FX_USE_ALPHA );
-					FX_AddPrimitive((CEffect**)&fx, SABER_TRAIL_TIME);
+					FX_AddPrimitive(fx, SABER_TRAIL_TIME);
 				}
 			}
 
@@ -5182,7 +5182,7 @@ Ghoul2 Insert End
 			fx->mVerts[3].destST[0] = 4.0f;
 			fx->mVerts[3].destST[1] = 4.0f;
 
-			FX_AddPrimitive((CEffect**)&fx, 0);
+			FX_AddPrimitive(fx, 0);
 		}
 	}
 }

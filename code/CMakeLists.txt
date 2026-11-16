@@ -34,6 +34,15 @@ if(BuildSPRend2 OR BuildJK2SPRdRend2)
 	add_subdirectory("${SPDir}/rd-rend2")
 endif(BuildSPRend2 OR BuildJK2SPRdRend2)
 
+if(UseInternalJPEG AND UseTurboJPEG)
+	if(BuildSPRdVanilla)
+		add_dependencies(${SPRDVanillaRenderer} libjpeg-turbo)
+	endif()
+	if(BuildSPRend2)
+		add_dependencies(${SPRend2} libjpeg-turbo)
+	endif()
+endif()
+
 #    Add Engine Project
 if(BuildSPEngine OR BuildJK2SPEngine)
 	# Libraries
@@ -59,32 +68,37 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 		set(SPEngineLibraries ${SPEngineLibraries} ${OPENGL_LIBRARIES})
 	endif()
 
-	# OpenAL (is optionally included for Windows)
-	if(MSVC AND NOT WIN64)
+	# OpenAL. EAX-capable OpenAL Soft builds are supported on every desktop OS.
+	if(JAEOpenAL)
+		set(SPEngineDefines ${SPEngineDefines} "USE_OPENAL")
 		if(UseInternalOpenAL)
-			# There's a libs/OpenAL32.lib
-			# (mrw) TODO Is this actually required on windows? It is loaded at runtime, should not be linked?
-			find_library(OpenALLibrary NAMES OpenAL32 PATHS "${OpenJKLibDir}")
-			if(NOT OpenALLibrary)
-				message(FATAL_ERROR "UseInternalOpenAL enabled, but lib/OpenAL32.lib not found!")
-			endif(NOT OpenALLibrary)
-			set(SPEngineLibraries ${SPEngineLibraries} ${OpenALLibrary})
-		else(UseInternalOpenAL)
-			find_package(OpenAL REQUIRED)
-			set(SPEngineIncludeDirectories ${SPEngineIncludeDirectories} ${OPENAL_INCLUDE_DIR})
+			if(NOT TARGET OpenAL)
+				message(FATAL_ERROR "UseInternalOpenAL enabled, but the bundled OpenAL Soft target is unavailable")
+			endif()
+			set(SPEngineLibraries ${SPEngineLibraries} OpenAL)
+		else()
 			set(SPEngineLibraries ${SPEngineLibraries} ${OPENAL_LIBRARY})
-		endif(UseInternalOpenAL)
-
-		set(SPEngineEAXFiles
-			"${SPDir}/client/eax/eax.h"
-			"${SPDir}/client/eax/EaxMan.h"
-			)
-		source_group("eax" FILES ${SPEngineEAXFiles})
-		set(SPEngineFiles ${SPEngineFiles} ${SPEngineEAXFiles})
+		endif()
+		if(TARGET EalMan)
+			set(SPEngineLibraries ${SPEngineLibraries} EalMan)
+			set(SPEngineFiles ${SPEngineFiles} "${SPDir}/client/eax/EalMan.cpp")
+		else()
+			message(FATAL_ERROR "OpenAL support requires BuildEalMan=ON")
+		endif()
 	endif()
 
+	set(SPEngineEAXFiles
+		"${SPDir}/client/eax/eax.h"
+		"${SPDir}/client/eax/EaxMan.h"
+		)
+	source_group("eax" FILES ${SPEngineEAXFiles})
+	set(SPEngineFiles ${SPEngineFiles} ${SPEngineEAXFiles})
+
 	if(UseInternalSDL2)
-		if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+		if(APPLE)
+			set(SPEngineLibraries ${SPEngineLibraries}
+				${OpenJKLibDir}/SDL2/lib/macos/libSDL2-2.0.0.dylib)
+		elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
 			set(SPEngineLibraries
 				${SPEngineLibraries}
 				${OpenJKLibDir}/SDL2/lib/x86/SDL2main.lib
@@ -404,8 +418,13 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 			endif()
 		else(WIN32)
 			if(MakeApplicationBundles)
-				set_source_files_properties(${SPDirName}/macosx/JKEnhanced.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
-				set(SPEngineFiles ${SPEngineFiles} ${SPDirName}/macosx/JKEnhanced.icns)
+				if(SPDirName STREQUAL SPDir)
+					set(SPEngineIcon ${SPDirName}/macosx/JKEnhanced.icns)
+				else()
+					set(SPEngineIcon ${SPDirName}/macosx/OpenJK.icns)
+				endif()
+				set_source_files_properties(${SPEngineIcon} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+				set(SPEngineFiles ${SPEngineFiles} ${SPEngineIcon})
 				set_source_files_properties(${SPDirName}/macosx/English.lproj/InfoPlist.strings PROPERTIES MACOSX_PACKAGE_LOCATION Resources/English.lproj)
 				set(SPEngineFiles ${SPEngineFiles} ${SPDirName}/macosx/English.lproj/InfoPlist.strings)
 				
@@ -414,13 +433,101 @@ if(BuildSPEngine OR BuildJK2SPEngine)
 			else(MakeApplicationBundles)
 				add_executable(${ProjectName} ${SPEngineFiles})
 			endif(MakeApplicationBundles)
+			if(APPLE AND UseInternalSDL2)
+				if(MakeApplicationBundles)
+					set_target_properties(${ProjectName} PROPERTIES
+						INSTALL_RPATH "@executable_path/../Frameworks"
+						BUILD_WITH_INSTALL_RPATH TRUE)
+					add_custom_command(TARGET ${ProjectName} POST_BUILD
+						COMMAND ${CMAKE_COMMAND} -E make_directory
+						"$<TARGET_FILE_DIR:${ProjectName}>/../Frameworks"
+						COMMAND ${CMAKE_COMMAND} -E copy_if_different
+						"${OpenJKLibDir}/SDL2/lib/macos/libSDL2-2.0.0.dylib"
+						"$<TARGET_FILE_DIR:${ProjectName}>/../Frameworks/")
+					set(SPEngineBundleSearchDirs
+						"${OpenJKLibDir}/SDL2/lib/macos;${CMAKE_BINARY_DIR}/${ProjectName}.app/Contents/Frameworks")
+				else()
+					set_target_properties(${ProjectName} PROPERTIES
+						INSTALL_RPATH "@executable_path"
+						BUILD_WITH_INSTALL_RPATH TRUE)
+
+					add_custom_command(TARGET ${ProjectName} POST_BUILD
+						COMMAND ${CMAKE_COMMAND} -E copy_if_different
+						"${OpenJKLibDir}/SDL2/lib/macos/libSDL2-2.0.0.dylib"
+						"$<TARGET_FILE_DIR:${ProjectName}>/")
+					set(SPEngineExtraInstallFiles
+						${SPEngineExtraInstallFiles}
+						${OpenJKLibDir}/SDL2/lib/macos/libSDL2-2.0.0.dylib
+					)
+				endif()
+			endif()
 		endif(WIN32)
+
+		# The bundled OpenAL Soft library is copied beside the client (or into
+		# the bundle's Frameworks); macOS build trees use the install rpath.
+		if(NOT WIN32 AND TARGET OpenAL)
+			if(APPLE AND MakeApplicationBundles)
+				set(OpenALRpath "@executable_path/../Frameworks")
+			elseif(APPLE)
+				set(OpenALRpath "@executable_path")
+			else()
+				set(OpenALRpath "$ORIGIN")
+			endif()
+			if(APPLE)
+				set_target_properties(${ProjectName} PROPERTIES
+					BUILD_WITH_INSTALL_RPATH TRUE)
+			endif()
+			# The bundled SDL2 setup may already have added this rpath.
+			get_target_property(SPEngineRpaths ${ProjectName} INSTALL_RPATH)
+			if(NOT OpenALRpath IN_LIST SPEngineRpaths)
+				set_property(TARGET ${ProjectName} APPEND PROPERTY
+					INSTALL_RPATH "${OpenALRpath}")
+			endif()
+		endif()
+
+		if(TARGET EalMan)
+			install(FILES "${OpenJKLibDir}/EalMan/LICENSE"
+				DESTINATION "${InstallDir}/licenses"
+				RENAME "EalMan-LGPL-2.1.txt"
+				COMPONENT ${Component})
+		endif()
+
+		if(TARGET OpenAL)
+			if(WIN32)
+				# CMAKE_RUNTIME_OUTPUT_DIRECTORY already places the DLL beside the
+				# client in build trees; install the source-built runtime as well.
+				install(TARGETS OpenAL
+					RUNTIME DESTINATION ${InstallDir}
+					COMPONENT ${Component})
+			elseif(APPLE AND MakeApplicationBundles)
+				add_custom_command(TARGET ${ProjectName} POST_BUILD
+					COMMAND ${CMAKE_COMMAND} -E make_directory
+					"$<TARGET_FILE_DIR:${ProjectName}>/../Frameworks"
+					COMMAND ${CMAKE_COMMAND} -E copy_if_different
+					"$<TARGET_FILE:OpenAL>"
+					"$<TARGET_FILE_DIR:${ProjectName}>/../Frameworks/$<TARGET_SONAME_FILE_NAME:OpenAL>")
+				set(SPEngineBundleSearchDirs
+					"${SPEngineBundleSearchDirs};$<TARGET_FILE_DIR:OpenAL>")
+			else()
+				add_custom_command(TARGET ${ProjectName} POST_BUILD
+					COMMAND ${CMAKE_COMMAND} -E copy_if_different
+					"$<TARGET_FILE:OpenAL>"
+					"$<TARGET_FILE_DIR:${ProjectName}>/$<TARGET_SONAME_FILE_NAME:OpenAL>")
+				install(TARGETS OpenAL
+					LIBRARY DESTINATION ${InstallDir}
+					COMPONENT ${Component})
+			endif()
+			install(FILES "${openalsoft_SOURCE_DIR}/COPYING"
+				DESTINATION "${InstallDir}/licenses"
+				RENAME "OpenAL-Soft-LGPL-2.0.txt"
+				COMPONENT ${Component})
+		endif()
 
 		if(MakeApplicationBundles)
 			install(CODE "
 				include(BundleUtilities)
 				set(BU_CHMOD_BUNDLE_ITEMS ON)
-				fixup_bundle(\"${CMAKE_BINARY_DIR}/${ProjectName}.app\" \"\" \"\")
+				fixup_bundle(\"${CMAKE_BINARY_DIR}/${ProjectName}.app\" \"\" \"${SPEngineBundleSearchDirs}\")
 				"
 				COMPONENT Runtime)
 			install(TARGETS ${ProjectName}

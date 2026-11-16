@@ -957,7 +957,7 @@ levelshots are specialized 256*256 thumbnails for
 the menu system, sampled down from full screen distorted images
 ====================
 */
-#define LEVELSHOTSIZE 256
+#define LEVELSHOTSIZE 2048
 static void R_LevelShot( void ) {
 	char		checkname[MAX_OSPATH];
 	byte		*buffer;
@@ -1751,6 +1751,8 @@ void R_Register( void )
 		ri.Cvar_Set("r_modelpoolmegs", "0");
 	}
 	r_environmentMapping = ri.Cvar_Get("r_environmentMapping", "1", CVAR_ARCHIVE_ND);
+	// read by cgame, ui and the cinematic code for the widescreen HUD fix
+	ri.Cvar_Get("r_ratioFix", "1", CVAR_ARCHIVE);
 
 	for ( size_t i = 0; i < numCommands; i++ )
 		ri.Cmd_AddCommand( commands[i].cmd, commands[i].func );
@@ -2252,16 +2254,20 @@ void RE_Shutdown( qboolean destroyWindow, qboolean restarting ) {
 
 	if (destroyWindow && restarting && tr.registered)
 	{
-		ri.Z_Free((void *)glConfig.extensions_string);
-		ri.Z_Free((void *)glConfigExt.originalExtensionString);
-
 		qglDeleteVertexArrays(1, &tr.globalVao);
 		SaveGhoul2InfoArray();
 	}
 
 	// shut down platform specific OpenGL stuff
 	if ( destroyWindow ) {
+		if ( tr.registered ) {
+			ri.Z_Free( (void *)glConfig.extensions_string );
+			ri.Z_Free( (void *)glConfigExt.originalExtensionString );
+		}
+
 		ri.WIN_Shutdown();
+		memset( &glConfig, 0, sizeof( glConfig ) );
+		memset( &glConfigExt, 0, sizeof( glConfigExt ) );
 	}
 
 	tr.registered = qfalse;

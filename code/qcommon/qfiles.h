@@ -466,7 +466,6 @@ typedef struct {
 #define LS_NORMAL		0x00
 #define LS_UNUSED		0xfe
 #define MAX_LIGHT_STYLES		64
-#define	LS_LSNONE			0xff
 
 typedef struct {
 	vec3_t		xyz;

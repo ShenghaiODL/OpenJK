@@ -703,7 +703,7 @@ static cvarTable_t cvarTable[] =
 	
 	{ &ui_SFXSabers,	"cg_SFXSabers",	"1", NULL, CVAR_ARCHIVE },
 	{ &ui_SFXSabersGlowSize,	"cg_SFXSabersGlowSize",	"1.0", NULL, CVAR_ARCHIVE },
-	{ &ui_SFXSabersCoreSize,	"cg_SFXSabersCoreSize",	"1.0", NULL, CVAR_ARCHIVE },
+	{ &ui_SFXSabersCoreSize,	"cg_SFXSabersCoreSize",	"0.75", NULL, CVAR_ARCHIVE },
     
     { &ui_char_model_angle, "ui_char_model_angle", "180", NULL, 0},
 
@@ -4971,7 +4971,6 @@ static void UI_Update(const char *name)
 				// JKEnhanced: presets no longer change the resolution
 				Cvar_SetValue( "ui_r_texturebits", 32 );
 				Cvar_SetValue( "ui_r_fastSky", 0 );
-				Cvar_SetValue( "ui_r_inGameVideo", 1 );
 				//Cvar_SetValue( "ui_cg_shadows", 2 );//stencil
 				Cvar_Set( "ui_r_texturemode", "GL_LINEAR_MIPMAP_LINEAR" );
 				break;
@@ -4986,7 +4985,6 @@ static void UI_Update(const char *name)
 				// JKEnhanced: presets no longer change the resolution
 				Cvar_SetValue( "ui_r_texturebits", 0 );
 				Cvar_SetValue( "ui_r_fastSky", 0 );
-				Cvar_SetValue( "ui_r_inGameVideo", 1 );
 				//Cvar_SetValue( "ui_cg_shadows", 2 );
 				Cvar_Set( "ui_r_texturemode", "GL_LINEAR_MIPMAP_LINEAR" );
 				break;
@@ -5002,7 +5000,6 @@ static void UI_Update(const char *name)
 				// JKEnhanced: presets no longer change the resolution
 				Cvar_SetValue( "ui_r_texturebits", 0 );
 				Cvar_SetValue( "ui_r_fastSky", 1 );
-				Cvar_SetValue( "ui_r_inGameVideo", 0 );
 				//Cvar_SetValue( "ui_cg_shadows", 1 );
 				Cvar_Set( "ui_r_texturemode", "GL_LINEAR_MIPMAP_NEAREST" );
 				break;
@@ -5018,7 +5015,6 @@ static void UI_Update(const char *name)
 				Cvar_SetValue( "ui_r_picmip", 3 );
 				Cvar_SetValue( "ui_r_texturebits", 16 );
 				Cvar_SetValue( "ui_r_fastSky", 1 );
-				Cvar_SetValue( "ui_r_inGameVideo", 0 );
 				//Cvar_SetValue( "ui_cg_shadows", 0 );
 				Cvar_Set( "ui_r_texturemode", "GL_LINEAR_MIPMAP_NEAREST" );
 			break;
@@ -5679,7 +5675,6 @@ void UI_UpdateVideoSetup ( void )
 	Cvar_Set ( "r_depthbits", Cvar_VariableString ( "ui_r_depthbits" ) );
 	Cvar_Set ( "r_subdivisions", Cvar_VariableString ( "ui_r_subdivisions" ) );
 	Cvar_Set ( "r_fastSky", Cvar_VariableString ( "ui_r_fastSky" ) );
-	Cvar_Set ( "r_inGameVideo", Cvar_VariableString ( "ui_r_inGameVideo" ) );
 	Cvar_Set ( "r_allowExtensions", Cvar_VariableString ( "ui_r_allowExtensions" ) );
 //	Cvar_Set ( "cg_shadows", Cvar_VariableString ( "ui_cg_shadows" ) );
 	Cvar_Set ( "ui_r_modified", "0" );
@@ -5712,7 +5707,6 @@ void UI_GetVideoSetup ( void )
 	Cvar_Register ( NULL, "ui_r_depthbits",				"0", CVAR_ROM );
 	Cvar_Register ( NULL, "ui_r_subdivisions",			"0", CVAR_ROM );
 	Cvar_Register ( NULL, "ui_r_fastSky",				"0", CVAR_ROM );
-	Cvar_Register ( NULL, "ui_r_inGameVideo",			"0", CVAR_ROM );
 	Cvar_Register ( NULL, "ui_r_allowExtensions",		"0", CVAR_ROM );
 //	Cvar_Register ( NULL, "ui_cg_shadows",				"0", CVAR_ROM );
 	Cvar_Register ( NULL, "ui_r_modified",				"0", CVAR_ROM );
@@ -5730,7 +5724,6 @@ void UI_GetVideoSetup ( void )
 	Cvar_Set ( "ui_r_depthbits", Cvar_VariableString ( "r_depthbits" ) );
 	Cvar_Set ( "ui_r_subdivisions", Cvar_VariableString ( "r_subdivisions" ) );
 	Cvar_Set ( "ui_r_fastSky", Cvar_VariableString ( "r_fastSky" ) );
-	Cvar_Set ( "ui_r_inGameVideo", Cvar_VariableString ( "r_inGameVideo" ) );
 	Cvar_Set ( "ui_r_allowExtensions", Cvar_VariableString ( "r_allowExtensions" ) );
 //	Cvar_Set ( "ui_cg_shadows", Cvar_VariableString ( "cg_shadows" ) );
 	Cvar_Set ( "ui_r_modified", "0" );

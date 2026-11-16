@@ -8023,14 +8023,18 @@ void PM_SwimFloatAnim( void )
 
 /*
 ===============
-PM_BobCycleAdvance (OpenJK PR #1356)
+PM_BobCycleAdvance
 
-How far bobCycle moves in this pmove step: bobmove units per msec. bobCycle is an integer, so
-adding bobmove * msec directly dropped the fraction every step (0.3 * 6 msec = 1.8 became 1): the
-footstep and view bob cycle slowed by an amount that depended on the frame rate - and with the
-player's sub-stepped Pmove (8 ms steps) on every step. Advancing by floor( bobmove * time ) at the
-end minus at the start of the step makes the rounding of consecutive steps cancel, so the cycle runs
-at the exact rate at any frame rate, with no extra state.
+How far bobCycle moves in this pmove step: bobmove units per msec.
+
+bobCycle is an integer, so adding bobmove * msec directly drops the fraction every
+call (0.3 * 6 msec = 1.8 became 1), which slows the footstep and view bob cycle
+by an amount that depends on the frame rate (-6% running at 125 fps, -17% at
+144 fps, -44% walking at 144 fps, and no movement at all below ~3 msec per frame).
+No extra state is needed to keep the fraction: advancing by the difference of
+floor( bobmove * time ) at the end and at the start of the step makes the
+rounding errors of consecutive steps cancel out, so the cycle advances at the
+exact rate at any frame rate.
 ===============
 */
 static int PM_BobCycleAdvance( float bobmove )
@@ -9253,8 +9257,8 @@ static void PM_FinishWeaponChange( void ) {
 		}
 		if ( trueSwitch )
 		{//actually did switch weapons, play anim
-			if (!G_IsRidingVehicle(pm->gent))
-			{
+			if (!G_IsRidingVehicle(pm->gent) && !g_noIgniteTwirl->integer)
+			{//with g_noIgniteTwirl, PM_TorsoAnimLightsaber puts us in the ready pose instead
 				PM_SetSaberMove(LS_DRAW);
 			}
 		}
@@ -9687,20 +9691,8 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 			pm->ps->saberMove = newMove;
 			return;
 		}
-		if ( pm->ps->saber[0].holsterPlace == HOLSTER_LHIP && !pm->ps->dualSabers && pm->ps->saber[0].drawAnim == -1 )
-		{
-			//TODO: left hip draw anim
-		}
-		else if ( pm->ps->saber[0].holsterPlace == HOLSTER_LHIP
-				 && pm->ps->dualSabers
-				 && ((pm->ps->saber[1].holsterPlace == HOLSTER_LHIP) || (pm->ps->saber[1].holsterPlace == HOLSTER_HIPS))
-				 && !(pm->ps->saber[0].stylesForbidden&(1<<SS_DUAL))
-				 && !(pm->ps->saber[1].stylesForbidden&(1<<SS_DUAL)) )
-		{
-			anim = BOTH_S1_S6;
-			//TODO: nice cross draw anim
-		}
-		else if ( pm->ps->saber[0].drawAnim != -1 )
+		//TODO: left hip draw anim for a single saber, nice cross draw anim for dual sabers
+		if ( pm->ps->saber[0].drawAnim != -1 )
 		{
 			anim = pm->ps->saber[0].drawAnim;
 		}
@@ -9709,7 +9701,7 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 		{
 			anim = pm->ps->saber[1].drawAnim;
 		}
-		else if ( pm->ps->saber[0].holsterPlace == HOLSTER_BACK )
+		else if ( WP_SaberHolsteredOnBack( pm->ps ) )
 		{
 			//TODO: nice back draw anim
 			anim = BOTH_S1_S7;
@@ -9731,21 +9723,8 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 	}
 	else if ( newMove == LS_PUTAWAY )
 	{
-		if ( pm->ps->saber[0].holsterPlace == HOLSTER_LHIP && !pm->ps->dualSabers && pm->ps->saber[0].putawayAnim == -1 )
-		{
-			//TODO: left hip putaway anim
-		}
-		else if ( pm->ps->saber[0].holsterPlace == HOLSTER_LHIP
-				 && pm->ps->dualSabers
-				 && ((pm->ps->saber[1].holsterPlace == HOLSTER_LHIP) || (pm->ps->saber[1].holsterPlace == HOLSTER_HIPS))
-				 && !(pm->ps->saber[0].stylesForbidden&(1<<SS_DUAL))
-				 && !(pm->ps->saber[1].stylesForbidden&(1<<SS_DUAL))
-				 && pm->ps->saber[1].Active() )
-		{
-			anim = BOTH_S6_S1;
-			//TODO: nice cross putaway anim
-		}
-		else if ( pm->ps->saber[0].putawayAnim != -1 )
+		//TODO: left hip putaway anim for a single saber, nice cross putaway anim for dual sabers
+		if ( pm->ps->saber[0].putawayAnim != -1 )
 		{
 			anim = pm->ps->saber[0].putawayAnim;
 		}
@@ -9754,7 +9733,7 @@ void PM_SetSaberMove(saberMoveName_t newMove)
 		{
 			anim = pm->ps->saber[1].putawayAnim;
 		}
-		else if ( pm->ps->saber[0].holsterPlace == HOLSTER_BACK )
+		else if ( WP_SaberHolsteredOnBack( pm->ps ) )
 		{
 			anim = BOTH_S7_S1;
 		}

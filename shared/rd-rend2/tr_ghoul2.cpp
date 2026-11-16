@@ -826,6 +826,7 @@ public:
 	shader_t		*gore_shader;
 	CGoreSet		*gore_set;
 #endif
+	g2Tints_t		tintType;
 
 	CRenderSurface(
 		int				initsurfaceNum,
@@ -861,6 +862,7 @@ public:
 		, gore_shader(initgore_shader)
 		, gore_set(initgore_set)
 #endif
+		, tintType(G2_TINT_DEFAULT)
 	{
 	}
 };
@@ -2431,6 +2433,14 @@ void RenderSurfaces( CRenderSurface &RS, const trRefEntity_t *ent, int entityNum
 					break;
 				}
 			}
+
+			// dismemberment turns on caps that some skins leave off and the model has no shader
+			// for (the waist caps of the customizable characters), draw those with the
+			// stormtrooper caps instead of the default image
+			if ( ( shader == tr.defaultShader || shader->defaultShader ) && strstr( surfInfo->name, "_cap_" ) )
+			{
+				shader = R_FindShader( "models/players/stormtrooper/caps", lightmapsNone, stylesDefault, qtrue );
+			}
 		}
 		else
 		{
@@ -2456,6 +2466,7 @@ void RenderSurfaces( CRenderSurface &RS, const trRefEntity_t *ent, int entityNum
 			newSurf->surfaceData = surface;
 			newSurf->boneCache = RS.boneCache;
 			newSurf->dlightBits = dlightBits;
+			newSurf->tintType = RS.tintType;
 
 			// render shadows?
 			if (r_shadows->integer == 2
@@ -2489,6 +2500,8 @@ void RenderSurfaces( CRenderSurface &RS, const trRefEntity_t *ent, int entityNum
 						(kcur->second.mDeleteTime &&
 						 curTime >= kcur->second.mDeleteTime)) // out of time
 					{
+						if (tex)
+							DeleteR2GoreRecord(kcur->second.mGoreTag);
 						RS.gore_set->mGoreRecords.erase(kcur);
 					}
 					else if (tex->tex[RS.lod])
@@ -3362,6 +3375,7 @@ void R_AddGhoulSurfaces( trRefEntity_t *ent, int entityNum )
 		{
 			RS.renderfx |= RF_NOSHADOW;
 		}
+		RS.tintType = g2Info.tintType;
 
 		RenderSurfaces(RS, ent, entityNum);
 	}
@@ -3665,6 +3679,8 @@ void RB_FillBoneBlock(CRenderableSurface *surf, mat3x4_t *outMatrices)
 void RB_SurfaceGhoul( CRenderableSurface *surf )
 {
 	mdxmVBOMesh_t *surface = surf->vboMesh;
+
+	tess.tintType = surf->tintType;
 
 	if ( surface->vbo == NULL || surface->ibo == NULL )
 	{

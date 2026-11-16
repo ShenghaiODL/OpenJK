@@ -158,6 +158,7 @@ void RB_BeginSurface( shader_t *shader, int fogNum, int cubemapIndex )
 
 	tess.shaderTime = backEnd.refdef.floatTime - tess.shader->timeOffset;
 	tess.entityMergable = (bool)shader->entityMergable;
+	tess.tintType = G2_TINT_DEFAULT;
 	if (tess.shader->clampTime && tess.shaderTime >= tess.shader->clampTime) {
 		tess.shaderTime = tess.shader->clampTime;
 	}
@@ -270,10 +271,25 @@ static void ComputeTexMods( shaderStage_t *pStage, int bundleNum, float *outMatr
 	}
 }
 
+// Picks the newShaderRGBA slot an rgbGen entity N / hilt / blade stage reads.
+// The second saber of a dual wielder reads the second hilt and blade slots.
+static const byte *RB_EntityTintColor( const shaderStage_t *pStage )
+{
+	int index = pStage->rgbGenEntIndex;
+
+	if ( tess.tintType == G2_TINT_SABER2 && (index == TINT_HILT1 || index == TINT_BLADE1) )
+	{
+		index++;
+	}
+
+	return backEnd.currentEntity->e.newShaderRGBA[index];
+}
+
 static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t vertColor, int blend, colorGen_t *forceRGBGen, alphaGen_t *forceAlphaGen )
 {
 	colorGen_t rgbGen = pStage->rgbGen;
 	alphaGen_t alphaGen = pStage->alphaGen;
+	const bool rgbGenForced = ( forceRGBGen != NULL && *forceRGBGen != CGEN_BAD );
 
 	baseColor[0] =
    	baseColor[1] =
@@ -366,13 +382,20 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 		case CGEN_LIGHTING_DIFFUSE_ENTITY:
 			if (backEnd.currentEntity)
 			{
-				baseColor[0] = ((unsigned char *)backEnd.currentEntity->e.shaderRGBA)[0] / 255.0f;
-				baseColor[1] = ((unsigned char *)backEnd.currentEntity->e.shaderRGBA)[1] / 255.0f;
-				baseColor[2] = ((unsigned char *)backEnd.currentEntity->e.shaderRGBA)[2] / 255.0f;
-				baseColor[3] = ((unsigned char *)backEnd.currentEntity->e.shaderRGBA)[3] / 255.0f;
+				const byte *rgba = backEnd.currentEntity->e.shaderRGBA;
 
-				if ( alphaGen == AGEN_IDENTITY &&
-					backEnd.currentEntity->e.shaderRGBA[3] == 255 )
+				// a renderfx forced colour source always means the plain entity colour
+				if ( pStage->rgbGenUseNewEnt && !rgbGenForced )
+				{
+					rgba = RB_EntityTintColor( pStage );
+				}
+
+				baseColor[0] = rgba[0] / 255.0f;
+				baseColor[1] = rgba[1] / 255.0f;
+				baseColor[2] = rgba[2] / 255.0f;
+				baseColor[3] = rgba[3] / 255.0f;
+
+				if ( alphaGen == AGEN_IDENTITY && rgba[3] == 255 )
 				{
 					alphaGen = AGEN_SKIP;
 				}
@@ -888,7 +911,7 @@ static UniformBlockBinding GetBonesBlockUniformBinding()
 	binding.ubo = currentFrameUbo;
 	binding.block = UNIFORM_BLOCK_BONES;
 
-	if (glState.skeletalAnimation)
+	if (glState.skeletalAnimation && tr.animationBoneUboOffset >= 0)
 		binding.offset = tr.animationBoneUboOffset;
 	else
 		binding.offset = 0;
@@ -904,10 +927,21 @@ static UniformBlockBinding GetPreviousBonesBlockUniformBinding()
 	binding.ubo = frameUbo;
 	binding.block = UNIFORM_BLOCK_PREVIOUS_BONES;
 
-	if (glState.skeletalAnimation)
+	if (glState.skeletalAnimation && tr.previousAnimationBoneUboOffset >= 0)
+	{
 		binding.offset = tr.previousAnimationBoneUboOffset;
+	}
+	else if (glState.skeletalAnimation && tr.animationBoneUboOffset >= 0)
+	{
+		// No bones cached from the previous frame, so use this frame's
+		// bones instead of binding an invalid range
+		binding.ubo = backEndData->currentFrame->ubo[frameScene];
+		binding.offset = tr.animationBoneUboOffset;
+	}
 	else
+	{
 		binding.offset = 0;
+	}
 
 	return binding;
 }

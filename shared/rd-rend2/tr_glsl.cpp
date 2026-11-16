@@ -1428,7 +1428,7 @@ static const GPUProgramDesc *LoadProgramSource(
 		Com_sprintf(programPath, sizeof(programPath), "glsl/%s.glsl", programName);
 
 		long size = ri.FS_ReadFile(programPath, (void **)&buffer);
-		if ( size )
+		if ( size > 0 )
 		{
 			GPUProgramDesc *externalProgramDesc = ojkAlloc<GPUProgramDesc>(allocator);
 			*externalProgramDesc = ParseProgramSource(allocator, buffer);
@@ -2626,6 +2626,12 @@ static int GLSL_LoadGPUProgramSMAA(
 	{
 		Q_strcat(extradefines, sizeof(extradefines),
 			"#define SMAA_REPROJECTION 1\n"
+		);
+	}
+	else
+	{
+		Q_strcat(extradefines, sizeof(extradefines),
+			"#define SMAA_REPROJECTION 0\n"
 		);
 	}
 	

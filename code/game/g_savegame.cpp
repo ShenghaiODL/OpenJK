@@ -1153,16 +1153,15 @@ static void ReadGEntities(qboolean qbAutosave)
 		{
 			Vehicle_t tempVehicle;
 
-			// load this vehicle type into g_vehicleInfo before the saved vehicle's pointers are fixed up:
-			// a console-spawned vehicle (npc spawn vehicle swoop) isn't in the map's precache, so loading
-			// a save with one crashed (OpenJK PR #1071, issue #757)
-			extern int BG_VehicleGetIndex( const char *vehicleName );
-			if ( pEnt->NPC_type && pEnt->NPC_type[0] )
-			{
-				BG_VehicleGetIndex( pEnt->NPC_type );
-			}
+			// g_vehicleInfo fills on demand, so the saved index may not match this session
+			const int vehicleIndex = BG_VehicleGetIndex(pEnt->NPC_type);
 
 			EvaluateFields(savefields_gVHIC, &tempVehicle,(byte *)pEntOriginal->m_pVehicle, INT_ID('V','H','I','C'));
+
+			if (vehicleIndex != VEHICLE_NONE)
+			{
+				tempVehicle.m_pVehicleInfo = &g_vehicleInfo[vehicleIndex];
+			}
 
 			// so can we pinch the original's one or do we have to alloc a new one?...
 			//

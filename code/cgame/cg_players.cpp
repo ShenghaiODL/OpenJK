@@ -1183,30 +1183,26 @@ static void CG_PlayerAnimEventDo( centity_t *cent, animevent_t *animEvent )
 	}
 }
 
-//the model folder a G2 entity's model-specific animevents are keyed by: "stormtrooper" from
-//"models/players/stormtrooper/model.glm". Falls back to NPC_type (the old key) if there's no G2 model.
-static void CG_AnimEventModelName( const gentity_t *ent, char *out, int outSize )
+// Model-specific events are tagged with the model directory, which NPC variants
+// such as stormtrooper2 share, so match on the model rather than the NPC_type
+static int CG_AnimEventModel( gentity_t *ent )
 {
-	out[0] = 0;
-	if ( ent->ghoul2.size() && ent->playerModel >= 0 && ent->playerModel < ent->ghoul2.size() )
+	if ( ent->playerModel < 0 || ent->playerModel >= ent->ghoul2.size() )
 	{
-		const char *file = ent->ghoul2[ent->playerModel].mFileName;
-		const char *start = strstr( file, "players/" );//(the engine builds it lowercase: models/players/%s/model.glm)
-		if ( start )
-		{
-			start += strlen( "players/" );
-			const char *end = strchr( start, '/' );
-			if ( end && end > start && end - start < outSize )
-			{
-				Q_strncpyz( out, start, (int)( end - start ) + 1 );
-				return;
-			}
-		}
+		return -1;
 	}
-	if ( ent->NPC_type )
+
+	char	modelDir[MAX_QPATH];
+	Q_strncpyz( modelDir, ent->ghoul2[ent->playerModel].mFileName, sizeof( modelDir ) );
+	char	*slash = strrchr( modelDir, '/' );
+	if ( !slash )
 	{
-		Q_strncpyz( out, ent->NPC_type, outSize );
+		return -1;
 	}
+	*slash = 0;
+
+	hstring	modelName( Q_strlwr( COM_SkipPath( modelDir ) ) );
+	return modelName.handle();
 }
 
 static void CG_PlayerAnimEvents( int animFileIndex, qboolean torso, int oldFrame, int frame, int entNum )
@@ -1265,14 +1261,7 @@ static void CG_PlayerAnimEvents( int animFileIndex, qboolean torso, int oldFrame
 		}
 	}
 
-	//Model-specific events are stored under the model folder name (G_LoadAnimFileSet / G_ParseAnimFileSet).
-	//NPC_type is NOT always that ("stormtrooper2" uses the "stormtrooper" model; the player is "player"),
-	//so read the folder from the G2 model's file name, "models/players/<model>/model.glm" (it's saved, so
-	//this also holds after a load). Same fix as OpenJK PR #1333, without making every NPC type append
-	//its own copy of the model's events to the skeleton's event list.
-	char modelFolder[MAX_QPATH];
-	CG_AnimEventModelName( &g_entities[entNum], modelFolder, sizeof( modelFolder ) );
-	hstring myModel = modelFolder;
+	const int myModel = CG_AnimEventModel( &g_entities[entNum] );
 
 	// Check for anim event
 	for ( i=0; i < MAX_ANIM_EVENTS; ++i )
@@ -1288,7 +1277,7 @@ static void CG_PlayerAnimEvents( int animFileIndex, qboolean torso, int oldFrame
 		}
 
 		match = qfalse;
-		if (animEvents[i].modelOnly==0 || animEvents[i].modelOnly==myModel.handle())
+		if (animEvents[i].modelOnly==0 || animEvents[i].modelOnly==myModel)
 		{
 			if ( animEvents[i].keyFrame == frame )
 			{//exact match

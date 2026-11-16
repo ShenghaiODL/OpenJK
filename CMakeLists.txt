@@ -16,10 +16,10 @@
 # along with this program; if not, see <http://www.gnu.org/licenses/>.
 #============================================================================
 
-# The <min>...<policy_max> syntax is needed to remain compatible with 3.1, but also newer versions that dropped 3.1 compatibility
+# The <min>...<policy_max> syntax is needed to remain compatible with 3.14, but also newer versions that dropped older compatibility modes.
 # More info here: https://cmake.org/cmake/help/latest/command/cmake_minimum_required.html
-cmake_minimum_required(VERSION 3.1...3.31)
-set(CMAKE_OSX_DEPLOYMENT_TARGET "10.9" CACHE STRING "Minimum OS X deployment version")
+cmake_minimum_required(VERSION 3.14...3.31)
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.11" CACHE STRING "Minimum OS X deployment version")
 
 set(InOpenJK ON)
 
@@ -56,24 +56,33 @@ option(BuildJK2SPRdRend2 "Whether to create projects for the EXPERIMENTAL jk2 SP
 option(BuildTests "Whether to build automatic unit tests (requires Boost)" OFF)
 option(UseAddressSanitizer "Whether to enable runtime address sanitizer" OFF)
 option(UseUndefinedSanitizer "Whether to enable runtime Undefined Behavior sanitizer" OFF)
+option(BuildEalMan "Build the portable EAL Manager library" ON)
+option(BuildOpenALSupport "Build the optional OpenAL sound backend" ON)
 
 include(CMakeDependentOption)
 cmake_dependent_option(BuildSymbolServer "Build WIP Windows Symbol Server (experimental and unused)" OFF "NOT WIN32 OR NOT MSVC" OFF)
 
-# Configure the use of bundled libraries.  By default, we assume the user is on
-# a platform that does not require any bundling.
+# Configure the use of bundled libraries. OpenAL Soft is packaged by default on
+# every desktop platform; the other dependencies retain their platform defaults.
 #
 # Note that we always use the bundled copy of minizip, since it is modified to
 # use Z_Malloc.
 
-set(UseInternalOpenALDefault OFF)
+# Bundled OpenAL Soft needs GCC 12 and CMake 3.18 (its CMakeLists includes
+# CheckLinkerFlag); older toolchains default to the system OpenAL.
+if((CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+	CMAKE_CXX_COMPILER_VERSION VERSION_LESS "12") OR
+	CMAKE_VERSION VERSION_LESS "3.18")
+	set(UseInternalOpenALDefault OFF)
+else()
+	set(UseInternalOpenALDefault ON)
+endif()
 set(UseInternalZlibDefault   OFF)
 set(UseInternalPNGDefault    OFF)
 set(UseInternalJPEGDefault   OFF)
 set(UseInternalSDL2Default   OFF)
 
 if(UseInternalLibs OR WIN32)
-  set(UseInternalOpenALDefault ON)
   set(UseInternalZlibDefault   ON)
   set(UseInternalPNGDefault    ON)
   set(UseInternalJPEGDefault   ON)
@@ -83,13 +92,22 @@ endif()
 if(APPLE)
   set(UseInternalJPEGDefault ON)
   set(UseInternalPNGDefault  ON)
+  set(UseInternalSDL2Default ON)
 endif()
 
-option(UseInternalOpenAL "If set, use bundled OpenAL."  ${UseInternalOpenALDefault})
+option(UseInternalOpenAL "If set, build and package JAEnhanced's pinned OpenAL Soft runtime." ${UseInternalOpenALDefault})
 option(UseInternalZlib   "If set, use bundled zlib."    ${UseInternalZlibDefault})
 option(UseInternalPNG    "If set, use bundled libpng."  ${UseInternalPNGDefault})
 option(UseInternalJPEG   "If set, use bundled libjpeg." ${UseInternalJPEGDefault})
 option(UseInternalSDL2   "If set, use bundled SDL2."    ${UseInternalSDL2Default})
+
+cmake_dependent_option(UseTurboJPEG
+		"If set, build and use libjpeg-turbo instead of the bundled libjpeg" OFF
+		"UseInternalJPEG" OFF)
+
+cmake_dependent_option(UseInternalPNGNeon
+		"Build the bundled libpng with arm64 NEON optimisations" OFF
+		"UseInternalPNG" OFF)
 
 # This option won't appear on non-Apple platforms.
 if(APPLE)
@@ -131,7 +149,6 @@ else()
 	set(X86 OFF)
 	if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
 		set(Architecture "arm64")
-		add_definitions(-DPNG_ARM_NEON_OPT=0)
 	elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^arm")
 		set(Architecture "arm")
 	elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^i.86$")
@@ -155,6 +172,11 @@ else()
 endif()
 
 message(STATUS "Architecture is ${Architecture}")
+
+if(APPLE AND Architecture STREQUAL "arm64" AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "11.0")
+	set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum OS X deployment version" FORCE)
+	message(STATUS "arm64 macOS: raising deployment target to ${CMAKE_OSX_DEPLOYMENT_TARGET}")
+endif()
 
 if(WIN32 AND CMAKE_VERSION VERSION_LESS "3.4")
 	message(WARNING "Building on Windows platform with CMake version less than 3.4 is deprecated. Manifest file will fail to be included.")
@@ -396,7 +418,114 @@ set(SharedCommonSafeFiles
 #
 #=============================================================================
 if(UseInternalJPEG)
-  add_subdirectory(lib/jpeg-9a)
+  if(UseTurboJPEG)
+    include(ExternalProject)
+
+    # Forward the toolchain so cross builds (e.g. linux-i686) stay consistent.
+    set(TurboToolchainArgs "")
+    if(CMAKE_TOOLCHAIN_FILE)
+      get_filename_component(TurboToolchainFile "${CMAKE_TOOLCHAIN_FILE}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+      list(APPEND TurboToolchainArgs "-DCMAKE_TOOLCHAIN_FILE=${TurboToolchainFile}")
+    endif()
+
+    # libjpeg-turbo names it jpeg-static.lib only for MSVC-like compilers, and
+    # multi-config generators put it in a per-config folder.
+    if(MSVC)
+      set(TurboJpegName "jpeg-static.lib")
+    else()
+      set(TurboJpegName "${CMAKE_STATIC_LIBRARY_PREFIX}jpeg${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    endif()
+    get_property(TurboMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if(TurboMultiConfig)
+      set(TurboConfigDir "/$<CONFIG>")
+    else()
+      set(TurboConfigDir "")
+    endif()
+
+    # Adds one libjpeg-turbo build for osxArch (empty = the default target).
+    function(jae_add_libjpeg_turbo name osxArch)
+      if(osxArch)
+        set(arch "${osxArch}")
+      else()
+        set(arch "${Architecture}")
+      endif()
+
+      set(simdArgs "")
+      if((NOT osxArch AND X86) OR arch MATCHES "x86_64|i386")
+        find_program(JAENasmExecutable NAMES nasm)
+        if(JAENasmExecutable)
+          list(APPEND simdArgs -DWITH_SIMD=1 -DCMAKE_ASM_NASM_COMPILER=${JAENasmExecutable})
+        else()
+          message(WARNING "NASM assembler not found - libjpeg-turbo will be built without SIMD optimizations")
+          list(APPEND simdArgs -DWITH_SIMD=0)
+        endif()
+      elseif(arch MATCHES "^arm")
+        list(APPEND simdArgs -DWITH_SIMD=1)
+      else()
+        list(APPEND simdArgs -DWITH_SIMD=0)
+      endif()
+
+      ExternalProject_Add(${name}
+        GIT_REPOSITORY https://github.com/libjpeg-turbo/libjpeg-turbo.git
+        GIT_TAG 3.1.4.1
+        BUILD_COMMAND ${CMAKE_COMMAND} --build . --target jpeg-static --config $<CONFIG>
+        INSTALL_COMMAND ""
+        BUILD_BYPRODUCTS "<BINARY_DIR>${TurboConfigDir}/${TurboJpegName}"
+        CMAKE_ARGS
+        ${simdArgs}
+        ${TurboToolchainArgs}
+        -DENABLE_SHARED=0
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        -DWITH_ARITH_DEC=0
+        -DWITH_ARITH_ENC=0
+        -DWITH_TURBOJPEG=0
+        -DWITH_TOOLS=0
+        -DWITH_TESTS=0
+        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}
+        -DCMAKE_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
+        -DCMAKE_OSX_ARCHITECTURES=${osxArch})
+
+      ExternalProject_Get_Property(${name} BINARY_DIR SOURCE_DIR)
+      set(${name}_SOURCE_DIR "${SOURCE_DIR}" PARENT_SCOPE)
+      set(${name}_BINARY_DIR "${BINARY_DIR}" PARENT_SCOPE)
+      set(${name}_LIBRARY "${BINARY_DIR}${TurboConfigDir}/${TurboJpegName}" PARENT_SCOPE)
+    endfunction()
+
+    list(LENGTH CMAKE_OSX_ARCHITECTURES TurboArchCount)
+    if(TurboArchCount GREATER 1)
+      # libjpeg-turbo refuses multiple architectures, so build each one and lipo them.
+      set(TurboSliceTargets "")
+      set(TurboSliceLibs "")
+      foreach(TurboArch ${CMAKE_OSX_ARCHITECTURES})
+        jae_add_libjpeg_turbo(libjpeg-turbo-${TurboArch} ${TurboArch})
+        list(APPEND TurboSliceTargets libjpeg-turbo-${TurboArch})
+        list(APPEND TurboSliceLibs "${libjpeg-turbo-${TurboArch}_LIBRARY}")
+        set(TurboFirstArch ${TurboArch})
+      endforeach()
+
+      set(JPEG_LIBRARIES "${CMAKE_BINARY_DIR}/libjpeg-turbo-universal${TurboConfigDir}/${TurboJpegName}")
+      add_custom_command(OUTPUT "${JPEG_LIBRARIES}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/libjpeg-turbo-universal${TurboConfigDir}"
+        COMMAND lipo -create -output "${JPEG_LIBRARIES}" ${TurboSliceLibs}
+        DEPENDS ${TurboSliceTargets} ${TurboSliceLibs})
+      add_custom_target(libjpeg-turbo DEPENDS "${JPEG_LIBRARIES}")
+
+      # jconfig.h doesn't depend on the architecture
+      set(JPEG_INCLUDE_DIR "${libjpeg-turbo-${TurboFirstArch}_SOURCE_DIR}/src")
+      set(JPEG_CONFIG_DIR "${libjpeg-turbo-${TurboFirstArch}_BINARY_DIR}")
+    else()
+      jae_add_libjpeg_turbo(libjpeg-turbo "${CMAKE_OSX_ARCHITECTURES}")
+
+      # Expose the external build the same way FindJPEG / lib/jpeg-9a do.
+      set(JPEG_INCLUDE_DIR "${libjpeg-turbo_SOURCE_DIR}/src")
+      set(JPEG_CONFIG_DIR "${libjpeg-turbo_BINARY_DIR}")
+      set(JPEG_LIBRARIES "${libjpeg-turbo_LIBRARY}")
+    endif()
+  else()
+    add_subdirectory(lib/jpeg-9a)
+  endif()
 else()
   find_package(JPEG REQUIRED)
 endif()
@@ -409,12 +538,103 @@ endif()
 
 if(UseInternalPNG)
   add_subdirectory(lib/libpng)
+  if(Architecture STREQUAL "arm64" AND NOT UseInternalPNGNeon)
+    target_compile_definitions(bundled_libpng PRIVATE PNG_ARM_NEON_OPT=0)
+  endif()
 else()
   find_package(PNG REQUIRED)
 endif()
 
 # Always use bundled minizip (sets MINIZIP_{LIBRARIES,INCLUDE_DIR})
 add_subdirectory(lib/minizip)
+
+include(FetchContent)
+
+# The OpenAL backend is wired up for MSVC on Windows and for every other
+# desktop OS; MinGW builds keep the software mixer and skip OpenAL Soft and
+# EalMan.
+set(JAEOpenAL OFF)
+if((BuildSPEngine OR BuildJK2SPEngine) AND BuildOpenALSupport AND (MSVC OR NOT WIN32))
+	if(UseInternalOpenAL)
+		set(JAEOpenAL ON)
+	else()
+		find_package(OpenAL)
+		if(OPENAL_FOUND)
+			set(JAEOpenAL ON)
+		else()
+			message(WARNING
+				"System OpenAL not found; building without the OpenAL backend. "
+				"Install OpenAL or configure with UseInternalOpenAL=ON.")
+		endif()
+	endif()
+endif()
+
+if(JAEOpenAL AND BuildEalMan)
+	# Jedi Academy ships version 3.0 EAL files, which EalMan only parses when
+	# built for EaxMan.dll 3.0.0.0 compatibility.
+	add_library(EalMan STATIC
+		"${OpenJKLibDir}/EalMan/Chunk.cpp"
+		"${OpenJKLibDir}/EalMan/EalMan.cpp")
+	target_include_directories(EalMan PUBLIC "${OpenJKLibDir}/EalMan")
+	target_compile_definitions(EalMan PUBLIC EAXMANVERSION=3)
+endif()
+
+# Build the same pinned, EAX-capable OpenAL Soft release on every desktop
+# platform and package it with the client.
+if(JAEOpenAL AND UseInternalOpenAL)
+	set(JAEOpenALSoftVersion "1.25.2")
+	set(JAEOpenALSoftArchiveHash
+		"fb27e5839aa11f0e5b9d33756965291fad5d6909ab928ea1f796f4a1a6877894")
+	if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+		CMAKE_CXX_COMPILER_VERSION VERSION_LESS "12")
+		message(FATAL_ERROR
+			"Bundled OpenAL Soft ${JAEOpenALSoftVersion} requires GCC 12 or newer. "
+			"Select a newer compiler or configure with UseInternalOpenAL=OFF.")
+	endif()
+	if(CMAKE_VERSION VERSION_LESS "3.18")
+		message(FATAL_ERROR
+			"Bundled OpenAL Soft ${JAEOpenALSoftVersion} requires CMake 3.18 or newer. "
+			"Use a newer CMake or configure with UseInternalOpenAL=OFF.")
+	endif()
+
+	# These cache variables are consumed by the OpenAL Soft subproject. EAX is
+	# deliberately explicit because upstream only enables it by default on
+	# Windows.
+	set(ALSOFT_EAX ON CACHE BOOL "Build OpenAL Soft legacy EAX extensions" FORCE)
+	set(ALSOFT_UTILS OFF CACHE BOOL "Build OpenAL Soft utilities" FORCE)
+	set(ALSOFT_EXAMPLES OFF CACHE BOOL "Build OpenAL Soft examples" FORCE)
+	set(ALSOFT_TESTS OFF CACHE BOOL "Build OpenAL Soft tests" FORCE)
+	set(ALSOFT_INSTALL OFF CACHE BOOL "Install OpenAL Soft independently" FORCE)
+	set(ALSOFT_INSTALL_CONFIG OFF CACHE BOOL "Install the OpenAL Soft config" FORCE)
+	set(ALSOFT_INSTALL_HRTF_DATA OFF CACHE BOOL "Install external OpenAL Soft HRTFs" FORCE)
+	set(ALSOFT_INSTALL_AMBDEC_PRESETS OFF CACHE BOOL "Install OpenAL Soft AmbDec presets" FORCE)
+	set(ALSOFT_UPDATE_BUILD_VERSION OFF CACHE BOOL "Query Git for the OpenAL Soft version" FORCE)
+	set(ALSOFT_ENABLE_MODULES OFF CACHE BOOL "Build OpenAL Soft C++ modules" FORCE)
+	set(LIBTYPE SHARED)
+
+	FetchContent_Declare(openalsoft
+		URL "https://github.com/kcat/openal-soft/archive/refs/tags/${JAEOpenALSoftVersion}.tar.gz"
+		URL_HASH "SHA256=${JAEOpenALSoftArchiveHash}")
+	FetchContent_MakeAvailable(openalsoft)
+	if(WIN32)
+		# Architecture-qualified names keep the runtime from colliding with
+		# Jedi Academy's legacy OpenAL32.dll. OUTPUT_NAME also gives the
+		# generated MSVC import library the matching name.
+		if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+			set_target_properties(OpenAL PROPERTIES OUTPUT_NAME "OpenALSoft.x86_64")
+		else()
+			set_target_properties(OpenAL PROPERTIES OUTPUT_NAME "OpenALSoft.x86")
+		endif()
+	endif()
+	if(APPLE AND HAVE_WFUNCTION_EFFECTS)
+		# AppleClang 21 diagnoses CoreAudio callback conversions more strictly
+		# than the compiler shipped when 1.25.2 was released. Keep the useful
+		# warning without promoting this upstream warning to an error.
+		target_compile_options(OpenAL PRIVATE
+			$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=function-effects>)
+	endif()
+endif()
+
 
 # Add projects
 add_subdirectory(${SPDir})

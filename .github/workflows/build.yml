@@ -41,6 +41,9 @@ jobs:
       - name: Add msbuild to PATH
         uses: microsoft/setup-msbuild@v1.1
 
+      - name: Setup NASM
+        uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b
+
       - name: Create Build Environment
         run: cmake -E make_directory ${{ github.workspace }}/build
 
@@ -49,6 +52,7 @@ jobs:
         working-directory: ${{ github.workspace }}/build
         run: |
           OPTIONS="-DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=bin"
+          OPTIONS+=" -DUseTurboJPEG=ON"
           if [ "${{ matrix.portable }}" == "Portable" ]; then
             OPTIONS+=" -DBuildPortableVersion=ON"
           else
@@ -67,7 +71,13 @@ jobs:
         shell: bash
         run: cmake --install . --config ${{ matrix.build_type }}
 
-      - uses: actions/upload-artifact@v3
+      - name: Download assets pk3
+        if: ${{ matrix.build_type == 'Release' }}
+        working-directory: ${{ github.workspace }}/build/bin/JediAcademy
+        shell: bash
+        run: curl -fsSL --create-dirs -o jaenhanced/zZz_ja_enhanced.pk3 https://github.com/JAEnhanced/JAEnhanced-Assets/releases/download/latest/zZz_ja_enhanced.pk3
+
+      - uses: actions/upload-artifact@v4
         if: ${{ matrix.build_type == 'Release' }}
         with:
           name: JAEnhanced-windows-${{ matrix.arch }}-${{ matrix.build_type }}-${{ matrix.portable }}
@@ -93,12 +103,12 @@ jobs:
             sudo dpkg --add-architecture i386
             sudo apt-get -qq update
             sudo apt-get -y install aptitude
-            sudo apt-get -y install gcc-multilib g++-multilib ninja-build
+            sudo apt-get -y install gcc-12 g++-12 gcc-12-multilib g++-12-multilib ninja-build
             sudo apt-get -y install --allow-downgrades libpcre2-8-0:i386 libjpeg-dev:i386 libpng-dev:i386 libcurl4-openssl-dev:i386
-            sudo aptitude -y install libglib2.0-dev:i386 libsdl2-dev:i386
+            sudo aptitude -y install libglib2.0-dev:i386 libsdl2-dev:i386 libasound2-dev:i386 libpulse-dev:i386 libpipewire-0.3-dev:i386
           else
             sudo apt-get -qq update
-            sudo apt-get install libjpeg-dev libpng-dev zlib1g-dev libsdl2-dev
+            sudo apt-get install gcc-12 g++-12 libjpeg-dev libpng-dev zlib1g-dev libsdl2-dev libasound2-dev libpulse-dev libpipewire-0.3-dev
           fi
           cmake -E make_directory ${{ github.workspace }}/build
 
@@ -106,11 +116,11 @@ jobs:
         shell: bash
         working-directory: ${{ github.workspace }}/build
         run: |
-          OPTIONS="-DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install"
+          OPTIONS="-DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12 -DUseInternalOpenAL=ON"
           if [ "${{ matrix.portable }}" == "Portable" ]; then
-            OPTIONS+=" -DUseInternalLibs=ON -DBuildPortableVersion=ON"
+            OPTIONS+=" -DBuildPortableVersion=ON"
           else
-            OPTIONS+=" -DUseInternalLibs=OFF -DBuildPortableVersion=OFF"
+            OPTIONS+=" -DBuildPortableVersion=OFF"
           fi
           if [ ${{ matrix.arch }} == "x86" ]; then
             OPTIONS+=" -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchains/linux-i686.cmake"
@@ -127,6 +137,12 @@ jobs:
         working-directory: ${{ github.workspace }}/build
         shell: bash
         run: cmake --install .
+
+      - name: Download assets pk3
+        if: ${{ matrix.build_type == 'Release' }}
+        working-directory: ${{ github.workspace }}/install/JediAcademy
+        shell: bash
+        run: curl -fsSL --create-dirs -o jaenhanced/zZz_ja_enhanced.pk3 https://github.com/JAEnhanced/JAEnhanced-Assets/releases/download/latest/zZz_ja_enhanced.pk3
 
       - name: Create JAEnhanced binary archive
         if: ${{ matrix.build_type == 'Release' }}
@@ -147,11 +163,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-13, macos-14]
+        runner: [macos-15-intel, macos-15]
         build_type: [Debug, Release]
         portable: [Non-Portable]
         include:
-          - runner: macos-13
+          - runner: macos-15-intel
             arch: x86_64
           - runner: macos-14
             arch: arm64
@@ -159,16 +175,21 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Setup NASM
+        if: matrix.arch == 'x86_64'
+        uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b
+
       - name: Create Build Environment
         run: |
-          brew install zlib libjpeg libpng sdl2
+          brew install zlib libjpeg libpng
           cmake -E make_directory ${{ github.workspace }}/build
 
       - name: Configure CMake
         shell: bash
         working-directory: ${{ github.workspace }}/build
         run: |
-          OPTIONS="-DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install"
+          OPTIONS="-DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install -DUseInternalOpenAL=ON"
+          OPTIONS+=" -DUseInternalPNGNeon=ON -DUseTurboJPEG=ON"
           if [ "${{ matrix.portable }}" == "Portable" ]; then
             OPTIONS+=" -DUseInternalLibs=ON -DBuildPortableVersion=ON"
           else
@@ -187,15 +208,22 @@ jobs:
         shell: bash
         run: cmake --install .
 
+      - name: Download assets pk3
+        if: ${{ matrix.build_type == 'Release' }}
+        working-directory: ${{ github.workspace }}/install/JediAcademy
+        shell: bash
+        run: curl -fsSL --create-dirs -o jaenhanced/zZz_ja_enhanced.pk3 https://github.com/JAEnhanced/JAEnhanced-Assets/releases/download/latest/zZz_ja_enhanced.pk3
+
       - name: Create JAEnhanced binary archive
         if: ${{ matrix.build_type == 'Release' }}
         working-directory: ${{ github.workspace }}/install/JediAcademy
         shell: bash
         run: |
           chmod +x ja_enhanced.${{ matrix.arch }}.app/Contents/MacOS/ja_enhanced.${{ matrix.arch }}
+          codesign --force --deep --sign - ja_enhanced.${{ matrix.arch }}.app
           tar -czvf JAEnhanced-macos-${{ matrix.arch }}-${{ matrix.build_type }}-${{ matrix.portable }}.tar.gz *
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         if: ${{ matrix.build_type == 'Release' }}
         with:
           name: JAEnhanced-macos-${{ matrix.arch }}-${{ matrix.build_type }}-${{ matrix.portable }}
