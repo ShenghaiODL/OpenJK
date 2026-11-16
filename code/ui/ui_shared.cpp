@@ -7109,6 +7109,10 @@ void Menu_New(char *buffer)
 			menuCount++;
 		}
 	}
+	else
+	{
+		Com_Printf(S_COLOR_YELLOW "Menu_New: too many menus, MAX_MENUS is %d\n", MAX_MENUS);
+	}
 }
 
 /*

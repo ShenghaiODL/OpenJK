@@ -236,6 +236,7 @@ void CL_InitUI( void ) {
 	uii.FS_GetFileList			= FS_GetFileList;
 	uii.FS_WhichPak				= FS_WhichPak;
 	uii.FS_ReadFile				= FS_ReadFile;
+	uii.FS_ReadNthFile			= FS_ReadNthFile;
 	uii.FS_FreeFile				= FS_FreeFile;
 
 	uii.R_RegisterModel			= re.RegisterModel;
