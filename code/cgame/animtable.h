@@ -1848,6 +1848,13 @@ stringID_table_t animTable [MAX_ANIMATIONS+1] =
 	// Extra config-declared saber anims kept at the end so existing animation IDs stay stable.
 	ENUM2STRING(BOTH_P1_S1_BK),		//# Block shot/saber back
 
+	// XSI-authored X-pilot weapon-hold walk (decision #8; grafted _humanoid, strafetest pak).
+	ENUM2STRING(BOTH_WALK_MINIGUN),	//# Walk, two-handed minigun hold
+	ENUM2STRING(BOTH_SPRINT_PISTOL),	//# Sprint, one-handed pistol
+	ENUM2STRING(BOTH_SPRINT_HEAVY),	//# Sprint, two-handed heavy
+	ENUM2STRING(BOTH_SPRINT_BAZOOKA),	//# Sprint, bazooka
+	ENUM2STRING(BOTH_SPRINT_STAFF_LIGHTSABER),	//# Sprint, staff lightsaber
+
 	//must be terminated
 	{ NULL,-1 }
 };

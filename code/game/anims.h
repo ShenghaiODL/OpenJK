@@ -1857,6 +1857,13 @@ typedef enum //# animNumber_e
 	// Extra config-declared saber anims kept at the end so existing animation IDs stay stable.
 	BOTH_P1_S1_BK,		//# Block shot/saber back
 
+	// XSI-authored X-pilot weapon-hold walk (decision #8; grafted _humanoid, strafetest pak).
+	BOTH_WALK_MINIGUN,	//# Walk, two-handed minigun hold
+	BOTH_SPRINT_PISTOL,	//# Sprint, one-handed pistol
+	BOTH_SPRINT_HEAVY,	//# Sprint, two-handed heavy
+	BOTH_SPRINT_BAZOOKA,	//# Sprint, bazooka
+	BOTH_SPRINT_STAFF_LIGHTSABER,	//# Sprint, staff lightsaber
+
 	//# #eol
 	MAX_ANIMATIONS,
 	MAX_TOTALANIMATIONS,
