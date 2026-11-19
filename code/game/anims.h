@@ -1859,6 +1859,10 @@ typedef enum //# animNumber_e
 
 	// XSI-authored X-pilot weapon-hold walk (decision #8; grafted _humanoid, strafetest pak).
 	BOTH_WALK_MINIGUN,	//# Walk, two-handed minigun hold
+	BOTH_SPRINT_PISTOL,	//# Sprint, one-handed pistol
+	BOTH_SPRINT_HEAVY,	//# Sprint, two-handed heavy
+	BOTH_SPRINT_BAZOOKA,	//# Sprint, bazooka
+	BOTH_SPRINT_STAFF_LIGHTSABER,	//# Sprint, staff lightsaber
 
 	//# #eol
 	MAX_ANIMATIONS,
