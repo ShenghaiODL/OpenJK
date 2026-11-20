@@ -124,6 +124,35 @@ static void CG_LevelDump_f( void ) {
 	CG_Printf( "leveldump end\n" );
 }
 
+/*
+=================
+CG_Project_f
+
+"v_project x y z": where a point of the level is drawn, in pixels of the window (the jka MCP server crops
+screenshots around it). "project x y" or "project behind".
+After Blackwolf1337/VisionJK (GPL-2.0).
+=================
+*/
+static void CG_Project_f( void ) {
+	const refdef_t	*rd = &cg.refdef;
+	vec3_t		point, d;
+	float			z;
+	int			i;
+
+	for ( i = 0; i < 3; i++ ) {
+		point[i] = atof( CG_Argv( i + 1 ) );
+	}
+	VectorSubtract( point, rd->vieworg, d );
+	z = DotProduct( d, rd->viewaxis[0] );
+	if ( z <= 0.001f || rd->fov_x <= 0.0f || rd->fov_y <= 0.0f ) {
+		CG_Printf( "project behind\n" );
+		return;
+	}
+	CG_Printf( "project %.1f %.1f\n",
+		rd->x + rd->width * 0.5f * ( 1.0f - DotProduct( d, rd->viewaxis[1] ) / ( z * tanf( DEG2RAD( rd->fov_x * 0.5f ) ) ) ),
+		rd->y + rd->height * 0.5f * ( 1.0f - DotProduct( d, rd->viewaxis[2] ) / ( z * tanf( DEG2RAD( rd->fov_y * 0.5f ) ) ) ) );
+}
+
 void CG_WriteCam_f (void)
 {
 	char	text[1024];
@@ -302,6 +331,7 @@ static consoleCommand_t	commands[] = {
 	{ "testsurface",		CG_TestModelSurfaceOnOff_f },
 	{ "viewpos",			CG_Viewpos_f },
 	{ "v_levelDump",		CG_LevelDump_f },
+	{ "v_project",			CG_Project_f },
 	{ "weapnext",			CG_NextWeapon_f },
 	{ "weapon",				CG_Weapon_f },
 	{ "weaponslot",			CG_WeaponSlot_f },
