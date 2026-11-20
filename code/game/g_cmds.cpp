@@ -879,8 +879,12 @@ void Cmd_SetViewpos_f( gentity_t *ent ) {
 		gi.SendServerCommand( ent-g_entities, va("print \"Cheats are not enabled on this server.\n\""));
 		return;
 	}
-	if ( gi.argc() != 5 ) {
-		gi.SendServerCommand( ent-g_entities, va("print \"usage: setviewpos x y z yaw\n\""));
+	// After Blackwolf1337/VisionJK (GPL-2.0): "setviewpos x y z yaw [pitch [still]]": with a pitch, and "still"
+	// puts the player there without the push forward of a teleport (for tools that test the game). The old
+	// eye-height offset (origin[2] -= 25) is gone: the position is where the player's feet go, which is what a
+	// tool waiting on the snapshots measures.
+	if ( gi.argc() < 5 || gi.argc() > 7 ) {
+		gi.SendServerCommand( ent-g_entities, va("print \"usage: setviewpos x y z yaw [pitch [still]]\n\""));
 		return;
 	}
 
@@ -888,11 +892,19 @@ void Cmd_SetViewpos_f( gentity_t *ent ) {
 	for ( i = 0 ; i < 3 ; i++ ) {
 		origin[i] = atof( gi.argv( i+1 ) );
 	}
-	origin[2] -= 25;	//acount for eye height from viewpos cmd
-
 	angles[YAW] = atof( gi.argv( 4 ) );
+	if ( gi.argc() > 5 ) {
+		angles[PITCH] = atof( gi.argv( 5 ) );
+	}
 
 	TeleportPlayer( ent, origin, angles );
+	if ( gi.argc() > 6 ) {
+		if ( !Q_stricmp( gi.argv( 6 ), "still" ) ) {
+			VectorClear( ent->client->ps.velocity );
+			ent->client->ps.pm_time = 0;
+			ent->client->ps.pm_flags &= ~PMF_TIME_KNOCKBACK;
+		}
+	}
 }
 
 
