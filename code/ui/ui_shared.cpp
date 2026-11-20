@@ -7394,6 +7394,101 @@ void Menu_Paint(menuDef_t *menu, qboolean forcePaint)
 
 /*
 =================
+Menus_Dump
+
+For tools that test the menus (the jka MCP server, "v_uiDump [file]"): the screen, then each open menu and
+every item of it that can be seen right now, with its rectangle in pixels of the window, one line each, so a
+tool can measure a layout and point the mouse at an item by its name. Lines begin with "uidump"; the last
+one is "uidump end".
+After Blackwolf1337/VisionJK (GPL-2.0), adapted to this tree: no "uidump geom" line (it references itemDef
+fields that are VisionJK-only, and no tool parses it here), the biasY slot prints this tree's single bias,
+and the canvas is the menu's virtual (authored) size.
+=================
+*/
+static fileHandle_t dumpFile;
+
+// can this item be seen right now (what the dump lists)
+static qboolean Item_Dumped( const itemDef_t *item ) {
+	return (qboolean)!( !( item->window.flags & WINDOW_VISIBLE )
+		|| ( item->cvarFlags & ( CVAR_SHOW | CVAR_HIDE ) && !Item_EnableShowViaCvar( (itemDef_t *)item, CVAR_SHOW ) ) );
+}
+
+// a line of the dump: printed, or written to the file "v_uiDump <file>" named
+static void Dump_Line( const char *fmt, ... ) {
+	va_list	ap;
+	char		line[1024];
+
+	va_start( ap, fmt );
+	Q_vsnprintf( line, sizeof( line ), fmt, ap );
+	va_end( ap );
+	if ( dumpFile ) {
+		ui.FS_Write( line, (int)strlen( line ), dumpFile );
+	} else {
+		ui.Printf( "%s", line );
+	}
+}
+
+void Menus_Dump( void ) {
+	const float	bias = DC->bias;
+	int			i, j;
+
+	// (a file to write to instead of the console: a tool reads a long dump from it without the console in between)
+	dumpFile = 0;
+	if ( ui.Argc() > 1 ) {
+		char name[MAX_QPATH];
+
+		ui.Argv( 1, name, sizeof( name ) );
+		if ( ui.FS_FOpenFile( name, &dumpFile, FS_WRITE ) < 0 ) {
+			dumpFile = 0;
+		}
+	}
+
+	Dump_Line( "uidump screen %d %d %.4f %.4f %.3f %.3f %d %d\n", DC->glconfig.vidWidth, DC->glconfig.vidHeight, DC->xscale,
+		DC->yscale, bias, bias, DC->cursorx, DC->cursory );
+	for ( i = 0; i < menuCount; i++ ) {
+		const menuDef_t	*menu = &Menus[i];
+
+		if ( !( menu->window.flags & WINDOW_VISIBLE ) ) {
+			continue;
+		}
+		Dump_Line( "uidump menu %s focus=%d page=%d canvas=%gx%g px=%.0f,%.0f,%.0f,%.0f desc=%.0f,%.0f,%d\n",
+			menu->window.name ? menu->window.name : "?", ( menu->window.flags & WINDOW_HASFOCUS ) ? 1 : 0, 0,
+			menu->virtualW, menu->virtualH,
+			( menu->window.rect.x + bias ) * DC->xscale, ( menu->window.rect.y + bias ) * DC->yscale,
+			menu->window.rect.w * DC->xscale, menu->window.rect.h * DC->yscale,
+			( menu->descX + bias ) * DC->xscale, ( menu->descY + bias ) * DC->yscale, menu->descAlignment );
+		for ( j = 0; j < menu->itemCount; j++ ) {
+			const itemDef_t	*item = menu->items[j];
+			const rectDef_t	*r = &item->window.rect;
+			char			text[128], value[64];
+
+			if ( !Item_Dumped( item ) ) {
+				continue;
+			}
+			text[0] = value[0] = '\0';
+			if ( item->text && item->text[0] ) {
+				Q_strncpyz( text, item->text, sizeof( text ) );
+			}
+			if ( item->cvar ) {
+				DC->getCVarString( item->cvar, value, sizeof( value ) );
+			}
+			Dump_Line( "uidump item %s %d %s type=%d px=%.0f,%.0f,%.0f,%.0f flags=%s%s%s%s cvar=%s value=%s text=%s\n",
+				menu->window.name ? menu->window.name : "?", j, item->window.name ? item->window.name : "-", item->type,
+				( r->x + bias ) * DC->xscale, ( r->y + bias ) * DC->yscale, r->w * DC->xscale, r->h * DC->yscale,
+				( item->window.flags & WINDOW_HASFOCUS ) ? "F" : "", ( item->window.flags & WINDOW_MOUSEOVER ) ? "M" : "",
+				( item->window.flags & WINDOW_DECORATION ) ? "D" : "", item->disabled ? "X" : "",
+				item->cvar ? item->cvar : "-", value, text );
+		}
+	}
+	Dump_Line( "uidump end\n" );
+	if ( dumpFile ) {
+		ui.FS_FCloseFile( dumpFile );
+		dumpFile = 0;
+	}
+}
+
+/*
+=================
 Item_EnableShowViaCvar
 =================
 */

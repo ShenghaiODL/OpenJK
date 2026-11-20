@@ -263,6 +263,7 @@ void _UI_Init( qboolean inGameLoad );
 void _UI_DrawRect( float x, float y, float width, float height, float size, const float *color );
 void _UI_MouseEvent( int dx, int dy );
 void _UI_KeyEvent( int key, qboolean down );
+void Menus_Dump( void );				// v_uiDump (test tools; after Blackwolf1337/VisionJK, GPL-2.0)
 void UI_Report(void);
 
 extern char GoToMenu[];

@@ -218,6 +218,12 @@ qboolean UI_ConsoleCommand( void )
 		return qtrue;
 	}
 
+	if ( Q_stricmp (cmd, "v_uiDump") == 0 )
+	{
+		Menus_Dump();
+		return qtrue;
+	}
+
 	if ( Q_stricmp (cmd, "levelselect") == 0 )
 	{
 		UI_LoadMenu_f();
