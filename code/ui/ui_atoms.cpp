@@ -189,6 +189,57 @@ extern const char *kyleForceStatusSounds[];
 }
 
 
+// After Blackwolf1337/VisionJK (GPL-2.0): the pointer goes to a place in the 640 x 480 units of the menus, and
+// with "click" the left button is pressed and let go there, as the mouse would do it. "wheelup" and
+// "wheeldown" turn the wheel by a notch there, "hold" presses the button without letting go and "release" lets
+// it go. With the word "px" the place is in pixels of the window, as a screenshot has them (the jka MCP
+// server). v_uiKey <number> presses and lets go a key (its number in keycodes.h), v_uiKey <number> char
+// types a letter.
+static void UI_Mouse_f( void ) {
+	char		what[16];
+	int			x = atoi( UI_Argv( 1 ) ), y = atoi( UI_Argv( 2 ) );
+
+	// (UI_Argv returns one static buffer: keep the word before reading the next one)
+	Q_strncpyz( what, UI_Argv( 3 ), sizeof( what ) );
+	// "px" after the place: it is in pixels of the window, as a screenshot has them (the jka MCP server)
+	if ( !Q_stricmp( UI_Argv( 4 ), "px" ) || !Q_stricmp( what, "px" ) ) {
+		x = (int)( atof( UI_Argv( 1 ) ) / DC->xscale - DC->bias + 0.5f );
+		y = (int)( atof( UI_Argv( 2 ) ) / DC->yscale - DC->bias + 0.5f );
+		if ( !Q_stricmp( what, "px" ) ) {
+			what[0] = '\0';
+		}
+	}
+	_UI_MouseEvent( x - DC->cursorx, y - DC->cursory );
+	if ( !Q_stricmp( what, "click" ) ) {
+		_UI_KeyEvent( A_MOUSE1, qtrue );
+		_UI_KeyEvent( A_MOUSE1, qfalse );
+	} else if ( !Q_stricmp( what, "hold" ) ) {
+		_UI_KeyEvent( A_MOUSE1, qtrue );
+	} else if ( !Q_stricmp( what, "release" ) ) {
+		_UI_KeyEvent( A_MOUSE1, qfalse );
+	} else if ( !Q_stricmp( what, "wheelup" ) || !Q_stricmp( what, "wheeldown" ) ) {
+		const int key = Q_stricmp( what, "wheelup" ) ? A_MWHEELDOWN : A_MWHEELUP;
+
+		_UI_KeyEvent( key, qtrue );
+		_UI_KeyEvent( key, qfalse );
+	}
+}
+
+static void UI_Key_f( void ) {
+	const int key = atoi( UI_Argv( 1 ) );
+
+	if ( key <= 0 || key >= MAX_KEYS ) {
+		return;
+	}
+	if ( !Q_stricmp( UI_Argv( 2 ), "char" ) ) {
+		// a letter that was typed
+		_UI_KeyEvent( key | K_CHAR_FLAG, qtrue );
+		return;
+	}
+	_UI_KeyEvent( key, qtrue );
+	_UI_KeyEvent( key, qfalse );
+}
+
 /*
 =================
 UI_ConsoleCommand
@@ -215,6 +266,24 @@ qboolean UI_ConsoleCommand( void )
 	if ( Q_stricmp (cmd, "ui_cache") == 0 )
 	{
 		UI_Cache_f();
+		return qtrue;
+	}
+
+	if ( Q_stricmp (cmd, "v_uiDump") == 0 )
+	{
+		Menus_Dump();
+		return qtrue;
+	}
+
+	if ( Q_stricmp (cmd, "v_uiMouse") == 0 )
+	{
+		UI_Mouse_f();
+		return qtrue;
+	}
+
+	if ( Q_stricmp (cmd, "v_uiKey") == 0 )
+	{
+		UI_Key_f();
 		return qtrue;
 	}
 
